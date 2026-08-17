@@ -154,6 +154,25 @@ describe("solicitarCae", () => {
   });
 });
 
+describe("solicitarCae con asociados (las notas de crédito)", () => {
+  it("manda el CbtesAsoc que ARCA exige para una NC", async () => {
+    const captura: { body?: string } = {};
+    await solicitarCae({
+      auth: AUTH,
+      comprobante: {
+        ...COMPROBANTE,
+        tipoComprobante: 8, // NC B
+        asociados: [{ tipo: 6, puntoVenta: 3, numero: 128, cuitEmisor: "20111111112" }],
+      },
+      entorno: "homologacion",
+      fetch: fetchQueDevuelve(RESPUESTA_APROBADA, captura),
+    });
+    expect(captura.body).toContain(
+      "<ar:CbtesAsoc><ar:CbteAsoc><ar:Tipo>6</ar:Tipo><ar:PtoVta>3</ar:PtoVta><ar:Nro>128</ar:Nro><ar:Cuit>20111111112</ar:Cuit></ar:CbteAsoc></ar:CbtesAsoc>"
+    );
+  });
+});
+
 describe("ultimoAutorizado", () => {
   it("devuelve el número y manda punto de venta y tipo", async () => {
     const captura: { body?: string } = {};

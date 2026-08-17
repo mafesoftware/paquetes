@@ -160,6 +160,18 @@ export type ComprobanteParaCae = {
   tributosCent?: number;
   /** El desglose por alícuota. Vacío en los comprobantes C (el IVA no se discrimina). */
   iva?: IvaComprobante[];
+  /**
+   * Los comprobantes que este corrige. **Obligatorio en las notas de crédito
+   * y de débito**: ARCA exige saber a qué factura le está dando vuelta la
+   * plata, y sin esto lo observa o lo rechaza según la letra.
+   */
+  asociados?: {
+    tipo: number;
+    puntoVenta: number;
+    numero: number;
+    /** El CUIT de quien emitió el asociado (normalmente el propio). */
+    cuitEmisor?: string;
+  }[];
 };
 
 export type ResultadoCae = {
@@ -202,6 +214,18 @@ export async function solicitarCae(opciones: {
           .join("")}</ar:Iva>`
       : "";
 
+  const asociados =
+    c.asociados && c.asociados.length > 0
+      ? `<ar:CbtesAsoc>${c.asociados
+          .map(
+            (a) =>
+              `<ar:CbteAsoc><ar:Tipo>${a.tipo}</ar:Tipo><ar:PtoVta>${a.puntoVenta}</ar:PtoVta><ar:Nro>${a.numero}</ar:Nro>${
+                a.cuitEmisor ? `<ar:Cuit>${escaparXml(a.cuitEmisor)}</ar:Cuit>` : ""
+              }</ar:CbteAsoc>`
+          )
+          .join("")}</ar:CbtesAsoc>`
+      : "";
+
   const detalle = [
     `<ar:FECAEDetRequest>`,
     `<ar:Concepto>${c.concepto}</ar:Concepto>`,
@@ -219,6 +243,7 @@ export async function solicitarCae(opciones: {
     `<ar:MonId>PES</ar:MonId>`,
     `<ar:MonCotiz>1</ar:MonCotiz>`,
     `<ar:CondicionIVAReceptorId>${c.condicionIVAReceptorId}</ar:CondicionIVAReceptorId>`,
+    asociados,
     iva,
     `</ar:FECAEDetRequest>`,
   ].join("");

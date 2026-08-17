@@ -1,6 +1,6 @@
 {
   "name": "@mafesoftware/arca-ar",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Facturacion electronica de ARCA (ex AFIP) para Argentina: WSAA (firma CMS del ticket de acceso) y WSFEv1, sin dependencias.",
   "license": "MIT",
   "type": "module",
