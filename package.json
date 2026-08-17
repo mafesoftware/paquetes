@@ -1,0 +1,43 @@
+{
+  "name": "@mafesoftware/arca-ar",
+  "version": "0.1.0",
+  "description": "Facturacion electronica de ARCA (ex AFIP) para Argentina: WSAA (firma CMS del ticket de acceso) y WSFEv1, sin dependencias.",
+  "license": "MIT",
+  "type": "module",
+  "files": [
+    "dist"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "bun run typecheck && bun run test && bun run build"
+  },
+  "devDependencies": {
+    "@types/node": "^22",
+    "typescript": "^5",
+    "vitest": "^3.2.4"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "keywords": [
+    "arca",
+    "afip",
+    "wsaa",
+    "wsfe",
+    "factura-electronica",
+    "argentina",
+    "cae"
+  ],
+  "publishConfig": {
+    "access": "public"
+  }
+}
