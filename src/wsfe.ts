@@ -70,6 +70,15 @@ async function llamar(opciones: {
   cuerpo: string;
   entorno: Entorno;
   fetch?: typeof globalThis.fetch;
+  /**
+   * Códigos de `<Err>` que para ESTE método son una respuesta y no una falla.
+   *
+   * Hay uno solo hoy y es el 602 de `FECompConsultar` ("Sin resultados"), que
+   * significa "ARCA no tiene ese comprobante" — la respuesta más importante de
+   * toda la consulta. Sin esta lista habría que decidirlo atajando la
+   * excepción, o sea usando un throw como valor de retorno.
+   */
+  tolerar?: number[];
 }): Promise<string> {
   const traer = opciones.fetch ?? globalThis.fetch;
   const respuesta = await traer(URL_WSFE[opciones.entorno], {
@@ -87,10 +96,13 @@ async function llamar(opciones: {
   if (!respuesta.ok) throw new ErrorWsfe(`El WSFE respondió ${respuesta.status}.`);
 
   // Los errores "de negocio" no son faults: vienen en <Errors><Err>.
-  const errores = bloquesDe(cuerpo, "Err").map((e) => ({
-    codigo: Number(valorDe(e, "Code") ?? 0),
-    mensaje: (valorDe(e, "Msg") ?? "").trim(),
-  }));
+  const tolerados = opciones.tolerar ?? [];
+  const errores = bloquesDe(cuerpo, "Err")
+    .map((e) => ({
+      codigo: Number(valorDe(e, "Code") ?? 0),
+      mensaje: (valorDe(e, "Msg") ?? "").trim(),
+    }))
+    .filter((e) => !tolerados.includes(e.codigo));
   if (errores.length > 0)
     throw new ErrorWsfe(
       `ARCA devolvió ${errores.length === 1 ? "un error" : "errores"}: ` +
@@ -123,6 +135,79 @@ export async function ultimoAutorizado(opciones: {
   if (numero === null)
     throw new ErrorWsfe("La respuesta no trae el último número autorizado.");
   return Number(numero);
+}
+
+/* ============================================================
+   Consultar un comprobante ya emitido
+   ============================================================ */
+
+/** Lo que ARCA dice de un comprobante que ya se emitió. */
+export type ComprobanteEnArca = {
+  /** Si ARCA lo tiene registrado. `false` = para ella no existe. */
+  existe: boolean;
+  /** El CAE que dice ARCA. Se compara contra el que guardó quien emitió. */
+  cae: string;
+  /** `AAAAMMDD`, tal cual lo devuelve ARCA. */
+  vencimientoCae: string;
+  /** `A` (aprobado) o `R` (rechazado), según ARCA. */
+  resultado: string;
+  /** Lo que ARCA haya dicho del comprobante, si dijo algo. */
+  observaciones: string;
+};
+
+/**
+ * `FECompConsultar`: qué sabe ARCA de un comprobante que ya emitimos.
+ *
+ * Es la consulta del contador. El CAE guardado tiene que coincidir con el de
+ * allá, y si ARCA contesta que ese comprobante no existe, lo que hay guardado
+ * es un CAE que nunca se autorizó: raro y grave, y sin esta llamada solo se
+ * detecta entrando al sitio de ARCA a mano.
+ *
+ * **El «no lo tengo» NO es un error.** ARCA lo informa con el código 602
+ * adentro de un HTTP 200; tratarlo como falla haría tirar justo en el caso que
+ * hay que mostrar. Cualquier otro código sí se propaga.
+ *
+ * No escribe nada: qué hacer con una diferencia lo decide quien la mira.
+ */
+export async function consultarComprobante(opciones: {
+  auth: AutorizacionWsfe;
+  puntoVenta: number;
+  tipoComprobante: number;
+  numero: number;
+  entorno: Entorno;
+  fetch?: typeof globalThis.fetch;
+}): Promise<ComprobanteEnArca> {
+  const cuerpo = await llamar({
+    metodo: "FECompConsultar",
+    auth: opciones.auth,
+    cuerpo:
+      `<ar:FeCompConsReq>` +
+      `<ar:CbteTipo>${opciones.tipoComprobante}</ar:CbteTipo>` +
+      `<ar:CbteNro>${opciones.numero}</ar:CbteNro>` +
+      `<ar:PtoVta>${opciones.puntoVenta}</ar:PtoVta>` +
+      `</ar:FeCompConsReq>`,
+    entorno: opciones.entorno,
+    fetch: opciones.fetch,
+    tolerar: [602],
+  });
+
+  const cae = (valorDe(cuerpo, "CodAutorizacion") ?? "").trim();
+  if (!cae)
+    return {
+      existe: false,
+      cae: "",
+      vencimientoCae: "",
+      resultado: "",
+      observaciones: "ARCA no tiene registrado este comprobante.",
+    };
+
+  return {
+    existe: true,
+    cae,
+    vencimientoCae: (valorDe(cuerpo, "FchVto") ?? "").trim(),
+    resultado: (valorDe(cuerpo, "Resultado") ?? "").trim(),
+    observaciones: (valorDe(cuerpo, "Msg") ?? "").trim(),
+  };
 }
 
 /* ============================================================

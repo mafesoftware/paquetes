@@ -9,7 +9,11 @@
  * 2. **La letra** (`tipoComprobante`): qué comprobante corresponde según la
  *    condición de IVA del emisor y del receptor.
  * 3. **WSFEv1** (`ultimoAutorizado`, `solicitarCae`): el número lo asigna
- *    quien emite (último + 1) y ARCA devuelve el CAE.
+ *    quien emite (último + 1) y ARCA devuelve el CAE. Y después,
+ *    `consultarComprobante`: qué dice ARCA de uno que ya se emitió.
+ * 4. **El padrón** (`consultarPadron`): quién es un CUIT. Es un servicio
+ *    aparte, con su propio ticket (`ticketDePadron`) y su propio trámite de
+ *    habilitación en el certificado.
  *
  * Toda la plata viaja en CENTAVOS; el wire decimal de ARCA es un detalle de
  * este paquete. `fetch` es inyectable en todas las llamadas.
@@ -41,11 +45,22 @@ export {
 export {
   solicitarCae,
   ultimoAutorizado,
+  consultarComprobante,
   estadoDelServicio,
   fechaWire,
   ErrorWsfe,
   type AutorizacionWsfe,
+  type ComprobanteEnArca,
   type ComprobanteParaCae,
   type IvaComprobante,
   type ResultadoCae,
 } from "./wsfe.js";
+
+export {
+  consultarPadron,
+  condicionDesdePadron,
+  ticketDePadron,
+  ErrorPadron,
+  SERVICIO_PADRON,
+  type PersonaEnPadron,
+} from "./padron.js";

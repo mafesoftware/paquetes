@@ -8,6 +8,7 @@
 
 import { describe, expect, it } from "vitest";
 import {
+  consultarComprobante,
   ErrorWsfe,
   fechaWire,
   solicitarCae,
@@ -206,5 +207,114 @@ describe("ultimoAutorizado", () => {
 describe("fechaWire", () => {
   it("ocho dígitos, sin guiones", () => {
     expect(fechaWire(new Date("2026-08-17T15:00:00Z"))).toBe("20260817");
+  });
+});
+
+/* ============================================================
+   FECompConsultar
+   ============================================================ */
+
+describe("consultar un comprobante ya emitido", () => {
+  const BASE = {
+    auth: AUTH,
+    puntoVenta: 1,
+    tipoComprobante: 6,
+    numero: 42,
+    entorno: "homologacion" as const,
+  };
+
+  it("devuelve el CAE que dice ARCA", async () => {
+    const captura: { body?: string } = {};
+    const r = await consultarComprobante({
+      ...BASE,
+      fetch: fetchQueDevuelve(
+        `<soap:Envelope><soap:Body><FECompConsultarResponse><ResultGet>
+          <CodAutorizacion>75123456789012</CodAutorizacion>
+          <FchVto>20261231</FchVto>
+          <Resultado>A</Resultado>
+        </ResultGet></FECompConsultarResponse></soap:Body></soap:Envelope>`,
+        captura
+      ),
+    });
+
+    expect(r.existe).toBe(true);
+    expect(r.cae).toBe("75123456789012");
+    expect(r.vencimientoCae).toBe("20261231");
+    expect(r.resultado).toBe("A");
+
+    // Los tres datos que identifican el comprobante: sin alguno, ARCA
+    // contesta por otro.
+    expect(captura.body).toContain("<ar:CbteNro>42</ar:CbteNro>");
+    expect(captura.body).toContain("<ar:PtoVta>1</ar:PtoVta>");
+    expect(captura.body).toContain("<ar:CbteTipo>6</ar:CbteTipo>");
+  });
+
+  it("el 602 significa «no lo tengo», no una falla", async () => {
+    /*
+     * ARCA devuelve sus errores adentro de un 200. Tratar el 602 como
+     * excepción haría que verificar un comprobante inexistente tire, cuando
+     * "ARCA no lo tiene" es la respuesta que hay que mostrar — y la más grave
+     * de todas, porque significa que el CAE guardado nunca se autorizó.
+     */
+    const r = await consultarComprobante({
+      ...BASE,
+      fetch: fetchQueDevuelve(
+        `<soap:Envelope><soap:Body><Errors><Err>
+          <Code>602</Code><Msg>Sin Resultados</Msg>
+        </Err></Errors></soap:Body></soap:Envelope>`
+      ),
+    });
+
+    expect(r.existe).toBe(false);
+    expect(r.cae).toBe("");
+    expect(r.observaciones).toMatch(/no tiene registrado/i);
+  });
+
+  it("cualquier OTRO código sí es un problema", async () => {
+    await expect(
+      consultarComprobante({
+        ...BASE,
+        fetch: fetchQueDevuelve(
+          `<soap:Envelope><soap:Body><Errors><Err>
+            <Code>600</Code><Msg>Token invalido</Msg>
+          </Err></Errors></soap:Body></soap:Envelope>`
+        ),
+      })
+    ).rejects.toThrow(ErrorWsfe);
+  });
+
+  it("el 602 tolerado NO tapa a un error que venga al lado", async () => {
+    // Tolerar un código es tolerar ESE código, no la lista entera.
+    await expect(
+      consultarComprobante({
+        ...BASE,
+        fetch: fetchQueDevuelve(
+          `<soap:Envelope><soap:Body><Errors>
+            <Err><Code>602</Code><Msg>Sin Resultados</Msg></Err>
+            <Err><Code>600</Code><Msg>Token invalido</Msg></Err>
+          </Errors></soap:Body></soap:Envelope>`
+        ),
+      })
+    ).rejects.toThrow(/600/);
+  });
+
+  it("otros métodos siguen tirando con el 602", async () => {
+    /*
+     * La tolerancia es de esta consulta y no del WSFE: un 602 pidiendo el
+     * último autorizado sí es una falla.
+     */
+    await expect(
+      ultimoAutorizado({
+        auth: AUTH,
+        puntoVenta: 3,
+        tipoComprobante: 6,
+        entorno: "homologacion",
+        fetch: fetchQueDevuelve(
+          `<soap:Envelope><soap:Body><Errors><Err>
+            <Code>602</Code><Msg>Sin Resultados</Msg>
+          </Err></Errors></soap:Body></soap:Envelope>`
+        ),
+      })
+    ).rejects.toThrow(ErrorWsfe);
   });
 });
