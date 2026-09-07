@@ -143,3 +143,76 @@ describe("el mismo algebra sirve para los modulos por plan", () => {
     expect(PLANES.efectivas("premium_hardware", undefined).size).toBe(6);
   });
 });
+
+describe("un valor que no es booleano NO es una excepción", () => {
+  /**
+   * Una excepción es `true` (concede) o `false` (quita). Cualquier otra cosa
+   * —un `"false"` de texto que quedó de un formulario, un `null` que escribió
+   * una migración, un número— **no dice nada**, así que tiene que caer en lo que
+   * diga el preset.
+   *
+   * Antes se resolvía por veracidad: `"false"` y `"no"` son `true` en
+   * JavaScript, así que un valor basura **CONCEDÍA** el permiso o el módulo. Con
+   * los roles no llegaba, porque `leerExcepciones` los limpia antes; con los
+   * módulos sí, porque `clubes.modulos` es un `jsonb` que se leía derecho.
+   *
+   * Y `tiene()` devolvía ese mismo valor crudo, mintiéndole a su firma
+   * `: boolean` — un llamador que comparara con `=== true` habría visto lo
+   * contrario de lo que la función decidió.
+   */
+  const S = crearSistema({
+    claves: ["a", "b"] as const,
+    presets: { basico: ["a"], todo: "todas" } as const,
+  });
+
+  const BASURA = ["false", "no", "true", 0, 1, "", null, [], {}] as unknown[];
+
+  it("cae en el preset, no concede", () => {
+    for (const valor of BASURA) {
+      const exc = { b: valor } as never;
+      expect(S.tiene("basico", exc, "b"), `basura ${JSON.stringify(valor)} concedió b`).toBe(false);
+      expect(S.efectivas("basico", exc).has("b"), `basura ${JSON.stringify(valor)} concedió b`).toBe(false);
+    }
+  });
+
+  it("y tampoco quita lo que el preset SÍ da", () => {
+    for (const valor of BASURA) {
+      const exc = { a: valor } as never;
+      expect(S.tiene("basico", exc, "a"), `basura ${JSON.stringify(valor)} quitó a`).toBe(true);
+      expect(S.efectivas("basico", exc).has("a"), `basura ${JSON.stringify(valor)} quitó a`).toBe(true);
+    }
+  });
+
+  it("tiene() devuelve un booleano de verdad", () => {
+    for (const valor of BASURA) {
+      expect(typeof S.tiene("basico", { b: valor } as never, "b")).toBe("boolean");
+    }
+  });
+
+  it("pero un booleano de verdad sigue siendo una excepción", () => {
+    expect(S.tiene("basico", { b: true }, "b")).toBe(true);
+    expect(S.tiene("todo", { b: false }, "b")).toBe(false);
+    expect(S.efectivas("basico", { b: true }).has("b")).toBe(true);
+    expect(S.efectivas("todo", { a: false }).has("a")).toBe(false);
+  });
+
+  it("tiene() y efectivas() no se pueden contradecir", () => {
+    // Son dos implementaciones de la misma pregunta, así que se recorren todas
+    // las combinaciones: si alguna vez difieren, el menú muestra una cosa y la
+    // guarda decide otra.
+    const valores = [true, false, undefined, "false", null, 0] as unknown[];
+    for (const preset of ["basico", "todo"] as const) {
+      for (const va of valores) {
+        for (const vb of valores) {
+          const exc = { a: va, b: vb } as never;
+          for (const clave of ["a", "b"] as const) {
+            expect(
+              S.tiene(preset, exc, clave),
+              `${preset} a=${JSON.stringify(va)} b=${JSON.stringify(vb)} clave=${clave}`
+            ).toBe(S.efectivas(preset, exc).has(clave));
+          }
+        }
+      }
+    }
+  });
+});

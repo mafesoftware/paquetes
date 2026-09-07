@@ -21,6 +21,12 @@
  * que el preset no da, `false` QUITA algo que el preset sí da, y **no estar**
  * es la única forma de decir "lo que diga el preset".
  *
+ * Y **solo un booleano cuenta como excepción**. Un `"false"` de texto, un `null`
+ * o un número caen en el preset, no en su veracidad de JavaScript: si no,
+ * `"false"` —que es `true`— concedería el permiso. Los roles pasan por
+ * `leerExcepciones`, pero `clubes.modulos` es un `jsonb` que se lee derecho, y
+ * el paquete no puede depender de que cada llamador se acuerde.
+ *
  * ## Esto NO es seguridad por sí solo
  *
  * Este paquete calcula; no protege. Un menú que esconde una sección esconde,
@@ -104,14 +110,28 @@ export function crearSistema<C extends string, N extends string>(config: {
 
   const delPreset = (preset: N): Set<C> => new Set(resueltos.get(preset) ?? []);
 
+  /**
+   * Una excepción es `true` o `false`. **Cualquier otra cosa no dice nada.**
+   *
+   * Antes se resolvía por veracidad, y `"false"` y `"no"` son `true` en
+   * JavaScript: un valor basura CONCEDÍA el permiso. Con los roles no llegaba
+   * —`leerExcepciones` los limpia antes— pero `clubes.modulos` es un `jsonb`
+   * que se leía derecho, así que un módulo podía aparecer contratado porque
+   * alguien dejó un texto donde iba un booleano.
+   */
+  const comoExcepcion = (valor: unknown): boolean | null =>
+    typeof valor === "boolean" ? valor : null;
+
   const efectivas = (preset: N, excepciones: Excepciones<C>): Set<C> => {
     const set = delPreset(preset);
-    if (!excepciones) return set;
-    for (const [clave, valor] of Object.entries(excepciones) as [C, boolean | undefined][]) {
-      // `undefined` NO es `false`: es "lo que diga el preset", asi que se saltea.
-      if (valor === undefined || !conocidas.has(clave)) continue;
-      if (valor) set.add(clave);
-      else set.delete(clave);
+    if (!excepciones || typeof excepciones !== "object") return set;
+    for (const [clave, crudo] of Object.entries(excepciones)) {
+      if (!conocidas.has(clave)) continue;
+      const valor = comoExcepcion(crudo);
+      // `null` acá es "no es una excepción": cae en lo que diga el preset.
+      if (valor === null) continue;
+      if (valor) set.add(clave as C);
+      else set.delete(clave as C);
     }
     return set;
   };
@@ -123,8 +143,12 @@ export function crearSistema<C extends string, N extends string>(config: {
     efectivas,
     tiene(preset, excepciones, clave) {
       if (!conocidas.has(clave)) return false;
-      const excepcion = excepciones?.[clave];
-      if (excepcion !== undefined) return excepcion;
+      // Devuelve un booleano de verdad. Antes devolvía el valor CRUDO del mapa,
+      // así que con un `"false"` de texto adentro esta función contestaba
+      // `"false"` —truthy— y además le mentía a su propia firma: un llamador que
+      // comparara con `=== true` habría visto lo contrario de lo decidido.
+      const excepcion = comoExcepcion(excepciones?.[clave]);
+      if (excepcion !== null) return excepcion;
       return (resueltos.get(preset) ?? new Set<C>()).has(clave);
     },
     minimas(preset, deseadas) {
@@ -143,12 +167,14 @@ export function crearSistema<C extends string, N extends string>(config: {
       if (!excepciones) return {};
       const base = resueltos.get(preset) ?? new Set<C>();
       const out: Partial<Record<C, boolean>> = {};
-      for (const [clave, valor] of Object.entries(excepciones) as [C, boolean | undefined][]) {
-        if (valor === undefined || !conocidas.has(clave)) continue;
+      for (const [clave, crudo] of Object.entries(excepciones)) {
+        if (!conocidas.has(clave)) continue;
+        const valor = comoExcepcion(crudo);
+        if (valor === null) continue;
         // Una excepcion que dice lo mismo que el preset es ruido que se vuelve
         // mentira apenas el preset cambie.
-        if (base.has(clave) === valor) continue;
-        out[clave] = valor;
+        if (base.has(clave as C) === valor) continue;
+        out[clave as C] = valor;
       }
       return out;
     },
