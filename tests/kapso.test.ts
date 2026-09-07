@@ -1,15 +1,15 @@
 import { describe, it, expect } from "vitest";
 import {
   aNumeroWhatsApp,
-  enviarTexto,
-  enviarPlantilla,
-  enviarBotones,
-  enviarLista,
-  enviarAviso,
   crearCliente,
   crearSetupLink,
-  leerEventoWebhook,
   dentroDeVentana24h,
+  enviarAviso,
+  enviarBotones,
+  enviarLista,
+  enviarPlantilla,
+  enviarTexto,
+  leerEventoWebhook,
   type FetchLike,
 } from "../src/index.ts";
 
@@ -487,5 +487,93 @@ describe("onboarding", () => {
       ok: false,
       categoria: "credenciales",
     });
+  });
+});
+
+describe("el 15 se saca solo si sobran dígitos", () => {
+  /**
+   * Con diez dígitos el número ya está en formato nacional: no hay 15 de acceso
+   * que quitar, y el "15" que aparezca es parte del número local.
+   *
+   * Se sacaba igual, así que un socio con un número como `11 1523-4567` quedaba
+   * en ocho dígitos y la función devolvía `null`. Ese socio no se identificaba
+   * nunca cuando le escribía al WhatsApp del club: Lia lo trataba como
+   * desconocido y no había nada en ninguna pantalla que dijera por qué.
+   *
+   * La ambigüedad es real —mirando los dígitos no se distingue el 15 de acceso
+   * del 15 que arranca la parte local— y el largo es lo único que la resuelve.
+   */
+  it("un número de diez dígitos con 15 en la parte local se respeta", () => {
+    expect(aNumeroWhatsApp("1115234567")).toBe("5491115234567");
+    expect(aNumeroWhatsApp("11 1523-4567")).toBe("5491115234567");
+  });
+
+  it("pero el 15 de acceso se sigue sacando cuando sobra", () => {
+    expect(aNumeroWhatsApp("011 15 4567-8901")).toBe("5491145678901");
+    expect(aNumeroWhatsApp("0351 15 456-7890")).toBe("5493514567890");
+  });
+
+  it("los formatos de siempre no se movieron", () => {
+    for (const entrada of ["011 4567-8901", "11 4567-8901", "+54 9 11 4567-8901", "+54 11 4567-8901", "5491145678901", "005491145678901"]) {
+      expect(aNumeroWhatsApp(entrada), entrada).toBe("5491145678901");
+    }
+  });
+
+  it("y lo que no se reconoce sigue siendo null, nunca un número adivinado", () => {
+    // Mandarle el aviso de deuda de un socio a otra persona es peor que no
+    // mandarlo.
+    for (const entrada of ["", "4567", "no tengo", "123", "1".repeat(20)]) {
+      expect(aNumeroWhatsApp(entrada), entrada).toBeNull();
+    }
+  });
+});
+
+describe("un mensaje entrante no puede ser de cualquier tamaño", () => {
+  /**
+   * WhatsApp topea un mensaje en 4096 caracteres, así que más que eso no viene
+   * de una persona.
+   *
+   * Sin corte, ese cuerpo se guardaba entero en la tabla de mensajes y se le
+   * pasaba al asistente: un solo POST con megabytes de texto llena la base y
+   * deja el hilo del club inservible. El webhook está firmado, así que hace
+   * falta que la clave se filtre para llegar acá — y una clave filtrada es
+   * exactamente el escenario en el que este límite importa.
+   */
+  it("el texto se recorta", () => {
+    const largo = "a".repeat(50_000);
+    const e = leerEventoWebhook({
+      event: "whatsapp.message.received",
+      data: { phone_number_id: "123", message: { from: "5491145678901", id: "m1", text: { body: largo } } },
+    });
+    expect(e.tipo).toBe("mensaje");
+    if (e.tipo === "mensaje") expect(e.mensaje.texto.length).toBeLessThanOrEqual(4096);
+  });
+
+  it("y el payload de un botón también", () => {
+    const e = leerEventoWebhook({
+      event: "whatsapp.message.received",
+      data: {
+        phone_number_id: "123",
+        message: {
+          from: "5491145678901",
+          id: "m2",
+          interactive: { type: "button_reply", button_reply: { id: "x".repeat(50_000), title: "y".repeat(50_000) } },
+        },
+      },
+    });
+    expect(e.tipo).toBe("mensaje");
+    if (e.tipo === "mensaje") {
+      expect(e.mensaje.texto.length).toBeLessThanOrEqual(4096);
+      expect((e.mensaje.payload ?? "").length).toBeLessThanOrEqual(4096);
+    }
+  });
+
+  it("un mensaje normal no se toca", () => {
+    const e = leerEventoWebhook({
+      event: "whatsapp.message.received",
+      data: { phone_number_id: "123", message: { from: "5491145678901", id: "m3", text: { body: "hola, cuánto debo?" } } },
+    });
+    expect(e.tipo).toBe("mensaje");
+    if (e.tipo === "mensaje") expect(e.mensaje.texto).toBe("hola, cuánto debo?");
   });
 });

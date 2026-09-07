@@ -96,7 +96,22 @@ export function aNumeroWhatsApp(telefono: string | null | undefined, paisPorDefe
     if (d.startsWith("9")) d = d.slice(1);
     // El 0 de larga distancia y el 15 de celular no viajan a WhatsApp.
     if (d.startsWith("0")) d = d.slice(1);
-    d = d.replace(/^(\d{2,4})15(\d{6,8})$/, "$1$2");
+
+    /**
+     * El 15 se saca SOLO si sobran dígitos.
+     *
+     * Con diez dígitos el número ya está en formato nacional y no hay nada que
+     * quitar: sacarle un "15" que en realidad es parte del número local lo
+     * dejaba en ocho o nueve dígitos y la función devolvía `null`. O sea que un
+     * socio con un número como `11 1523-4567` no se identificaba nunca cuando
+     * le escribía al WhatsApp del club — Lia lo trataba como desconocido y no
+     * había nada que dijera por qué.
+     *
+     * La ambigüedad es real: mirando los dígitos no se distingue el 15 de
+     * acceso del 15 que arranca la parte local. El largo sí la resuelve.
+     */
+    if (d.length > 10) d = d.replace(/^(\d{2,4})15(\d{6,8})$/, "$1$2");
+
     if (d.length !== 10) return null;
     return `549${d}`;
   }
@@ -422,6 +437,18 @@ export type EventoWebhook =
  * de proyecto dispara para TODAS las aplicaciones que comparten el proyecto, y
  * filtrar es responsabilidad de cada una.
  */
+/**
+ * Cuánto texto se acepta de un mensaje entrante.
+ *
+ * WhatsApp topea un mensaje en 4096 caracteres, así que más que eso no viene de
+ * una persona. Sin corte, ese cuerpo se guarda entero en la tabla de mensajes y
+ * se le pasa al asistente: un solo POST con megabytes de texto llena la base y
+ * el hilo del club queda inservible.
+ */
+const MAXIMO_TEXTO = 4096;
+
+const soloLoQueEntra = (v: unknown): string => String(v ?? "").slice(0, MAXIMO_TEXTO);
+
 export function leerEventoWebhook(crudo: unknown): EventoWebhook {
   if (!crudo || typeof crudo !== "object") return { tipo: "ignorado", motivo: "cuerpo vacío" };
   const e = crudo as Record<string, any>;
@@ -474,8 +501,8 @@ export function leerEventoWebhook(crudo: unknown): EventoWebhook {
           tipo: "boton",
           de: String(de),
           phoneNumberId: String(phoneNumberId),
-          texto: String(interactivo.button_reply?.title ?? ""),
-          payload: interactivo.button_reply?.id ? String(interactivo.button_reply.id) : undefined,
+          texto: soloLoQueEntra(interactivo.button_reply?.title),
+          payload: interactivo.button_reply?.id ? soloLoQueEntra(interactivo.button_reply.id) : undefined,
           mensajeId: String(m?.id ?? ""),
           fechaHora: leerFecha(m ?? datos),
         },
@@ -488,8 +515,8 @@ export function leerEventoWebhook(crudo: unknown): EventoWebhook {
           tipo: "opcion_lista",
           de: String(de),
           phoneNumberId: String(phoneNumberId),
-          texto: String(interactivo.list_reply?.title ?? ""),
-          payload: interactivo.list_reply?.id ? String(interactivo.list_reply.id) : undefined,
+          texto: soloLoQueEntra(interactivo.list_reply?.title),
+          payload: interactivo.list_reply?.id ? soloLoQueEntra(interactivo.list_reply.id) : undefined,
           mensajeId: String(m?.id ?? ""),
           fechaHora: leerFecha(m ?? datos),
         },
@@ -503,7 +530,7 @@ export function leerEventoWebhook(crudo: unknown): EventoWebhook {
         tipo: texto ? "texto" : "otro",
         de: String(de),
         phoneNumberId: String(phoneNumberId),
-        texto: texto ? String(texto) : "",
+        texto: texto ? soloLoQueEntra(texto) : "",
         mensajeId: String(m?.id ?? ""),
         fechaHora: leerFecha(m ?? datos),
       },
