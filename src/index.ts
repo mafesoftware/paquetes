@@ -25,11 +25,31 @@
 /** Un monto guardado en centavos. Se marca con el nombre, no con un tipo. */
 export type Centavos = number;
 
-export function aCentavos(pesos: number): Centavos {
-  if (!Number.isFinite(pesos)) return 0;
+/**
+ * El techo de un monto: `MAX_SAFE_INTEGER` centavos.
+ *
+ * No es una decisión de producto, es el límite de los enteros de JavaScript.
+ * Pasado ese punto los enteros dejan de ser exactos —saltan de dos en dos, y
+ * después de mil en mil—, así que un monto más grande **no es un monto**: es un
+ * número que nadie tipeó y que Postgres o rechaza o guarda mal.
+ *
+ * Son unos noventa billones de pesos. Ninguna cuota de ningún club se acerca.
+ */
+export const MAXIMO_CENTAVOS = Number.MAX_SAFE_INTEGER;
+
+/**
+ * Pesos a centavos. `null` si el monto no se puede representar exacto.
+ *
+ * Devuelve `null` y no `0`: un cero silencioso es un pago de cero pesos
+ * registrado como si fuera lo que la persona quiso escribir.
+ */
+export function aCentavos(pesos: number): Centavos | null {
+  if (!Number.isFinite(pesos)) return null;
+  if (Math.abs(pesos) > MAXIMO_CENTAVOS / 100) return null;
   // `Math.round` sobre el producto y no `parseInt`: 19.99 * 100 da
   // 1998.9999999999998 en coma flotante, y truncar deja 1998.
-  return Math.round(pesos * 100);
+  const centavos = Math.round(pesos * 100);
+  return Number.isSafeInteger(centavos) ? centavos : null;
 }
 
 export function aPesos(centavos: Centavos): number {

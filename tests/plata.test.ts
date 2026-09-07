@@ -19,12 +19,14 @@ describe("aCentavos", () => {
     // 19.99 * 100 da 1998.9999999999998; truncar dejaria 1998.
     expect(aCentavos(19.99)).toBe(1999);
   });
-  it("devuelve 0 para lo que no es un numero", () => {
-    expect(aCentavos(NaN)).toBe(0);
-    expect(aCentavos(Infinity)).toBe(0);
+  it("devuelve null para lo que no es un monto", () => {
+    // `null` y no `0`: un cero silencioso queda registrado como si fuera lo que
+    // la persona quiso escribir, y en un pago eso es un recibo por cero pesos.
+    expect(aCentavos(NaN)).toBeNull();
+    expect(aCentavos(Infinity)).toBeNull();
   });
   it("es la vuelta de aPesos", () => {
-    expect(aPesos(aCentavos(1234.56))).toBeCloseTo(1234.56, 10);
+    expect(aPesos(aCentavos(1234.56)!)).toBeCloseTo(1234.56, 10);
   });
 });
 
@@ -141,5 +143,43 @@ describe("sumarCentavos", () => {
   });
   it("suma", () => {
     expect(sumarCentavos([100, 250, 3])).toBe(353);
+  });
+});
+
+describe("un monto fuera de rango no es un monto", () => {
+  /**
+   * `Number` acepta `"99999999999999999999"` y lo convierte a `1e+22`, que ya no
+   * es un entero exacto: pasado `MAX_SAFE_INTEGER` los enteros de JavaScript
+   * empiezan a saltar de dos en dos y después de mil en mil.
+   *
+   * Eso terminaba en una columna `bigint` de Postgres, que lo rechaza —o peor,
+   * se guarda un número que nadie tipeó—. El límite es técnico, no de producto:
+   * `MAX_SAFE_INTEGER` centavos son unos noventa billones de pesos, así que
+   * ninguna cuota de ningún club se acerca.
+   */
+  it("un número absurdo se rechaza como cualquier otra cosa que no es plata", () => {
+    for (const t of ["99999999999999999999", "1" + "0".repeat(30), "9007199254740993"]) {
+      expect(parsearPlata(t), `aceptó ${t}`).toBeNull();
+    }
+  });
+
+  it("lo que un club puede llegar a cobrar de verdad sigue entrando", () => {
+    // Mil millones de pesos: absurdo para una cuota y muy lejos del límite.
+    expect(parsearPlata("1.000.000.000")).toBe(100_000_000_000);
+    expect(parsearPlata("44.000")).toBe(4_400_000);
+    expect(parsearPlata("1.234,56")).toBe(123_456);
+  });
+
+  it("el negativo grande también", () => {
+    expect(parsearPlata("-99999999999999999999")).toBeNull();
+    // Un negativo normal sigue pasando: quien decide si vale es quien llama.
+    expect(parsearPlata("-500")).toBe(-50_000);
+  });
+
+  it("aCentavos avisa en vez de devolver un número que miente", () => {
+    expect(aCentavos(1e18)).toBeNull();
+    expect(aCentavos(19.99)).toBe(1999);
+    expect(aCentavos(Infinity)).toBeNull();
+    expect(aCentavos(NaN)).toBeNull();
   });
 });
