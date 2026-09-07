@@ -1,13 +1,15 @@
 import { describe, it, expect } from "vitest";
 import {
-  evaluarAcceso,
-  dentroDeFranja,
-  reconciliar,
+  MENSAJES,
   aforoLuegoDe,
   armarPadron,
-  type SocioParaAcceso,
+  dentroDeFranja,
+  evaluarAcceso,
+  reconciliar,
   type DispositivoParaAcceso,
   type EventoAcceso,
+  type MotivoRechazo,
+  type SocioParaAcceso,
 } from "../src/index.ts";
 
 const socio = (over: Partial<SocioParaAcceso> = {}): SocioParaAcceso => ({
@@ -388,5 +390,43 @@ describe("armarPadron", () => {
   });
   it("normaliza el apto ausente a null", () => {
     expect(armarPadron([{ ...socio(), carnetVersion: 1 }])[0]!.aptoMedicoHasta).toBeNull();
+  });
+});
+
+describe("cada motivo de rechazo tiene su mensaje", () => {
+  /**
+   * El mapa y el tipo se editan por separado, así que agregar un motivo nuevo y
+   * olvidarse del mensaje es un olvido de una línea que no rompe nada: el
+   * `Record<MotivoRechazo, string>` lo atrapa en el typecheck, pero solo si el
+   * mapa está tipado — y este test lo afirma también en tiempo de ejecución,
+   * porque lo que llega a la pantalla del molinete es el valor, no el tipo.
+   */
+  const TODOS: MotivoRechazo[] = [
+    "socio_desconocido",
+    "carnet_revocado",
+    "socio_inactivo",
+    "socio_suspendido",
+    "cuota_impaga",
+    "categoria_sin_acceso",
+    "fuera_de_horario",
+    "sin_apto_medico",
+    "antipassback",
+    "aforo_completo",
+    "dispositivo_inactivo",
+    "sentido_no_permitido",
+  ];
+
+  it("ninguno queda sin texto, y ninguno muestra el slug crudo", () => {
+    for (const motivo of TODOS) {
+      const texto = MENSAJES[motivo];
+      expect(texto, `${motivo} no tiene mensaje`).toBeTruthy();
+      // Un texto igual al slug querría decir que se puso de relleno.
+      expect(texto, `${motivo} muestra el slug`).not.toBe(motivo);
+      expect(texto.length, `${motivo} tiene un mensaje muy corto`).toBeGreaterThan(5);
+    }
+  });
+
+  it("y el mapa no tiene motivos que ya no existen", () => {
+    expect(Object.keys(MENSAJES).sort()).toEqual([...TODOS].sort());
   });
 });

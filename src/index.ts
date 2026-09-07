@@ -30,6 +30,8 @@ export type Sentido = "ingreso" | "egreso";
 /** Por qué no entra. Cada motivo es un mensaje distinto en la portería. */
 export type MotivoRechazo =
   | "socio_desconocido"
+  /** El carnet es de una versión que el club ya mató. */
+  | "carnet_revocado"
   | "socio_inactivo"
   | "socio_suspendido"
   | "cuota_impaga"
@@ -108,8 +110,17 @@ export type ResultadoAcceso = {
   motivoOriginal?: MotivoRechazo;
 };
 
-const MENSAJES: Record<MotivoRechazo, string> = {
+/**
+ * El mensaje corto de cada rechazo, para la pantalla del lector.
+ *
+ * **Se exporta.** Estaba copiado en `accesosNucleo.ts` y ya había derivado: el
+ * mismo rechazo decía una cosa cuando lo resolvía el paquete y otra cuando lo
+ * resolvía la aplicación. Es el vocabulario del control de acceso y vive donde
+ * vive la decisión.
+ */
+export const MENSAJES: Record<MotivoRechazo, string> = {
   socio_desconocido: "Carnet no reconocido",
+  carnet_revocado: "Carnet revocado",
   socio_inactivo: "Socio dado de baja",
   socio_suspendido: "Socio suspendido",
   cuota_impaga: "Cuota impaga",
