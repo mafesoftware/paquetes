@@ -1,18 +1,18 @@
 import { describe, it, expect } from "vitest";
 import { sumarCentavos } from "@mafesoftware/plata-ar";
 import {
-  saldo,
-  diasDeAtraso,
+  SIN_RECARGO,
   calcularRecargo,
-  totalAPagar,
-  resumirDeuda,
+  diasDeAtraso,
+  emitirPeriodo,
   imputarPago,
   prorratear,
-  emitirPeriodo,
-  vencimientosDe,
-  SIN_RECARGO,
+  resumirDeuda,
+  saldo,
+  totalAPagar,
   type Deuda,
   type EsquemaRecargo,
+  vencimientosDe,
 } from "../src/index.ts";
 
 const d = (over: Partial<Deuda> & Pick<Deuda, "id" | "vencimiento" | "importe">): Deuda => over;
@@ -450,5 +450,83 @@ describe("vencimientosDe", () => {
   });
   it("cruza el fin de mes", () => {
     expect(vencimientosDe("2026-09-25", 10).segundo).toBe("2026-10-05");
+  });
+});
+
+describe("el recargo se cobra UNA vez, no en cada pago parcial", () => {
+  /**
+   * El recargo del club es un porcentaje PLANO que arranca pasado el segundo
+   * vencimiento: "10% de la cuota". No es un interés diario.
+   *
+   * Se calculaba sobre el saldo y sin mirar lo ya cobrado, así que un pago
+   * parcial lo volvía a disparar:
+   *
+   *     cuota 100000, recargo 10%       -> debe 110000
+   *     paga 55000 (cubre el recargo)   -> capital restante 55000
+   *     recargo NUEVO 10% de 55000      -> debe 60500
+   *                                        total 115500, no 110000
+   *
+   * Y compone: cada pago parcial vuelve a agregar recargo sobre lo que queda.
+   * El socio que no puede pagar todo de una es exactamente el que más lo sufre.
+   *
+   * La regla ahora: el recargo se calcula sobre lo que se debe, y **nunca supera
+   * el porcentaje de la cuota entera** menos lo que ya se cobró de recargo.
+   */
+  const ESQUEMA = { escalones: [{ diasVencido: 1, porcentaje: 10 }] };
+  const HOY = "2027-03-01";
+  const VENCIDA = "2027-01-10";
+
+  it("sin pagos, el recargo es el porcentaje de la cuota", () => {
+    expect(calcularRecargo({ id: "c", vencimiento: VENCIDA, importe: 100_000 }, HOY, ESQUEMA)).toBe(10_000);
+  });
+
+  it("con el recargo ya cobrado, no se vuelve a cobrar", () => {
+    const d = { id: "c", vencimiento: VENCIDA, importe: 100_000, pagado: 45_000, recargoCobrado: 10_000 };
+    expect(calcularRecargo(d, HOY, ESQUEMA)).toBe(0);
+    // Y lo que falta es exactamente el capital que queda.
+    expect(totalAPagar(d, HOY, ESQUEMA)).toBe(55_000);
+  });
+
+  it("el total que termina pagando es la cuota más UN recargo, pague en una o en tres veces", () => {
+    // La afirmación que importa: pagar en cuotas no puede costar más.
+    const deUnaVez = totalAPagar({ id: "c", vencimiento: VENCIDA, importe: 100_000 }, HOY, ESQUEMA);
+    expect(deUnaVez).toBe(110_000);
+
+    let pagado = 0;
+    let recargoCobrado = 0;
+    let entregado = 0;
+
+    // Vueltas de sobra: lo que se afirma es el TOTAL entregado hasta saldar, no
+    // en cuántos pagos se logró.
+    for (let vuelta = 0; vuelta < 60; vuelta++) {
+      const d = { id: "c", vencimiento: VENCIDA, importe: 100_000, pagado, recargoCobrado };
+      const falta = totalAPagar(d, HOY, ESQUEMA);
+      if (falta === 0) break;
+
+      // Entrega un tercio de lo que falta, como quien paga de a poco.
+      const entrega = Math.min(falta, Math.max(1, Math.ceil(falta / 3)));
+      const r = imputarPago(entrega, [d], { hoy: HOY, esquema: ESQUEMA });
+      for (const i of r.imputaciones) {
+        pagado += i.aCapital;
+        recargoCobrado += i.aRecargo;
+      }
+      entregado += entrega - r.aFavor;
+    }
+
+    expect(entregado, "pagar en varias veces salió más caro").toBe(deUnaVez);
+  });
+
+  it("si pagó parte ANTES de vencer, el recargo es sobre lo que quedó debiendo", () => {
+    // Es lo justo: el recargo castiga lo que se pagó tarde, no lo que se pagó
+    // a tiempo.
+    const d = { id: "c", vencimiento: VENCIDA, importe: 100_000, pagado: 50_000, recargoCobrado: 0 };
+    expect(calcularRecargo(d, HOY, ESQUEMA)).toBe(5_000);
+    expect(totalAPagar(d, HOY, ESQUEMA)).toBe(55_000);
+  });
+
+  it("una deuda saldada no tiene recargo", () => {
+    const d = { id: "c", vencimiento: VENCIDA, importe: 100_000, pagado: 100_000, recargoCobrado: 10_000 };
+    expect(calcularRecargo(d, HOY, ESQUEMA)).toBe(0);
+    expect(totalAPagar(d, HOY, ESQUEMA)).toBe(0);
   });
 });

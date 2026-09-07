@@ -49,8 +49,22 @@ export type Deuda = {
   vencimiento: string;
   /** Lo que se debe, sin recargo. */
   importe: Centavos;
-  /** Lo ya imputado a esta deuda, recargo incluido. */
+  /**
+   * El CAPITAL ya imputado a esta deuda. Sin el recargo.
+   *
+   * (Este comentario decía "recargo incluido" y era falso: quien la arma pasa
+   * la columna `pagado`, que guarda solo capital. El recargo cobrado va aparte,
+   * abajo — y confundirlos hace que el saldo salga mal.)
+   */
   pagado?: Centavos;
+  /**
+   * El recargo ya cobrado de esta deuda.
+   *
+   * Hace falta para no cobrarlo dos veces: el recargo del club es un porcentaje
+   * PLANO —"10% de la cuota"— y sin este dato un pago parcial lo volvía a
+   * disparar sobre el saldo que quedaba.
+   */
+  recargoCobrado?: Centavos;
   /** Para mostrar y para congelar en el recibo. */
   concepto?: string;
   /** Una deuda anulada o condonada no se cobra ni cuenta para la morosidad. */
@@ -135,7 +149,27 @@ export function calcularRecargo(d: Deuda, hoy: string, esquema: EsquemaRecargo =
     porcentaje = Math.min(porcentaje, esquema.topePorcentaje);
   }
 
-  return aplicarPorcentaje(base, Math.max(0, porcentaje));
+  porcentaje = Math.max(0, porcentaje);
+
+  /**
+   * El recargo se calcula sobre lo que se DEBE, pero el total cobrado por esta
+   * deuda nunca supera el porcentaje de la cuota entera.
+   *
+   * Las dos mitades hacen falta:
+   *
+   * - Sobre el saldo, para que a quien pagó parte ANTES de vencer el recargo le
+   *   caiga solo sobre lo que pagó tarde.
+   * - Con el tope, para que un pago parcial no vuelva a disparar el recargo
+   *   completo. Sin él, una cuota de 100000 al 10% terminaba costando 115500 si
+   *   se pagaba en dos veces, y componía: cada pago parcial agregaba recargo
+   *   sobre el resto. El socio que no puede pagar todo de una es exactamente el
+   *   que más lo sufría.
+   */
+  const sobreElSaldo = aplicarPorcentaje(base, porcentaje);
+  const techoDeLaDeuda = aplicarPorcentaje(Math.max(0, d.importe), porcentaje);
+  const yaCobrado = Math.max(0, d.recargoCobrado ?? 0);
+
+  return Math.max(0, Math.min(sobreElSaldo, techoDeLaDeuda - yaCobrado));
 }
 
 /** Saldo + recargo: lo que hay que pagar hoy por esta deuda. */
