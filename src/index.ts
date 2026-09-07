@@ -95,14 +95,46 @@ export function hoyEnInput(zona = ZONA_AR, ahora = new Date()): string {
   return diaEnZona(ahora, zona);
 }
 
+/* ============================================================
+   FORMATTERS CACHEADOS
+   ============================================================ */
+
+/**
+ * Los `Intl.DateTimeFormat` se guardan por zona.
+ *
+ * **Construir uno cuesta casi ocho veces más que usarlo.** Medido: 3000
+ * `formatToParts` con un formatter reusado tardan 9 ms, y construyendo uno cada
+ * vez, 69 ms. Estas dos funciones son la base de todos los rangos de día y de
+ * cada turno de la grilla, así que una pantalla de reservas de diez canchas las
+ * llama cientos de veces: son decenas de milisegundos por request en aritmética
+ * de husos, que no le sirven a nadie.
+ *
+ * El caché es seguro porque un formatter es inmutable y no guarda estado entre
+ * llamadas. Son a lo sumo unas pocas entradas: una por zona de club.
+ */
+const formatters = new Map<string, Intl.DateTimeFormat>();
+
+function formatter(clave: string, armar: () => Intl.DateTimeFormat): Intl.DateTimeFormat {
+  let f = formatters.get(clave);
+  if (!f) {
+    f = armar();
+    formatters.set(clave, f);
+  }
+  return f;
+}
+
 /** El día de calendario (`"2026-08-19"`) al que pertenece un instante. */
 export function diaEnZona(instante: Date | string, zona = ZONA_AR): string {
-  const partes = new Intl.DateTimeFormat("en-CA", {
-    timeZone: zona,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).formatToParts(new Date(instante));
+  const partes = formatter(
+    `dia:${zona}`,
+    () =>
+      new Intl.DateTimeFormat("en-CA", {
+        timeZone: zona,
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+      })
+  ).formatToParts(new Date(instante));
   const parte = (t: string) => partes.find((p) => p.type === t)?.value ?? "";
   return `${parte("year")}-${parte("month")}-${parte("day")}`;
 }
@@ -128,9 +160,54 @@ export function inicioDelDia(dia: Date | string, zona = ZONA_AR): Date {
   // Segunda pasada: si el desfase cambió (cruce de horario de verano) se
   // recalcula con el desplazamiento del instante corregido.
   const desfase2 = desplazamientoMinutos(corregida, zona);
-  return desfase2 === desfase
-    ? corregida
-    : new Date(tentativa.getTime() + desfase2 * 60_000);
+  const candidata =
+    desfase2 === desfase ? corregida : new Date(tentativa.getTime() + desfase2 * 60_000);
+
+  return primerInstanteDelDia(candidata, iso, zona);
+}
+
+/**
+ * Ajusta la aproximación hasta que caiga adentro del día pedido.
+ *
+ * **Hay días en que la medianoche no existe.** En Chile, el 6 de septiembre de
+ * 2026 el reloj salta de las 24:00 del 5 directo a la 01:00 del 6, así que
+ * "las 00:00 del 6" no es un instante: la cuenta de arriba caía una hora antes
+ * y devolvía las 23:00 del 5.
+ *
+ * El síntoma era de una hora, un día al año, y no se veía: el rango del 6 se
+ * llevaba la última hora del 5, y el 5 terminaba una hora antes. Un pago de las
+ * 23:30 aparecía en el reporte del día siguiente.
+ *
+ * Se camina de a quince minutos porque todos los desplazamientos y todos los
+ * saltos de horario de verano vigentes son múltiplos de quince —hay zonas de
+ * media hora (Kolkata) y de tres cuartos (Chatham)—. El recorrido está acotado:
+ * ningún salto pasa de dos horas.
+ */
+function primerInstanteDelDia(candidata: Date, iso: string, zona: string): Date {
+  const PASO = 15 * 60_000;
+  const TOPE = 8; // dos horas para cada lado
+
+  if (diaEnZona(candidata, zona) === iso) {
+    // Puede estar DESPUÉS del arranque real: se retrocede mientras siga siendo
+    // el mismo día, para devolver el primer instante y no uno del medio.
+    let t = candidata;
+    for (let i = 0; i < TOPE; i++) {
+      const antes = new Date(t.getTime() - PASO);
+      if (diaEnZona(antes, zona) !== iso) break;
+      t = antes;
+    }
+    return t;
+  }
+
+  // Cayó en el día anterior: se avanza hasta la primera hora que sí existe.
+  let t = candidata;
+  for (let i = 0; i < TOPE; i++) {
+    t = new Date(t.getTime() + PASO);
+    if (diaEnZona(t, zona) === iso) return t;
+  }
+  // No debería pasar. Se devuelve la aproximación en vez de tirar: un reporte
+  // corrido una hora es malo, y una pantalla que no carga es peor.
+  return candidata;
 }
 
 /**
@@ -142,6 +219,82 @@ export function inicioDelDia(dia: Date | string, zona = ZONA_AR): Date {
 export function finDelDia(dia: Date | string, zona = ZONA_AR): Date {
   const iso = typeof dia === "string" ? dia.slice(0, 10) : paraInputFecha(dia);
   return inicioDelDia(sumarDiasISO(iso, 1), zona);
+}
+
+/**
+ * El instante en que el reloj de pared de `zona` marca `hhmm` el día `diaISO`.
+ *
+ * Es la operación que necesita la grilla de reservas: "las 08:00 del martes en
+ * el club" es un instante distinto según la zona y según si ese día hubo cambio
+ * de horario.
+ *
+ * **Vive acá y no en `@mafesoftware/reservas` a propósito.** Estaba duplicada,
+ * y la aritmética de husos duplicada es exactamente cómo una parte del sistema
+ * termina contestando distinto que la otra sobre el mismo momento. Con una sola
+ * implementación, arreglar un borde lo arregla en todos lados.
+ *
+ * Si esa hora de pared **no existió** ese día —el reloj saltó por encima— se
+ * devuelve el primer instante posterior que sí existe, igual que
+ * `inicioDelDia`. Devolver la hora anterior pondría un turno de las 08:00 a las
+ * 07:00, antes de que el club abra.
+ */
+export function instanteEnZona(diaISO: string, hhmm: string, zona = ZONA_AR): Date {
+  const iso = diaISO.slice(0, 10);
+  const tentativa = new Date(`${iso}T${hhmm}:00Z`);
+  const desfase = desplazamientoMinutos(tentativa, zona);
+  const corregida = new Date(tentativa.getTime() + desfase * 60_000);
+  const desfase2 = desplazamientoMinutos(corregida, zona);
+  const candidata =
+    desfase2 === desfase ? corregida : new Date(tentativa.getTime() + desfase2 * 60_000);
+
+  const minutosPedidos = aMinutos(hhmm);
+  if (minutosPedidos === null) return candidata;
+
+  // El camino de siempre: la cuenta ya dio, y no hace falta buscar nada.
+  if (diaEnZona(candidata, zona) === iso && horaDePared(candidata, zona) === minutosPedidos) {
+    return candidata;
+  }
+
+  /**
+   * La hora pedida no existió ese día: el reloj saltó por encima.
+   *
+   * **No se puede buscar por hora de pared**, porque esa hora nunca aparece —
+   * por eso el intento anterior de este bucle no encontraba nada y devolvía las
+   * 23:00 del día anterior. Lo que se busca es el primer instante que esté en el
+   * día pedido y cuyo reloj marque esa hora o una posterior: para unas 00:00 que
+   * no existieron, la 01:00.
+   *
+   * Se arranca dos horas antes de la aproximación para no depender de si quedó
+   * antes o después del salto, y se camina de a quince minutos porque todos los
+   * desplazamientos vigentes son múltiplos de quince.
+   */
+  let t = new Date(candidata.getTime() - 2 * 3600_000);
+  for (let i = 0; i < 40; i++) {
+    if (diaEnZona(t, zona) === iso && horaDePared(t, zona) >= minutosPedidos) return t;
+    t = new Date(t.getTime() + 15 * 60_000);
+  }
+  return candidata;
+}
+
+/** Los minutos de pared (0..1439) que marca `zona` en ese instante. */
+function horaDePared(instante: Date, zona: string): number {
+  const partes = formatter(
+    `desfase:${zona}`,
+    () =>
+      new Intl.DateTimeFormat("en-US", {
+        timeZone: zona,
+        hour12: false,
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+      })
+  ).formatToParts(instante);
+  const p = (t: string) => Number(partes.find((x) => x.type === t)?.value ?? 0);
+  const hora = p("hour") === 24 ? 0 : p("hour");
+  return hora * 60 + p("minute");
 }
 
 /** Suma días a un `"2026-08-19"` sin pasar por husos. */
@@ -163,16 +316,20 @@ export function diasEntre(desdeISO: string, hastaISO: string): number {
  * pared en `zona` marque la misma hora. Negativo al oeste de Greenwich.
  */
 function desplazamientoMinutos(instante: Date, zona: string): number {
-  const partes = new Intl.DateTimeFormat("en-US", {
-    timeZone: zona,
-    hour12: false,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-  }).formatToParts(instante);
+  const partes = formatter(
+    `desfase:${zona}`,
+    () =>
+      new Intl.DateTimeFormat("en-US", {
+        timeZone: zona,
+        hour12: false,
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+      })
+  ).formatToParts(instante);
   const p = (t: string) => Number(partes.find((x) => x.type === t)?.value ?? 0);
   const hora = p("hour") === 24 ? 0 : p("hour");
   const comoUTC = Date.UTC(p("year"), p("month") - 1, p("day"), hora, p("minute"), p("second"));

@@ -1,22 +1,23 @@
 import { describe, it, expect } from "vitest";
 import {
   ZONA_AR,
-  diaCorto,
-  diaLargo,
-  paraInputFecha,
-  hoyEnInput,
-  diaEnZona,
-  inicioDelDia,
-  finDelDia,
-  sumarDiasISO,
-  diasEntre,
-  instanteDelDia,
-  horaCorta,
-  diaYHora,
-  haceCuanto,
-  diaDeSemana,
   aMinutos,
   deMinutos,
+  diaCorto,
+  diaDeSemana,
+  diaEnZona,
+  diaLargo,
+  diaYHora,
+  diasEntre,
+  finDelDia,
+  haceCuanto,
+  horaCorta,
+  hoyEnInput,
+  inicioDelDia,
+  instanteDelDia,
+  instanteEnZona,
+  paraInputFecha,
+  sumarDiasISO,
 } from "../src/index.ts";
 
 describe("dias de calendario: se leen en UTC", () => {
@@ -163,5 +164,131 @@ describe("horarios de grilla", () => {
   it("deMinutos envuelve el dia", () => {
     expect(deMinutos(1440)).toBe("00:00");
     expect(deMinutos(-60)).toBe("23:00");
+  });
+});
+
+describe("los dias en que la medianoche NO existe", () => {
+  /**
+   * En Chile, el 6 de septiembre de 2026 el reloj salta de las 24:00 del 5
+   * directo a la 01:00 del 6: **las 00:00 de ese día no existen**.
+   *
+   * La corrección de dos pasadas caía una hora antes y devolvía las 23:00 del
+   * día anterior. El síntoma es de una hora, un día al año, y silencioso: el
+   * rango `[inicioDelDia, finDelDia)` del 6 se llevaba la última hora del 5, así
+   * que un pago o un acceso de las 23:30 aparecía en el reporte del día
+   * siguiente. El 5, en cambio, terminaba una hora antes.
+   *
+   * Argentina hoy no tiene horario de verano, pero la zona del club **sale de la
+   * base** y este paquete se reusa en los otros productos: el que se rompe es
+   * el club de Santiago, no el nuestro.
+   */
+  const SANTIAGO = "America/Santiago";
+
+  it("el arranque del día es la primera hora que SÍ existe", () => {
+    const arranque = inicioDelDia("2026-09-06", SANTIAGO);
+    expect(diaEnZona(arranque, SANTIAGO)).toBe("2026-09-06");
+    // Y es la 01:00 local, no las 00:00 que no existieron.
+    expect(horaCorta(arranque, SANTIAGO)).toBe("01:00");
+  });
+
+  it("y no se solapa con el día anterior", () => {
+    // Sin esto, la última hora del 5 caía adentro del 6.
+    const finDel5 = finDelDia("2026-09-05", SANTIAGO);
+    const inicioDel6 = inicioDelDia("2026-09-06", SANTIAGO);
+    expect(finDel5.getTime()).toBe(inicioDel6.getTime());
+    expect(diaEnZona(new Date(finDel5.getTime() - 60_000), SANTIAGO)).toBe("2026-09-05");
+  });
+
+  it("la propiedad vale para todo el año y en zonas de media hora y de 45 minutos", () => {
+    // Es la afirmación que importa: el arranque de un día pertenece a ESE día.
+    // Un solo día mal corre los reportes, el estado de cuota y el aforo.
+    const zonas = [
+      "America/Argentina/Buenos_Aires",
+      "America/Santiago",
+      "America/Sao_Paulo",
+      "Asia/Kolkata",
+      "Australia/Lord_Howe",
+      "Pacific/Chatham",
+      "Europe/Madrid",
+      "UTC",
+    ];
+    const fallas: string[] = [];
+    for (const zona of zonas) {
+      let dia = "2026-01-01";
+      for (let i = 0; i < 365; i++) {
+        if (diaEnZona(inicioDelDia(dia, zona), zona) !== dia) fallas.push(`${zona} ${dia}`);
+        dia = sumarDiasISO(dia, 1);
+      }
+    }
+    expect(fallas).toEqual([]);
+  });
+
+  it("el fin de un día sigue siendo el arranque del siguiente, sin huecos", () => {
+    const zonas = ["America/Santiago", "Europe/Madrid", "Pacific/Chatham"];
+    for (const zona of zonas) {
+      let dia = "2026-01-01";
+      for (let i = 0; i < 365; i++) {
+        expect(finDelDia(dia, zona).getTime(), `${zona} ${dia}`).toBe(
+          inicioDelDia(sumarDiasISO(dia, 1), zona).getTime()
+        );
+        dia = sumarDiasISO(dia, 1);
+      }
+    }
+  });
+});
+
+describe("instanteEnZona: la hora de pared del club", () => {
+  /**
+   * Vive acá y no en `@mafesoftware/reservas` porque **estaba duplicada**, y la
+   * aritmética de husos duplicada es exactamente cómo una parte del sistema
+   * termina contestando distinto que la otra sobre el mismo momento — que es el
+   * bug que ya pasó con "este turno ya pasó".
+   */
+  it("las 08:00 en Buenos Aires son las 11:00 UTC", () => {
+    expect(instanteEnZona("2026-06-15", "08:00", "America/Argentina/Buenos_Aires").toISOString()).toBe(
+      "2026-06-15T11:00:00.000Z"
+    );
+  });
+
+  it("funciona en un huso de media hora", () => {
+    // Kolkata es +5:30: las 08:00 de allá son las 02:30 UTC.
+    expect(instanteEnZona("2026-06-15", "08:00", "Asia/Kolkata").toISOString()).toBe(
+      "2026-06-15T02:30:00.000Z"
+    );
+  });
+
+  it("y en uno de tres cuartos de hora", () => {
+    // Chatham es +12:45 en invierno del norte.
+    const t = instanteEnZona("2026-06-15", "08:00", "Pacific/Chatham");
+    expect(horaCorta(t, "Pacific/Chatham")).toBe("08:00");
+  });
+
+  it("la hora de pared que pide es la que devuelve, todo el año", () => {
+    // Es la afirmación que importa para la grilla: un turno de las 08:00 tiene
+    // que arrancar a las 08:00 del club, no a las 07:00 ni a las 09:00.
+    const fallas: string[] = [];
+    for (const zona of ["America/Santiago", "Europe/Madrid", "America/Sao_Paulo", "Australia/Lord_Howe"]) {
+      let dia = "2026-01-01";
+      for (let i = 0; i < 365; i++) {
+        for (const hhmm of ["00:00", "08:00", "23:00"]) {
+          const t = instanteEnZona(dia, hhmm, zona);
+          const marca = horaCorta(t, zona);
+          // La única excepción admitida es que esa hora no haya existido: ahí
+          // devuelve la primera posterior, y eso es más tarde, nunca más temprano.
+          if (marca !== hhmm && marca < hhmm) fallas.push(`${zona} ${dia} ${hhmm} -> ${marca}`);
+        }
+        dia = sumarDiasISO(dia, 1);
+      }
+    }
+    expect(fallas).toEqual([]);
+  });
+
+  it("si la hora no existió, devuelve la primera posterior y no la anterior", () => {
+    // En Santiago el 6-sep-2026 el reloj salta de 24:00 a 01:00: las 00:00 no
+    // existieron. Un turno de las 00:00 tiene que quedar a la 01:00, no a las
+    // 23:00 del día anterior — antes de que el club abra.
+    const t = instanteEnZona("2026-09-06", "00:00", "America/Santiago");
+    expect(diaEnZona(t, "America/Santiago")).toBe("2026-09-06");
+    expect(horaCorta(t, "America/Santiago")).toBe("01:00");
   });
 });
