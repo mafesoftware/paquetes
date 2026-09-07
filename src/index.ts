@@ -22,7 +22,14 @@
  * candado de verdad es un índice único en la base.
  */
 
-import { aMinutos, deMinutos, diaEnZona, diasEntre, ZONA_AR } from "@mafesoftware/fechas-ar";
+import {
+  aMinutos,
+  deMinutos,
+  diaEnZona,
+  diasEntre,
+  instanteEnZona,
+  ZONA_AR,
+} from "@mafesoftware/fechas-ar";
 import type { Centavos } from "@mafesoftware/plata-ar";
 
 export type { Centavos };
@@ -137,7 +144,7 @@ export function generarTurnos(opciones: {
       if (yaGenerados.has(m)) continue;
       yaGenerados.add(m);
 
-      const inicio = instanteEn(diaISO, m, zona);
+      const inicio = instanteEnZona(diaISO, deMinutos(m), zona);
       const fin = new Date(inicio.getTime() + espacio.duracionMinutos * 60_000);
 
       const bloqueo = bloqueos.find((b) => seSolapan(inicio, fin, b.desde, b.hasta));
@@ -399,32 +406,3 @@ export function verificarSolapamiento(
 }
 
 /** El instante de `"2026-09-09"` a las `minutos` de pared, en `zona`. */
-function instanteEn(diaISO: string, minutos: number, zona: string): Date {
-  const hhmm = deMinutos(minutos);
-  // Se busca el instante UTC cuyo reloj de pared en `zona` marca ese horario.
-  // Arranca de la medianoche UTC y corrige por el desplazamiento real de ese
-  // dia — asi funciona con horario de verano y con husos de media hora.
-  const tentativa = new Date(`${diaISO}T${hhmm}:00Z`);
-  const corregida = new Date(tentativa.getTime() - desplazamiento(tentativa, zona) * 60_000);
-  const segunda = desplazamiento(corregida, zona);
-  return segunda === desplazamiento(tentativa, zona)
-    ? corregida
-    : new Date(tentativa.getTime() - segunda * 60_000);
-}
-
-function desplazamiento(instante: Date, zona: string): number {
-  const partes = new Intl.DateTimeFormat("en-US", {
-    timeZone: zona,
-    hour12: false,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-  }).formatToParts(instante);
-  const p = (t: string) => Number(partes.find((x) => x.type === t)?.value ?? 0);
-  const hora = p("hour") === 24 ? 0 : p("hour");
-  const comoUTC = Date.UTC(p("year"), p("month") - 1, p("day"), hora, p("minute"), p("second"));
-  return (comoUTC - instante.getTime()) / 60_000;
-}
