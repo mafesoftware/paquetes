@@ -150,7 +150,14 @@ export function generarTurnos(opciones: {
       let estado: EstadoTurno;
       if (esPropio) estado = "propio";
       else if (bloqueo) estado = "bloqueado";
-      else if (ahora && fin <= ahora) estado = "pasado";
+      // Un turno que YA ARRANCÓ está pasado, aunque todavía no haya terminado.
+      //
+      // Acá decía `fin <= ahora`, y `puedeReservar` usa `inicio <= ahora`: dos
+      // reglas para la misma pregunta. La diferencia era toda la hora en curso,
+      // todos los días, en cada espacio — la grilla mostraba "Libre" y al
+      // apretar contestaba "Ese turno ya pasó". La regla de la acción es la
+      // correcta: nadie reserva una cancha que ya está en uso.
+      else if (ahora && inicio <= ahora) estado = "pasado";
       else if (lugares <= 0) estado = "ocupado";
       else estado = "libre";
 

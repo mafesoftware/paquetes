@@ -17,6 +17,7 @@ const cancha: Espacio = { id: "cancha1", duracionMinutos: 60, precio: 500000 };
 /** Miercoles de 08:00 a 22:00. */
 const GRILLA: FranjaGrilla[] = [{ dia: 3, desde: "08:00", hasta: "22:00" }];
 const MIERCOLES = "2026-09-09";
+const ZONA = "America/Argentina/Buenos_Aires";
 
 const socio = (over: Partial<SocioParaReserva> = {}): SocioParaReserva => ({
   id: "soc1",
@@ -146,15 +147,58 @@ describe("estado de los turnos", () => {
     expect(bloqueados[0]!.motivoBloqueo).toBe("Torneo interno");
   });
 
-  it("los turnos ya terminados salen como 'pasado'", () => {
+  it("un turno que ya ARRANCÓ sale como 'pasado', no como libre", () => {
+    /**
+     * Este test afirmaba lo contrario y estaba mal.
+     *
+     * Decía que a las 15:30 el turno de 15:00 a 16:00 seguía "libre", porque la
+     * grilla usaba `fin <= ahora`. Pero `puedeReservar` usa `inicio <= ahora` y
+     * lo rechaza con `turno_pasado`. Eran dos reglas para la misma pregunta, y
+     * la diferencia era **toda la hora en curso**: la pantalla mostraba un botón
+     * "Libre" que al apretarlo contestaba "Ese turno ya pasó".
+     *
+     * La regla de la acción es la correcta: nadie reserva una cancha que ya está
+     * en uso.
+     */
     const t = generarTurnos({
       espacio: cancha,
       diaISO: MIERCOLES,
       franjas: GRILLA,
       ahora: alAs("15:30"),
     });
-    expect(t.filter((x) => x.estado === "pasado")).toHaveLength(7); // 08 a 15
-    expect(t.find((x) => x.inicio.getTime() === alAs("15:00").getTime())!.estado).toBe("libre");
+    // De 08 a 15 inclusive: el de 15:00 ya arrancó.
+    expect(t.filter((x) => x.estado === "pasado")).toHaveLength(8);
+    expect(t.find((x) => x.inicio.getTime() === alAs("15:00").getTime())!.estado).toBe("pasado");
+    expect(t.find((x) => x.inicio.getTime() === alAs("16:00").getTime())!.estado).toBe("libre");
+  });
+
+  it("la grilla y la acción coinciden en qué turno ya pasó", () => {
+    // Es el test que impide que las dos reglas vuelvan a separarse: recorre la
+    // grilla entera y le pregunta a la acción por cada turno.
+    const ahora = alAs("15:30");
+    const t = generarTurnos({ espacio: cancha, diaISO: MIERCOLES, franjas: GRILLA, ahora });
+
+    for (const turno of t) {
+      const r = puedeReservar({
+        socio: socio(),
+        espacio: cancha,
+        inicio: turno.inicio,
+        fin: turno.fin,
+        reglas: {},
+        reservasDelTurno: [],
+        reservasDelSocio: [],
+        bloqueos: [],
+        ahora,
+        zona: ZONA,
+        enGrilla: true,
+      });
+      const laAccionDiceQuePaso = !r.puede && r.motivo === "turno_pasado";
+      expect(
+        laAccionDiceQuePaso,
+        `la grilla dice "${turno.estado}" para ${turno.inicio.toISOString()} y la acción dice ` +
+          `${r.puede ? "que se puede" : r.motivo}`
+      ).toBe(turno.estado === "pasado");
+    }
   });
 
   it("con cupo, informa cuantos lugares quedan", () => {
