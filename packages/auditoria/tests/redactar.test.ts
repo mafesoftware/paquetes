@@ -103,11 +103,15 @@ describe("redactar", () => {
     expect((copia as typeof original).datos).not.toBe(original.datos);
   });
 
-  it("Date se copia por valor, no se recorre como objeto plano", () => {
+  it("N2: Date se convierte a ISO string (no se recorre como objeto plano, y ya no se copia como Date)", () => {
     const fecha = new Date("2026-01-01T00:00:00.000Z");
-    const copia = redactar({ vence: fecha }) as { vence: Date };
-    expect(copia.vence).toEqual(fecha);
-    expect(copia.vence).not.toBe(fecha);
+    const copia = redactar({ vence: fecha }) as { vence: string };
+    expect(copia.vence).toBe("2026-01-01T00:00:00.000Z");
+  });
+
+  it("N2: una Date inválida da \"[fecha-invalida]\", no tira", () => {
+    expect(() => redactar(new Date("no es una fecha"))).not.toThrow();
+    expect(redactar(new Date("no es una fecha"))).toBe("[fecha-invalida]");
   });
 
   it("valores no-objeto (incluido undefined) se devuelven tal cual", () => {
@@ -164,18 +168,32 @@ describe("redactar", () => {
     expect(redactar(u)).toEqual({ nombre: "ana", password: "[redactado]" });
   });
 
-  it("I3: un Map se convierte a un objeto de entradas (clave String(clave)) y se redacta igual", () => {
+  it("N4/I3: un Map se convierte a un ARREGLO de pares [clave, valor] (no un objeto) y se redacta por par", () => {
     const m = new Map<string, unknown>([
       ["usuario", "ana"],
       ["contrasena", "hunter2"],
     ]);
-    expect(redactar(m)).toEqual({ usuario: "ana", contrasena: "[redactado]" });
+    expect(redactar(m)).toEqual([
+      ["usuario", "ana"],
+      ["contrasena", "[redactado]"],
+    ]);
+  });
+
+  it("N4: dos claves de Map que colisionarían como propiedad de objeto (1 número y \"1\" string) NO se pisan en el arreglo de pares", () => {
+    const m = new Map<unknown, unknown>([
+      [1, "numerica"],
+      ["1", "string"],
+    ]);
+    expect(redactar(m)).toEqual([
+      ["1", "numerica"],
+      ["1", "string"],
+    ]);
   });
 
   it("I3: un Map con clave sensible en profundidad (Map de Map)", () => {
     const interno = new Map<string, unknown>([["password", "hunter2"]]);
     const externo = new Map<string, unknown>([["credenciales", interno]]);
-    expect(redactar(externo)).toEqual({ credenciales: { password: "[redactado]" } });
+    expect(redactar(externo)).toEqual([["credenciales", [["password", "[redactado]"]]]]);
   });
 
   it("I3: un Set se convierte a un arreglo (sin claves, así que sus elementos no se tapan por nombre, igual que un arreglo)", () => {
@@ -196,9 +214,10 @@ describe("redactar", () => {
     expect(() => {
       resultado = redactar(m);
     }).not.toThrow();
-    const r = resultado as Record<string, unknown>;
-    expect(r.self).toBe("[ciclo]");
-    expect(r.contrasena).toBe("[redactado]");
+    expect(resultado).toEqual([
+      ["self", "[ciclo]"],
+      ["contrasena", "[redactado]"],
+    ]);
   });
 
   it("I3: un Set que se contiene a sí mismo no tira, esa rama queda como \"[ciclo]\"", () => {
@@ -225,5 +244,101 @@ describe("redactar", () => {
     }).not.toThrow();
     expect((resultado as Record<string, unknown>).contrasena).toBe("[redactado]");
     expect((resultado as Record<string, unknown>).roto).toBe("[error]");
+  });
+
+  describe("N2: tipos especiales", () => {
+    it("un decimal.js-like (clase con toJSON) se llama y su resultado se redacta/recorre", () => {
+      class Decimal {
+        constructor(private valor: string) {}
+        toJSON(): string {
+          return this.valor;
+        }
+      }
+      expect(redactar({ precio: new Decimal("12.50") })).toEqual({ precio: "12.50" });
+    });
+
+    it("un objeto cuyo toJSON tira da \"[error]\", no propaga la excepción", () => {
+      const roto = { toJSON: () => { throw new Error("toJSON roto"); } };
+      expect(() => redactar(roto)).not.toThrow();
+      expect(redactar(roto)).toBe("[error]");
+    });
+
+    it("un objeto cuyo toJSON devuelve this (cíclico patológico) no tira: queda \"[ciclo]\"", () => {
+      const obj: { toJSON?: () => unknown } = {};
+      obj.toJSON = () => obj;
+      expect(() => redactar(obj)).not.toThrow();
+      expect(redactar(obj)).toBe("[ciclo]");
+    });
+
+    it("una URL: solo origin+pathname, sin query ni hash (pueden traer secretos)", () => {
+      const url = new URL("https://api.com/perfil?token=SECRETO123#fragmento");
+      expect(redactar(url)).toBe("https://api.com/perfil");
+      const crudo = JSON.stringify(redactar(url));
+      expect(crudo).not.toContain("SECRETO123");
+      expect(crudo).not.toContain("fragmento");
+    });
+
+    it("una URL se resuelve ANTES que el chequeo genérico de toJSON (URL.prototype.toJSON da el href completo, con query)", () => {
+      const url = new URL("https://api.com/x?token=NUNCA-DEBERIA-APARECER");
+      // Si el toJSON nativo de URL ganara, esto daría el href completo con el token.
+      expect(redactar(url)).toBe("https://api.com/x");
+    });
+
+    it("un Error: solo { name }, nunca .message (puede traer el valor que causó el error)", () => {
+      const error = new Error("contiene secreto123");
+      const resultado = redactar(error) as { name: string; message?: string };
+      expect(resultado).toEqual({ name: "Error" });
+      expect(JSON.stringify(resultado)).not.toContain("secreto123");
+    });
+
+    it("un Buffer de 1 MB da \"[binario 1048576 bytes]\", nunca el contenido byte a byte", () => {
+      const buffer = Buffer.alloc(1024 * 1024, 1);
+      expect(redactar(buffer)).toBe("[binario 1048576 bytes]");
+    });
+
+    it("un TypedArray/ArrayBuffer/DataView también dan \"[binario N bytes]\"", () => {
+      expect(redactar(new Uint8Array(10))).toBe("[binario 10 bytes]");
+      expect(redactar(new ArrayBuffer(16))).toBe("[binario 16 bytes]");
+      expect(redactar(new DataView(new ArrayBuffer(8)))).toBe("[binario 8 bytes]");
+    });
+
+    it("un RegExp se convierte a su representación con barras", () => {
+      expect(redactar(/abc/gi)).toBe("/abc/gi");
+    });
+  });
+
+  describe("N3: nunca tira por una clave/objeto roto", () => {
+    it("una clave de Map sin prototipo (Object.create(null), sin toString) no tira: queda \"[clave]\"", () => {
+      const claveRota = Object.create(null) as object;
+      const m = new Map<unknown, unknown>([[claveRota, "valor"]]);
+      let resultado: unknown;
+      expect(() => {
+        resultado = redactar(m);
+      }).not.toThrow();
+      expect(resultado).toEqual([["[clave]", "valor"]]);
+    });
+
+    it("una clave de Map cuyo toString tira no tira: queda \"[clave]\"", () => {
+      const claveRota = { toString: () => { throw new Error("toString roto"); } };
+      const m = new Map<unknown, unknown>([[claveRota, "valor"]]);
+      expect(() => redactar(m)).not.toThrow();
+      expect(redactar(m)).toEqual([["[clave]", "valor"]]);
+    });
+
+    it("un Proxy cuya trampa ownKeys tira no tira: el objeto entero queda \"[error]\"", () => {
+      const proxy = new Proxy(
+        { a: 1 },
+        {
+          ownKeys() {
+            throw new Error("ownKeys roto a propósito");
+          },
+        },
+      );
+      let resultado: unknown;
+      expect(() => {
+        resultado = redactar({ x: proxy });
+      }).not.toThrow();
+      expect((resultado as Record<string, unknown>).x).toBe("[error]");
+    });
   });
 });

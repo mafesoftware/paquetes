@@ -135,8 +135,27 @@ secreto guardado bajo una clave NO sensible (ej. `{ notas: "la clave
 temporal es Xy9$zK" }`, donde la clave es `"notas"`, no `"clave"`) **no se
 detecta**. `redactar` nunca mira el contenido de un string.
 
+**Tipos especiales** (mismo tratamiento y mismo ORDEN que
+`serializarParaAuditoria`, ver más abajo — el orden importa: `URL` tiene su
+propio `toJSON` que devuelve el `href` COMPLETO con query/hash, así que se
+resuelve ANTES del chequeo genérico de `toJSON`):
+
+| Tipo | Resultado |
+|---|---|
+| `Buffer`/`TypedArray`/`ArrayBuffer`/`DataView` | `"[binario N bytes]"` (nunca el contenido) |
+| `Date` | ISO string (`"[fecha-invalida]"` si es inválida) |
+| `RegExp` | `String(re)`, ej. `"/abc/gi"` |
+| `URL` | `origin` + `pathname`, SIN `search` ni `hash` (pueden traer secretos: `?token=...`, `#access_token=...`) |
+| `Error` | `{ name }` únicamente — nunca `.message` (puede traer el valor que causó el error) |
+| cualquier otro objeto con `toJSON` propio | se llama (atrapa una excepción → `"[error]"`) y el resultado se redacta recursivamente |
+| `Map` | arreglo de pares `[String(clave), valor]` — **no un objeto**: dos claves de `Map` distintas (ej. el número `1` y el string `"1"`) pueden normalizar al MISMO nombre de propiedad, y un objeto perdería una en silencio. Un par cuya clave (ya convertida a texto) es sensible tiene su VALOR redactado |
+| `Set` | arreglo |
+
 Nunca tira: una referencia circular queda como `"[ciclo]"`, una clave cuyo
-`get` tira queda como `"[error]"`.
+`get` tira queda como `"[error]"`, una clave de `Map` cuyo `toString` tira
+(o un objeto sin prototipo como clave) queda como `"[clave]"`, y un objeto
+cuyas claves no se pueden enumerar (un `Proxy` con una trampa `ownKeys` que
+tira) queda como `"[error]"` entero.
 
 ```ts
 import { redactar, CAMPOS_SENSIBLES_POR_DEFECTO } from "@mafesoftware/auditoria";
@@ -159,6 +178,12 @@ redactar({ token: "t1", extra: "visible" }, ["token"]); // lista propia
 class Usuario { constructor(public nombre: string, public password: string) {} }
 redactar(new Usuario("ana", "hunter2"));
 // { nombre: "ana", password: "[redactado]" } (instancia de clase: se redactan sus campos propios)
+
+redactar(new URL("https://api.com/perfil?token=SECRETO#frag"));
+// "https://api.com/perfil" (sin "?token=SECRETO" ni "#frag")
+
+redactar(new Map([[1, "hunter2"], ["contrasena", "hunter3"]]));
+// [["1", "hunter2"], ["contrasena", "[redactado]"]] (arreglo de pares, no objeto)
 ```
 
 #### `CAMPOS_SENSIBLES_POR_DEFECTO: readonly string[]`
@@ -175,15 +200,24 @@ CAMPOS_SENSIBLES_POR_DEFECTO;
 #### `serializarParaAuditoria(v: unknown): unknown`
 
 Deja `v` listo para `jsonb`: **nunca tira**, ni siquiera con una clave cuyo
-`get` tira (queda como `"[error]"`). `bigint` se convierte a un STRING con
-sufijo `"n"` (`123n` → `"123n"` — JSON no tiene tipo `bigint` y
-`JSON.stringify(123n)` tira directo); `Date` se convierte a su ISO string;
-`undefined` se descarta (la clave desaparece de un objeto; adentro de un
-arreglo se convierte a `null`, no se saca el índice); `Map` se convierte a
-un objeto de entradas (clave `String(clave)`); `Set` a un arreglo;
-cualquier otro objeto — plano o instancia de clase propia — se recorre por
-sus campos propios enumerables. Una referencia circular queda como
-`"[ciclo]"`, sin recursión infinita.
+`get` tira (queda como `"[error]"`) o cuyas claves no se pueden enumerar (un
+`Proxy` con `ownKeys` roto → `"[error]"` entero). `bigint` se convierte a un
+STRING con sufijo `"n"` (`123n` → `"123n"` — JSON no tiene tipo `bigint` y
+`JSON.stringify(123n)` tira directo); `undefined` se descarta (la clave
+desaparece de un objeto; adentro de un arreglo se convierte a `null`, no se
+saca el índice). Una referencia circular queda como `"[ciclo]"`, sin
+recursión infinita.
+
+**Tipos especiales** (mismo tratamiento y mismo orden que `redactar`, ver
+su sección más arriba): `Buffer`/`TypedArray`/`ArrayBuffer`/`DataView` →
+`"[binario N bytes]"`; `Date` → ISO string (`"[fecha-invalida]"` si es
+inválida); `RegExp` → `String(re)`; `URL` → `origin` + `pathname` (sin
+`search` ni `hash`); `Error` → `{ name }` únicamente; cualquier otro objeto
+con `toJSON` propio se llama y su resultado se serializa recursivamente;
+`Map` se convierte a un arreglo de pares `[String(clave), valor]` (no un
+objeto — evita perder entradas cuando dos claves distintas normalizan al
+mismo string); `Set` a un arreglo; cualquier otro objeto — plano o
+instancia de clase propia — se recorre por sus campos propios enumerables.
 
 ```ts
 import { serializarParaAuditoria } from "@mafesoftware/auditoria";
@@ -193,6 +227,15 @@ serializarParaAuditoria({ saldo: 123n, vence: new Date("2026-01-01T00:00:00.000Z
 
 serializarParaAuditoria([1n, undefined, 3n]);
 // ["1n", null, "3n"]
+
+serializarParaAuditoria(new Map([["a", 1n]]));
+// [["a", "1n"]] (arreglo de pares, no objeto)
+
+serializarParaAuditoria(new URL("https://api.com/x?token=SECRETO"));
+// "https://api.com/x"
+
+serializarParaAuditoria(new Error("mensaje que puede tener datos"));
+// { name: "Error" } (nunca .message)
 ```
 
 ### `/drizzle` (`@mafesoftware/auditoria/drizzle`)
@@ -280,30 +323,45 @@ sqlInmutabilidad("a".repeat(41)); // tira: nombre demasiado largo
 
 #### `auditar(dbOTx, tabla: TablaAuditoria, entrada): Promise<{ ok: true; id: string } | { ok: false; error: unknown }>`
 
-Redacta `antes`/`despues`, calcula `cambios` con `loQueCambio` **sobre lo
-YA redactado**, serializa los tres, e inserta.
+Calcula `cambios` con `loQueCambio` sobre los valores CRUDOS de
+`entrada.antes`/`entrada.despues`, redacta `antes`/`despues`/`cambios`,
+serializa los tres, e inserta.
 
-**Por qué se redacta ANTES de diffear (no después).** La primera versión
-calculaba `cambios = loQueCambio(entrada.antes, entrada.despues)` con los
-valores CRUDOS y redactaba recién después, mirando solo el último segmento
-de cada ruta — un secreto ANIDADO bajo una clave ancestro sensible (ej.
-`{ token: { access: "AAA1" } }`, donde `"token"` es sensible pero
-`"access"` no) llegaba a la base SIN TAPAR. El fix: `redactar` corre sobre
-`antes`/`despues` ENTEROS (mira TODOS los ancestros de una ruta) ANTES de
-llamar a `loQueCambio`, que nunca llega a ver el secreto. **Consecuencia
-aceptada**: si un valor sensible CAMBIÓ, como los dos lados quedan
-`"[redactado]"` antes de diffear, `cambios` no muestra que hubo un cambio
-ahí en absoluto — se prioriza no filtrar el secreto por sobre mostrar que
-existió un cambio en un campo sensible.
+**Cómo se evita que un secreto (cambiado o no) llegue a `cambios`.**
+`cambios` se calcula sobre los valores CRUDOS — no sobre versiones ya
+redactadas — y recién DESPUÉS se redacta el resultado, mirando CUALQUIER
+segmento de la ruta con puntos (`"token.access"` → `["token", "access"]`),
+no solo el último. Si algún segmento es sensible (`"token"` lo es, aunque
+`"access"` no), el VALOR ENTERO de esa entrada se reemplaza por
+`"[redactado]"` en cada lado que esté definido — nunca el valor real, pero
+**sí queda registrado que ese campo CAMBIÓ**. Una versión anterior redactaba
+`antes`/`despues` ENTEROS *antes* de diffear (para tapar la misma fuga);
+eso hacía que los dos lados de un campo sensible llegaran a `loQueCambio`
+como el MISMO string `"[redactado]"`, y un cambio real en ese campo
+desaparecía de `cambios` por completo — no solo el valor, la SEÑAL de que
+hubo un cambio. El diseño actual evita las dos fugas: ni el valor real ni
+"nada cambió" cuando sí cambió.
 
 **Nunca tira.** Devuelve `{ ok, ... }` y, si falla, loguea un RESUMEN
 seguro con `console.error` — **nunca** el objeto de error completo: un
-`DrizzleQueryError` trae, como propiedades PROPIAS, el SQL armado y los
-PARÁMETROS bindeados (`console.error(msg, error)` filtraría cualquier valor
-insertado, redactado o no, al log de la app). Solo `entidad`/`entidadId`/
-`accion` de la propia entrada, más `code`/`message` del error de Postgres
-(`error.cause`) van al log — `message` describe la RESTRICCIÓN que falló,
-nunca el valor que la violó (eso vive en `DETAIL`, que tampoco se lee).
+`DrizzleQueryError` trae, como propiedad PROPIA (`.message`), el SQL armado
+y los PARÁMETROS bindeados (`"Failed query: <sql>\nparams: <valores>"`).
+`auditar` **nunca** lee `.message`/`.code` del error de afuera, ni siquiera
+como último recurso: solo `code`/`message` de `error.cause` (el error real
+de `pg`) van al log — `message` describe la RESTRICCIÓN que falló, nunca el
+valor que la violó (eso vive en `DETAIL`, que tampoco se lee). Si
+`error.cause` falta o no tiene nada legible, el log usa un string genérico
+fijo (`"error de base de datos sin detalle"`), nunca "lo que haya" del
+error de afuera.
+
+**`resultado.error` (cuando `ok: false`) es el error CRUDO**, no un
+resumen — puede traer el SQL/params igual que arriba. Se devuelve así por
+si un llamador necesita inspeccionarlo en código (ej. reintentar según
+`error.cause.code`), pero eso significa que **nunca hay que
+loguearlo/mostrarlo tal cual** a un usuario final o a un sistema externo.
+Si tu app necesita mostrar o reenviar el motivo de un fallo, armá tu propio
+resumen seguro (mismo patrón que el interno de `auditar`) en vez de asumir
+que `resultado.error` ya es seguro para mostrar.
 
 El trade-off de "nunca tira" adentro de una transacción: un `INSERT` que
 falla deja esa transacción ABORTADA en Postgres — un simple `try/catch` NO
@@ -341,8 +399,17 @@ const resultado = await auditar(db, auditoria, {
   despues: productoNuevo,
 });
 if (!resultado.ok) {
-  // resultado.error ya se logueó con console.error; seguir igual, no relanzar.
+  // resultado.error ya se logueó (resumen seguro) con console.error;
+  // seguir igual, no relanzar — y nunca mostrar resultado.error tal cual.
 }
+
+// Un campo sensible que CAMBIÓ queda registrado (sin el valor real):
+await auditar(db, auditoria, {
+  tenantId, entidad: "usuario", entidadId, accion: "actualizar", actor: { tipo: "usuario" },
+  antes: { password: "A" }, despues: { password: "B" },
+});
+// cambios: [{ campo: "password", antes: "[redactado]", despues: "[redactado]" }]
+// (se sabe que "password" cambió, nunca a qué)
 
 // Adentro de una transacción de negocio: si auditar falla, la tx externa
 // sigue viva (SAVEPOINT) y commitea el resto de su trabajo.
@@ -389,17 +456,26 @@ Postgres real: inserción, rollback (una tx que revierte no deja fila),
 no aborta esa tx externa — probado con una escritura de NEGOCIO en una
 tabla SEPARADA de auditoría, para confirmar que el `SAVEPOINT` protege
 cualquier trabajo previo de la tx, no solo otra fila de auditoría),
-redacción aplicada ANTES de llegar a la base (verificado leyendo el `jsonb`
-CRUDO con `::text`, incluido un secreto ANIDADO bajo una clave ancestro
-sensible — el caso que se filtraba antes del fix estructural), que
-`console.error` nunca loguea el error completo ni valores de la entrada
-(spía sobre `console.error`, silenciado en los tests de fallo para no
-ensuciar la salida), `pagina`/`porPagina` con `NaN`/`Infinity`, aislamiento
-entre tenants y paginación. `tests/drizzle/postgres-inmutabilidad.test.ts`
+redacción aplicada correctamente (verificado leyendo el `jsonb` CRUDO con
+`::text`): un secreto ANIDADO bajo una clave ancestro sensible no aparece
+NUNCA, pero un cambio en un campo sensible SÍ queda registrado en
+`cambios` (con los valores tapados, no ausente — la regresión que corrigió
+esta ronda), que `console.error` nunca loguea el error completo ni valores
+de la entrada (spía sobre `console.error`, silenciado en los tests de
+fallo para no ensuciar la salida), `pagina`/`porPagina` con
+`NaN`/`Infinity`, aislamiento entre tenants y paginación.
+`tests/drizzle/auditar-log-seguro.test.ts` (sin Postgres real — un `dbOTx`
+falso alcanza) prueba que el log nunca cae al `.message` del error de
+AFUERA (que trae el SQL + params) ni siquiera cuando falta `error.cause`.
+`tests/redaccion-anidada.test.ts` (núcleo, sin Postgres) prueba la misma
+lógica de redacción de `cambios` con las funciones exportadas del núcleo,
+más los tipos especiales (`Buffer`, `URL`, `Error`, `toJSON`, claves de
+`Map` rotas, `Proxy` con `ownKeys` roto) en `tests/redactar.test.ts`/
+`tests/serializar.test.ts`. `tests/drizzle/postgres-inmutabilidad.test.ts`
 prueba que el trigger de `sqlInmutabilidad` rechaza
-`UPDATE`/`DELETE`/`TRUNCATE`. No hay mock que valga para ninguno de los
-dos: son comportamientos de Postgres (un `SAVEPOINT` real, un trigger
-real), no lógica de la app en el vacío.
+`UPDATE`/`DELETE`/`TRUNCATE`. No hay mock que valga para lo que sí
+necesita Postgres real: son comportamientos de la base (un `SAVEPOINT`
+real, un trigger real), no lógica de la app en el vacío.
 
 Levantalo con `docker compose up -d db_test` desde la raíz del monorepo
 antes de correr `bun run test` — si no está arriba, esos archivos FALLAN

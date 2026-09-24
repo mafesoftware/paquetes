@@ -27,15 +27,9 @@ export interface EntradaAuditoria {
 export type ResultadoAuditar = { ok: true; id: string } | { ok: false; error: unknown };
 
 /**
- * Defensa EN PROFUNDIDAD sobre `cambios` (el resultado de `loQueCambio`),
- * DESPUÉS de que `auditar` ya corrió `redactar` sobre `antes`/`despues`
- * ANTES de diffearlos (ver el JSDoc de `auditar`, sección "Cómo se evita
- * que un secreto anidado llegue a `cambios`"). En el flujo normal, esto casi
- * nunca encuentra nada que tapar — `antes`/`despues` ya llegan redactados
- * acá, así que cualquier valor bajo una clave sensible YA es
- * `"[redactado]"` antes de que `loQueCambio` lo vea. Se mantiene igual como
- * red de seguridad ante cualquier hueco no anticipado (ej. si algún día
- * `loQueCambio` cambia y deja de operar sobre el resultado de `redactar`).
+ * Redacta `cambios` (el resultado de `loQueCambio` sobre los valores
+ * CRUDOS — ver el JSDoc de `auditar`, sección "Cómo se evita que un
+ * secreto llegue a `cambios`").
  *
  * A diferencia de `redactar` (que tapa por NOMBRE DE CLAVE de un objeto),
  * acá el nombre del campo sensible vive como VALOR de `campo` (ej.
@@ -46,10 +40,16 @@ export type ResultadoAuditar = { ok: true; id: string } | { ok: false; error: un
  *
  * Chequea CUALQUIER segmento de la ruta con puntos (no solo el último): si
  * `"token.access"` matchea porque `"token"` es sensible (aunque `"access"`
- * no lo sea), igual se tapa — la fuga original de este paquete (C1) era
- * justo eso, un ancestro sensible con un hijo de nombre inocuo.
+ * no lo sea), el VALOR entero de esa entrada se reemplaza por
+ * `"[redactado]"` en cada lado que esté DEFINIDO — un lado `undefined`
+ * (típico de un alta/baja: no había "antes", o no queda "despues") se deja
+ * `undefined`, para no fingir que había un valor ahí. Para un cambio que
+ * NO tiene ningún segmento sensible en su ruta, igual se corre `redactar`
+ * sobre cada lado (`antes`/`despues` pueden ser objetos, arreglos,
+ * instancias, `Map`s o `Set`s con una clave sensible ADENTRO — ej. un
+ * arreglo de objetos donde cambió un `password` en algún elemento).
  */
-function redactarCambiosDefensaEnProfundidad(cambios: CambioAuditoria[], camposSensibles: readonly string[]): CambioAuditoria[] {
+function redactarCambios(cambios: CambioAuditoria[], camposSensibles: readonly string[]): CambioAuditoria[] {
   const sensibles = normalizarTerminos(camposSensibles);
   return cambios.map((cambio) => {
     const tieneSegmentoSensible = cambio.campo.split(".").some((segmento) => esClaveSensible(segmento, sensibles));
@@ -69,65 +69,90 @@ function redactarCambiosDefensaEnProfundidad(cambios: CambioAuditoria[], camposS
 }
 
 /**
- * Un resumen SEGURO de `error` para loguear: nunca el objeto de error
- * completo (que para un fallo de Postgres vía Drizzle es un
- * `DrizzleQueryError` que trae, como propiedades PROPIAS del objeto, el SQL
- * armado Y los PARÁMETROS bindeados — `console.error(mensaje, error)`
- * terminaría imprimiendo cada valor que se intentó insertar, secretos
- * redactados o sin redactar incluidos, en el log de la app). Solo
- * `code`/`message` del error de POSTGRES (`error.cause`, donde Drizzle deja
- * el error original del driver `pg` — nunca `error.query`/`error.params`
- * del wrapper, que ni siquiera se leen acá). El `message` de un error de
- * Postgres (`null value in column ... violates not-null constraint`, `new
- * row for relation ... violates check constraint ...`) describe la
- * RESTRICCIÓN que falló, nunca el VALOR que la violó (eso vive en
- * `DETAIL`, que tampoco se lee acá) — por eso es seguro de loguear.
+ * Un mensaje que NUNCA contiene "Failed query"/"params:" — el patrón exacto
+ * que arma un `DrizzleQueryError` para su PROPIO `.message` (el SQL armado
+ * seguido de los parámetros bindeados). Un mensaje de Postgres real (el que
+ * sí interesa, desde `error.cause`) nunca tiene estas frases — esto es
+ * además una segunda red, no la única defensa: `resumenDeError` NUNCA lee
+ * `.message` del error de afuera, solo de `error.cause`.
  */
-function resumenDeError(error: unknown): string {
-  const causa = error && typeof error === "object" && "cause" in error ? (error as { cause?: unknown }).cause : undefined;
-  const origen = causa && typeof causa === "object" ? causa : error && typeof error === "object" ? error : undefined;
-  if (origen) {
-    const code = "code" in origen ? (origen as { code?: unknown }).code : undefined;
-    const message = "message" in origen ? (origen as { message?: unknown }).message : undefined;
-    const partes = [
-      typeof code === "string" || typeof code === "number" ? `code=${String(code)}` : undefined,
-      typeof message === "string" ? `message=${message}` : undefined,
-    ].filter((p): p is string => p !== undefined);
-    if (partes.length > 0) return partes.join(", ");
-  }
-  return "error desconocido (sin code/message legibles)";
+function mensajeSeguro(mensaje: string): string | undefined {
+  if (mensaje.includes("Failed query") || mensaje.includes("params:")) return undefined;
+  return mensaje;
 }
 
 /**
- * Escribe una fila de auditoría: redacta `antes`/`despues`, calcula
- * `cambios` con `loQueCambio` SOBRE LO YA REDACTADO, serializa los tres, e
- * inserta.
+ * Un resumen SEGURO de `error` para loguear: nunca el objeto de error
+ * completo, y nunca — ni siquiera como fallback — `error.message`/
+ * `error.code` del error de AFUERA. Para un fallo de Postgres vía Drizzle,
+ * `error` es un `DrizzleQueryError` cuyo PROPIO `.message` es justamente
+ * `"Failed query: <sql>\nparams: <valores bindeados>"` — leerlo (aunque
+ * fuera como último recurso, cuando `error.cause` faltara) filtraría el SQL
+ * armado y cada parámetro, exactamente lo que esta función existe para
+ * evitar. Por eso: SOLO `code`/`message` de `error.cause` (donde Drizzle
+ * deja el error original del driver `pg`) — nunca `error.query`/
+ * `error.params` del wrapper, que ni siquiera se leen acá — y si `cause`
+ * falta o no tiene nada legible, un string genérico FIJO, nunca "lo que
+ * haya" del error de afuera. El `message` de un error de Postgres (`null
+ * value in column ... violates not-null constraint`, `new row for relation
+ * ... violates check constraint ...`) describe la RESTRICCIÓN que falló,
+ * nunca el VALOR que la violó (eso vive en `DETAIL`, que tampoco se lee
+ * acá) — por eso es seguro de loguear, y además se filtra con
+ * `mensajeSeguro` por si alguna vez llegara a traer esas frases.
+ */
+function resumenDeError(error: unknown): string {
+  const causa = error && typeof error === "object" && "cause" in error ? (error as { cause?: unknown }).cause : undefined;
+  if (causa && typeof causa === "object") {
+    const code = "code" in causa ? (causa as { code?: unknown }).code : undefined;
+    const messageCruda = "message" in causa ? (causa as { message?: unknown }).message : undefined;
+    const message = typeof messageCruda === "string" ? mensajeSeguro(messageCruda) : undefined;
+    const partes = [
+      typeof code === "string" || typeof code === "number" ? `code=${String(code)}` : undefined,
+      message !== undefined ? `message=${message}` : undefined,
+    ].filter((p): p is string => p !== undefined);
+    if (partes.length > 0) return partes.join(", ");
+  }
+  return "error de base de datos sin detalle";
+}
+
+/**
+ * Escribe una fila de auditoría: calcula `cambios` con `loQueCambio` sobre
+ * los valores CRUDOS de `entrada.antes`/`entrada.despues`, redacta
+ * `antes`/`despues`/`cambios`, serializa los tres, e inserta.
  *
  * **Nunca tira.** Devuelve `{ ok: true, id } | { ok: false, error }` y, si
  * falla, además loguea un RESUMEN seguro con `console.error` (ver
  * `resumenDeError`: nunca el objeto de error completo, nunca sus
  * parámetros bindeados) — una falla de auditoría NO tiene que tirar abajo
  * la operación de negocio que la disparó (crear el pedido, cobrar la
- * factura, ...).
+ * factura, ...). **`resultado.error` (cuando `ok: false`) es el error CRUDO
+ * de Drizzle/`pg`**, no un resumen — puede traer, como propiedades propias,
+ * el SQL armado y los parámetros bindeados (lo mismo que `resumenDeError`
+ * evita loguear). Se devuelve así porque un llamador puede necesitar
+ * inspeccionarlo en código (ej. reintentar según `error.cause.code`), pero
+ * eso significa que **nunca hay que loguearlo/mostrarlo tal cual a un
+ * usuario final o a un sistema externo** — si tu app necesita mostrar o
+ * reenviar el motivo del fallo, armá tu propio resumen seguro (mismo patrón
+ * que `resumenDeError`, interno de este archivo) en vez de asumir que
+ * `resultado.error` ya es seguro.
  *
- * **Cómo se evita que un secreto anidado llegue a `cambios`.** La primera
- * versión de esta función calculaba `cambios = loQueCambio(entrada.antes,
- * entrada.despues)` (los valores CRUDOS) y redactaba recién DESPUÉS, mirando
- * el último segmento de cada ruta (`"token.access"` → `"access"`, que no es
- * sensible) — un secreto ANIDADO bajo una clave ancestro sensible
- * (`{ token: { access: "AAA1" } }`, donde `"token"` sí es sensible pero
- * `"access"` no) llegaba a la base SIN TAPAR, con la ruta completa
- * `"token.access"` y el valor real. Fix estructural: ahora se redacta
- * `antes`/`despues` ENTEROS con `redactar` (que sí mira TODOS los
- * ancestros de la ruta, no solo el nombre final) ANTES de calcular
- * `cambios` — `loQueCambio` corre sobre los valores YA redactados, así que
- * nunca ve el secreto. La consecuencia (documentada, aceptada): si un
- * secreto CAMBIÓ de valor (`"AAA1"` → `"AAA2"`), como los dos quedan
- * `"[redactado]"` antes de diffear, `cambios` **no muestra que hubo un
- * cambio en absoluto** ahí — se prioriza no filtrar el secreto por sobre
- * mostrar que existió un cambio en un campo sensible. `redactarCambiosDefensaEnProfundidad`
- * (interna) queda como red de seguridad adicional sobre el resultado, por
- * si algún día `loQueCambio` deja de operar sobre lo ya redactado.
+ * **Cómo se evita que un secreto (cambiado o no) llegue a `cambios`.**
+ * `cambios` se calcula con `loQueCambio` sobre los valores CRUDOS de
+ * `entrada.antes`/`entrada.despues` — NO sobre versiones ya redactadas — y
+ * recién DESPUÉS se redacta el resultado (`redactarCambios`, interna),
+ * mirando CUALQUIER segmento de la ruta con puntos (`"token.access"` →
+ * `["token", "access"]`), no solo el último. Si algún segmento es sensible
+ * (`"token"` lo es, aunque `"access"` no), el VALOR ENTERO de esa entrada
+ * se reemplaza por `"[redactado]"` en cada lado que esté definido — nunca
+ * el valor real, pero **sí queda registrado que ese campo CAMBIÓ**: antes
+ * de este fix, redactar `antes`/`despues` ENTEROS antes de diffear hacía
+ * que los dos lados llegaran a `loQueCambio` como el MISMO string
+ * `"[redactado]"`, y un cambio real en un campo sensible desaparecía de
+ * `cambios` por completo (no solo el valor: la SEÑAL de que hubo un
+ * cambio). Para un cambio SIN ningún segmento sensible en su ruta, cada
+ * lado se redacta igual con `redactar` — cubre el caso de un arreglo
+ * cambiado ENTERO (`loQueCambio` compara arreglos como valor completo, no
+ * por índice) que tiene, adentro, un objeto con una clave sensible.
  *
  * **El trade-off de "nunca tira" adentro de una transacción.** Si `dbOTx`
  * es la `tx` de un `db.transaction(async (tx) => ...)` en curso, un
@@ -184,8 +209,17 @@ function resumenDeError(error: unknown): string {
  *   despues: productoNuevo,
  * });
  * if (!resultado.ok) {
- *   // resultado.error ya se logueó (resumen seguro) con console.error; seguir igual, no relanzar.
+ *   // resultado.error ya se logueó (resumen seguro) con console.error;
+ *   // seguir igual, no relanzar — y no mostrar resultado.error tal cual.
  * }
+ *
+ * // Un campo sensible que CAMBIÓ queda registrado (sin el valor real):
+ * await auditar(db, auditoria, {
+ *   tenantId, entidad: "usuario", entidadId, accion: "actualizar", actor: { tipo: "usuario" },
+ *   antes: { password: "A" }, despues: { password: "B" },
+ * });
+ * // cambios: [{ campo: "password", antes: "[redactado]", despues: "[redactado]" }]
+ * // (se sabe que "password" cambió, nunca a qué)
  *
  * // Adentro de una transacción de negocio: si auditar falla, la tx externa
  * // sigue viva (SAVEPOINT). Más de una llamada: SIEMPRE con await secuencial.
@@ -204,19 +238,24 @@ export async function auditar(
   try {
     const camposSensibles = entrada.camposSensibles ?? CAMPOS_SENSIBLES_POR_DEFECTO;
 
-    // C1: redactar ANTES de diffear — ver el JSDoc de esta función, sección
-    // "Cómo se evita que un secreto anidado llegue a cambios". `redactar`
-    // ya devuelve `undefined` tal cual si `entrada.antes`/`entrada.despues`
-    // son `undefined` (no hace falta un ternario acá).
+    // N1: el diff se calcula sobre los valores CRUDOS — ver el JSDoc de
+    // esta función, sección "Cómo se evita que un secreto (cambiado o no)
+    // llegue a cambios". `cambiosCrudos` NUNCA se serializa ni se guarda
+    // tal cual: se redacta acá abajo (`redactarCambios`) antes de tocar la
+    // base.
+    const cambiosCrudos = loQueCambio(entrada.antes, entrada.despues);
+    const cambiosParaGuardar = redactarCambios(cambiosCrudos, camposSensibles);
+
+    // Las fotos completas `antes`/`despues` (columnas separadas de
+    // `cambios`) se redactan por su cuenta — `redactar` ya devuelve
+    // `undefined` tal cual si `entrada.antes`/`entrada.despues` son
+    // `undefined` (no hace falta un ternario acá).
     const antesRedactado = redactar(entrada.antes, camposSensibles);
     const despuesRedactado = redactar(entrada.despues, camposSensibles);
 
-    const cambiosCrudos = loQueCambio(antesRedactado, despuesRedactado);
-    const cambiosRedactados = redactarCambiosDefensaEnProfundidad(cambiosCrudos, camposSensibles);
-
     const antesListo = antesRedactado === undefined ? null : serializarParaAuditoria(antesRedactado);
     const despuesListo = despuesRedactado === undefined ? null : serializarParaAuditoria(despuesRedactado);
-    const cambiosListos = serializarParaAuditoria(cambiosRedactados);
+    const cambiosListos = serializarParaAuditoria(cambiosParaGuardar);
 
     // Los tres valores para las columnas `jsonb` se pasan como TEXTO
     // (`JSON.stringify`), nunca como el objeto/arreglo JS crudo. Dos

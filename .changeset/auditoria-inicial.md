@@ -25,11 +25,20 @@ de Postgres bloquea `UPDATE`/`DELETE`/`TRUNCATE` sobre la tabla.
   "contiene": `passwordHash`/`accessToken`/`clientSecret`/`x-api-key` se
   redactan, `passwordHint`/`tokenizer` no). Lista default: `contrasena`,
   `password`, `hash`, `token`, `secreto`, `secret`, `cbu`, `cvu`, `clave`,
-  `api_key`, `apikey`, `totp`, `authorization`.
+  `api_key`, `apikey`, `totp`, `authorization`. Reconoce `Buffer`/
+  `TypedArray`/`ArrayBuffer`/`DataView` (`"[binario N bytes]"`), `Date`
+  (ISO), `RegExp` (`String(re)`), `URL` (`origin`+`pathname`, sin
+  `search`/`hash`, que pueden traer secretos), `Error` (`{ name }`
+  únicamente) y cualquier objeto con `toJSON` propio (se llama y el
+  resultado se redacta recursivamente) — `Map` se convierte a un ARREGLO
+  de pares `[String(clave), valor]`, no un objeto (evita perder entradas
+  cuando dos claves distintas normalizan al mismo string).
 - `serializarParaAuditoria(v)`: deja un valor listo para `jsonb` —
-  `bigint` → string con sufijo `"n"`, `Date` → ISO, `undefined` se
-  descarta, `Map`/`Set`/instancias de clase se recorren igual que un
-  objeto plano — sin tirar nunca, ni con una clave cuyo `get` tira.
+  `bigint` → string con sufijo `"n"`, `undefined` se descarta — sin tirar
+  nunca, ni con una clave cuyo `get` tira, ni con un `Proxy` cuyas claves
+  no se pueden enumerar. Mismos tipos especiales que `redactar` (binario,
+  `Date`, `RegExp`, `URL`, `Error`, `toJSON`, `Map` como arreglo de pares),
+  en el mismo orden.
 - `/drizzle` (requiere `drizzle-orm >=0.45 <0.46`, peerDependency opcional;
   usa `@mafesoftware/tenant/drizzle` para la columna de tenant):
   - `tablaAuditoria({ tenant?, nombre?, columnasExtra? })`: `id`, columna
@@ -47,24 +56,30 @@ de Postgres bloquea `UPDATE`/`DELETE`/`TRUNCATE` sobre la tabla.
     un superusuario lo saltean). Se agrega como migración escrita a mano,
     después de la que genera drizzle-kit — este paquete no trae
     migraciones. `tablaAuditoria` valida `nombre` con la misma regla.
-  - `auditar(dbOTx, tabla, entrada)`: redacta `antes`/`despues` ANTES de
-    calcular `cambios` con `loQueCambio` (fix de seguridad: la versión
-    original diffeaba los valores crudos y redactaba después mirando solo
-    el último segmento de cada ruta, así que un secreto ANIDADO bajo una
-    clave ancestro sensible — ej. `token.access` con `token` sensible —
-    llegaba SIN TAPAR a `cambios`), serializa los tres, e inserta. **Nunca
-    tira**: devuelve `{ ok, id } | { ok: false, error }` y loguea un
-    RESUMEN seguro (`entidad`/`entidadId`/`accion` + `code`/`message` de
-    Postgres) con `console.error` si falla — nunca el objeto de error
-    completo, que para un `DrizzleQueryError` trae el SQL y los parámetros
-    bindeados como propiedades propias. Dentro de una transacción, envuelve
-    el insert en un `SAVEPOINT` (`tx.transaction()` anidado de Drizzle)
-    para que un fallo del insert de auditoría no aborte la transacción
-    externa — probado forzando un fallo (check constraint) y verificando
-    que una escritura de NEGOCIO en una tabla SEPARADA, en la misma tx,
-    sigue commiteando. Documentado que las llamadas dentro de una misma tx
-    tienen que ser secuenciales (nunca `Promise.all`) y que no soporta el
-    driver `neon-http` (sin `db.transaction()`).
+  - `auditar(dbOTx, tabla, entrada)`: calcula `cambios` con `loQueCambio`
+    sobre los valores CRUDOS de `antes`/`despues`, y recién DESPUÉS redacta
+    el resultado mirando CUALQUIER segmento de la ruta (no solo el
+    último) — un secreto ANIDADO bajo una clave ancestro sensible (ej.
+    `token.access` con `token` sensible) nunca llega sin tapar, y un
+    cambio REAL en un campo sensible SÍ queda registrado en `cambios` (con
+    los valores tapados, `"[redactado]"`/`"[redactado]"`), en vez de
+    desaparecer por completo. Serializa los tres (`antes`/`despues`/
+    `cambios`) e inserta. **Nunca tira**: devuelve `{ ok, id } | { ok:
+    false, error }` y loguea un RESUMEN seguro (`entidad`/`entidadId`/
+    `accion` + `code`/`message` de Postgres, SOLO de `error.cause`, nunca
+    del wrapper — que trae el SQL armado y los parámetros bindeados en su
+    propio `.message`) con `console.error` si falla; sin `cause` legible,
+    un string genérico fijo. `resultado.error` (cuando `ok: false`) sigue
+    siendo el error CRUDO — documentado que puede traer datos sensibles y
+    que nunca hay que mostrarlo/loguearlo tal cual. Dentro de una
+    transacción, envuelve el insert en un `SAVEPOINT` (`tx.transaction()`
+    anidado de Drizzle) para que un fallo del insert de auditoría no
+    aborte la transacción externa — probado forzando un fallo (check
+    constraint) y verificando que una escritura de NEGOCIO en una tabla
+    SEPARADA, en la misma tx, sigue commiteando. Documentado que las
+    llamadas dentro de una misma tx tienen que ser secuenciales (nunca
+    `Promise.all`) y que no soporta el driver `neon-http` (sin
+    `db.transaction()`).
   - `listarAuditoria(db, tabla, { tenantId, entidad?, entidadId?, actorId?,
     desde?, hasta?, pagina?, porPagina? })`: siempre filtrado por
     `tenantId`, ordenado por `creado_en DESC, id DESC`, `porPagina`

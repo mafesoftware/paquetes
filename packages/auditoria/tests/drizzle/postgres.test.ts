@@ -346,6 +346,10 @@ describe("auditar (Postgres real)", () => {
     // Lo no sensible SÍ queda legible (confirma que la redacción es
     // selectiva, no un borrado de toda la fila).
     expect(fila.antes).toContain("visible");
+    // N1: el cambio SÍ queda registrado (con "[redactado]"), no desaparece
+    // de "cambios" — confirma que el fix no reintroduce la regresión N1.
+    expect(fila.cambios).toContain("token.access");
+    expect(fila.cambios).toContain("[redactado]");
   });
 
   it("la redacción se aplica ANTES de llegar a la base: el jsonb crudo no tiene el valor sensible (ni en antes/despues ni en cambios)", async () => {
@@ -378,15 +382,16 @@ describe("auditar (Postgres real)", () => {
     expect(rows[0].antes.email).toBe("ana@x.com"); // lo no sensible queda legible
     expect(rows[0].despues.email).toBe("ana2@x.com");
 
-    // C1 (fix estructural, ver el JSDoc de auditar): "contrasena" NO
-    // aparece en "cambios" en absoluto — antes/despues se redactan ANTES de
-    // diffear, así que los dos lados llegan a loQueCambio como el MISMO
-    // string "[redactado]" y no se ve ninguna diferencia ahí. Es el
-    // trade-off documentado: se prioriza no filtrar el secreto por sobre
-    // mostrar que un campo sensible cambió. "email" (no sensible) SÍ
-    // aparece, con total normalidad.
+    // N1 (fix de la regresión que había introducido la primera ronda de
+    // C1): "contrasena" SÍ aparece en "cambios" — queda registrado que el
+    // campo CAMBIÓ, con los dos lados tapados. `cambios` se calcula sobre
+    // los valores CRUDOS y se redacta DESPUÉS por segmento de ruta, así que
+    // un cambio real en un campo sensible no desaparece. "email" (no
+    // sensible) aparece con sus valores reales, sin tocar.
     const cambios = rows[0].cambios as { campo: string; antes: unknown; despues: unknown }[];
-    expect(cambios.some((c) => c.campo === "contrasena")).toBe(false);
+    const cambioContrasena = cambios.find((c) => c.campo === "contrasena");
+    expect(cambioContrasena?.antes).toBe("[redactado]");
+    expect(cambioContrasena?.despues).toBe("[redactado]");
     const cambioEmail = cambios.find((c) => c.campo === "email");
     expect(cambioEmail?.antes).toBe("ana@x.com");
     expect(cambioEmail?.despues).toBe("ana2@x.com");

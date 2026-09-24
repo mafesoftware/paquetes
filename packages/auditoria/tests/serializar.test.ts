@@ -84,12 +84,26 @@ describe("serializarParaAuditoria", () => {
     expect(serializarParaAuditoria(new Factura(1000n))).toEqual({ total: "1000n" });
   });
 
-  it("I3: un Map se convierte a un objeto de entradas (clave String(clave)), con bigint/Date serializados", () => {
+  it("N4/I3: un Map se convierte a un ARREGLO de pares [clave, valor] (no un objeto), con bigint/Date serializados", () => {
     const m = new Map<string, unknown>([
       ["total", 1000n],
       ["vence", new Date("2026-01-01T00:00:00.000Z")],
     ]);
-    expect(serializarParaAuditoria(m)).toEqual({ total: "1000n", vence: "2026-01-01T00:00:00.000Z" });
+    expect(serializarParaAuditoria(m)).toEqual([
+      ["total", "1000n"],
+      ["vence", "2026-01-01T00:00:00.000Z"],
+    ]);
+  });
+
+  it("N4: dos claves de Map que colisionarían como propiedad de objeto (1 número y \"1\" string) NO se pisan en el arreglo de pares", () => {
+    const m = new Map<unknown, unknown>([
+      [1, "numerica"],
+      ["1", "string"],
+    ]);
+    expect(serializarParaAuditoria(m)).toEqual([
+      ["1", "numerica"],
+      ["1", "string"],
+    ]);
   });
 
   it("I3: un Set se convierte a un arreglo, con bigint serializado", () => {
@@ -105,17 +119,18 @@ describe("serializarParaAuditoria", () => {
     expect(() => {
       resultado = serializarParaAuditoria(m);
     }).not.toThrow();
-    const r = resultado as Record<string, unknown>;
-    expect(r.self).toBe("[ciclo]");
-    expect(r.total).toBe("1000n");
+    expect(resultado).toEqual([
+      ["self", "[ciclo]"],
+      ["total", "1000n"],
+    ]);
   });
 
-  it("I3: un Map con un valor que serializa a undefined descarta esa entrada (igual que un objeto)", () => {
+  it("I3: un Map con un valor que serializa a undefined descarta ese PAR (igual que una clave de objeto)", () => {
     const m = new Map<string, unknown>([
       ["a", 1],
       ["b", undefined],
     ]);
-    expect(serializarParaAuditoria(m)).toEqual({ a: 1 });
+    expect(serializarParaAuditoria(m)).toEqual([["a", 1]]);
   });
 
   it("I3: un Set que se contiene a sí mismo no tira, esa rama queda \"[ciclo]\"", () => {
@@ -147,5 +162,77 @@ describe("serializarParaAuditoria", () => {
     }).not.toThrow();
     expect((resultado as Record<string, unknown>).a).toBe(1);
     expect((resultado as Record<string, unknown>).roto).toBe("[error]");
+  });
+
+  describe("N2: tipos especiales", () => {
+    it("un decimal.js-like (clase con toJSON) se llama y su resultado se serializa", () => {
+      class Decimal {
+        constructor(private valor: string) {}
+        toJSON(): string {
+          return this.valor;
+        }
+      }
+      expect(serializarParaAuditoria({ precio: new Decimal("12.50") })).toEqual({ precio: "12.50" });
+    });
+
+    it("un objeto cuyo toJSON tira da \"[error]\", no propaga la excepción", () => {
+      const roto = { toJSON: () => { throw new Error("toJSON roto"); } };
+      expect(() => serializarParaAuditoria(roto)).not.toThrow();
+      expect(serializarParaAuditoria(roto)).toBe("[error]");
+    });
+
+    it("un objeto cuyo toJSON devuelve this (cíclico patológico) no tira: queda \"[ciclo]\"", () => {
+      const obj: { toJSON?: () => unknown } = {};
+      obj.toJSON = () => obj;
+      expect(() => serializarParaAuditoria(obj)).not.toThrow();
+      expect(serializarParaAuditoria(obj)).toBe("[ciclo]");
+    });
+
+    it("una URL: solo origin+pathname, sin query ni hash (pueden traer secretos)", () => {
+      const url = new URL("https://api.com/perfil?token=SECRETO123#fragmento");
+      expect(serializarParaAuditoria(url)).toBe("https://api.com/perfil");
+      expect(JSON.stringify(serializarParaAuditoria(url))).not.toContain("SECRETO123");
+    });
+
+    it("un Error: solo { name }, nunca .message", () => {
+      const error = new Error("contiene secreto123");
+      const resultado = serializarParaAuditoria(error);
+      expect(resultado).toEqual({ name: "Error" });
+      expect(JSON.stringify(resultado)).not.toContain("secreto123");
+    });
+
+    it("un Buffer de 1 MB da \"[binario 1048576 bytes]\"", () => {
+      const buffer = Buffer.alloc(1024 * 1024, 1);
+      expect(serializarParaAuditoria(buffer)).toBe("[binario 1048576 bytes]");
+    });
+
+    it("un RegExp se convierte a su representación con barras", () => {
+      expect(serializarParaAuditoria(/abc/gi)).toBe("/abc/gi");
+    });
+  });
+
+  describe("N3: nunca tira por una clave/objeto roto", () => {
+    it("una clave de Map sin prototipo no tira: queda \"[clave]\"", () => {
+      const claveRota = Object.create(null) as object;
+      const m = new Map<unknown, unknown>([[claveRota, "valor"]]);
+      expect(() => serializarParaAuditoria(m)).not.toThrow();
+      expect(serializarParaAuditoria(m)).toEqual([["[clave]", "valor"]]);
+    });
+
+    it("un Proxy cuya trampa ownKeys tira no tira: el objeto entero queda \"[error]\"", () => {
+      const proxy = new Proxy(
+        { a: 1 },
+        {
+          ownKeys() {
+            throw new Error("ownKeys roto a propósito");
+          },
+        },
+      );
+      let resultado: unknown;
+      expect(() => {
+        resultado = serializarParaAuditoria({ x: proxy });
+      }).not.toThrow();
+      expect((resultado as Record<string, unknown>).x).toBe("[error]");
+    });
   });
 });

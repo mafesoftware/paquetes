@@ -1,3 +1,16 @@
+import {
+  claveComoTexto,
+  clavesPropias,
+  esBinario,
+  llamarToJSON,
+  objetoError,
+  textoBinario,
+  textoFecha,
+  textoRegExp,
+  textoUrl,
+  tieneToJSON,
+} from "./tipos-especiales.js";
+
 /**
  * Lee `objeto[clave]`, atrapando una excepción si `clave` es un getter que
  * tira — para que una lectura rota de UNA clave no tire toda la
@@ -14,11 +27,6 @@ function leerPropiedad(objeto: Record<string, unknown>, clave: string): { ok: tr
 function serializar(valor: unknown, pila: Set<object>): unknown {
   if (valor === undefined) return undefined;
   if (typeof valor === "bigint") return `${valor}n`;
-  // Una Date "Invalid Date" (`new Date("no es una fecha")`) tiene
-  // `getTime()` NaN, y `.toISOString()` TIRA `RangeError: Invalid time
-  // value` en ese caso — la única forma de que este recorrido pudiera
-  // lanzar si no se la cubriera explícitamente.
-  if (valor instanceof Date) return Number.isNaN(valor.getTime()) ? "[fecha-invalida]" : valor.toISOString();
   if (typeof valor === "function") return "[funcion]";
   if (typeof valor === "symbol") return valor.toString();
   if (Array.isArray(valor)) {
@@ -34,16 +42,41 @@ function serializar(valor: unknown, pila: Set<object>): unknown {
       pila.delete(valor);
     }
   }
+  // Tipos especiales, en ESTE orden (ver tipos-especiales.ts, y el mismo
+  // orden que usa `redactar`): binario, Date, RegExp, URL, Error, y recién
+  // después cualquier otro objeto con toJSON propio. `URL` tiene que
+  // resolverse ANTES del chequeo genérico de `toJSON` (`URL.prototype.toJSON`
+  // existe y devuelve el `href` COMPLETO, con query/hash).
+  if (esBinario(valor)) return textoBinario(valor);
+  if (valor instanceof Date) return textoFecha(valor);
+  if (valor instanceof RegExp) return textoRegExp(valor);
+  if (valor instanceof URL) return textoUrl(valor);
+  if (valor instanceof Error) return objetoError(valor);
+  if (typeof valor === "object" && valor !== null && tieneToJSON(valor)) {
+    if (pila.has(valor)) return "[ciclo]";
+    pila.add(valor);
+    try {
+      const llamado = llamarToJSON(valor);
+      if (!llamado.ok) return "[error]";
+      return serializar(llamado.valor, pila);
+    } finally {
+      pila.delete(valor);
+    }
+  }
   if (valor instanceof Map) {
     if (pila.has(valor)) return "[ciclo]";
     pila.add(valor);
     try {
-      const resultado: Record<string, unknown> = {};
+      // Arreglo de pares `[clave, valor]`, NO un objeto — ver el JSDoc de
+      // `redactar` (mismo motivo: dos claves de Map distintas pueden
+      // normalizar a la MISMA clave de objeto, y un objeto perdería una en
+      // silencio).
+      const pares: [string, unknown][] = [];
       for (const [clave, v] of valor.entries()) {
         const serializado = serializar(v, pila);
-        if (serializado !== undefined) resultado[String(clave)] = serializado;
+        if (serializado !== undefined) pares.push([claveComoTexto(clave), serializado]);
       }
-      return resultado;
+      return pares;
     } finally {
       pila.delete(valor);
     }
@@ -58,18 +91,19 @@ function serializar(valor: unknown, pila: Set<object>): unknown {
     }
   }
   if (typeof valor === "object" && valor !== null) {
-    // CUALQUIER objeto que no sea arreglo/Date/Map/Set — objeto plano,
-    // instancia de una clase propia, lo que sea — se recorre por sus
-    // claves propias ENUMERABLES. Antes de este cambio solo se recorrían
-    // objetos con `Object.prototype`/sin prototipo; una instancia de clase
-    // (`this.password = ...`) quedaba sin serializar sus bigint/Date
-    // internos y se devolvía tal cual (la instancia entera, no JSON-safe).
+    // CUALQUIER objeto que no sea arreglo/binario/Date/RegExp/URL/Error/
+    // (algo con toJSON)/Map/Set — objeto plano, instancia de una clase
+    // propia, lo que sea — se recorre por sus claves propias ENUMERABLES.
     if (pila.has(valor)) return "[ciclo]";
     pila.add(valor);
     try {
       const objeto = valor as Record<string, unknown>;
+      const clavesLeidas = clavesPropias(objeto);
+      // Object.keys puede tirar (un Proxy cuya trampa ownKeys tira): sin
+      // poder enumerar nada, se devuelve "[error]" para todo el objeto.
+      if (!clavesLeidas.ok) return "[error]";
       const resultado: Record<string, unknown> = {};
-      for (const clave of Object.keys(objeto)) {
+      for (const clave of clavesLeidas.claves) {
         const leido = leerPropiedad(objeto, clave);
         if (!leido.ok) {
           // Un getter que tira: no se propaga — "nunca tira" es la garantía
@@ -106,9 +140,6 @@ function serializar(valor: unknown, pila: Set<object>): unknown {
  *   convención de este paquete (no un formato estándar): quien lea el
  *   registro de auditoría más adelante tiene que saber sacarlo para
  *   recuperar el valor numérico.
- * - `Date` se convierte a su ISO string (`.toISOString()`); una `Date`
- *   inválida (`new Date("no es una fecha")`) da `"[fecha-invalida]"` en vez
- *   de tirar (`.toISOString()` de una Invalid Date tira `RangeError`).
  * - `undefined` se DESCARTA: si es el valor de una clave de un objeto, esa
  *   clave desaparece del resultado (igual que hace `JSON.stringify`);
  *   adentro de un arreglo se convierte a `null` en vez de sacar el índice
@@ -117,10 +148,30 @@ function serializar(valor: unknown, pila: Set<object>): unknown {
  *   string `"[ciclo]"`.
  * - `function`/`symbol` (no deberían aparecer en datos de negocio, pero
  *   pueden colarse) se convierten a un string en vez de tirar.
- * - `Map` se convierte a un objeto de entradas (clave `String(clave)`);
- *   `Set` se convierte a un arreglo. Cualquier otro objeto — plano o
- *   instancia de una clase propia — se recorre por sus claves propias
- *   enumerables, igual que un objeto plano.
+ *
+ * **Tipos especiales** (mismo tratamiento que `redactar`, mismo orden — ver
+ * `tipos-especiales.ts`):
+ * - `Buffer`/`TypedArray`/`ArrayBuffer`/`DataView` → `"[binario N bytes]"`
+ *   (nunca el contenido byte a byte — antes de esto, un buffer de 1 MB se
+ *   recorría como un arreglo de 1.048.576 números).
+ * - `Date` → ISO string (`.toISOString()`); una `Date` inválida da
+ *   `"[fecha-invalida]"` en vez de tirar (`.toISOString()` de una Invalid
+ *   Date tira `RangeError`).
+ * - `RegExp` → `String(re)` (ej. `"/abc/gi"`) — antes quedaba `{}` (sin
+ *   claves propias enumerables).
+ * - `URL` → `origin` + `pathname`, SIN `search` ni `hash` (pueden traer
+ *   secretos: `?token=...`, `#access_token=...`).
+ * - `Error` → `{ name }` únicamente (nunca `.message`/`.stack`).
+ * - Cualquier OTRO objeto con un `toJSON` propio: se llama (atrapando una
+ *   excepción — `"[error]"` si tira) y el resultado se serializa
+ *   recursivamente. Corre DESPUÉS de los casos de arriba (`URL` tiene su
+ *   propio `toJSON` que devuelve el `href` completo; por eso `URL` se
+ *   resuelve antes).
+ * - `Map` se convierte a un arreglo de pares `[String(clave), valor]` (no
+ *   un objeto: evita perder entradas cuando dos claves distintas
+ *   normalizan al mismo string). `Set` se convierte a un arreglo.
+ *   Cualquier otro objeto — plano o instancia de una clase propia — se
+ *   recorre por sus claves propias enumerables, igual que un objeto plano.
  *
  * Recorre arreglos y objetos recursivamente aplicando las mismas reglas a
  * cada valor.
@@ -135,10 +186,16 @@ function serializar(valor: unknown, pila: Set<object>): unknown {
  * // ["1n", null, "3n"]
  *
  * serializarParaAuditoria(new Map([["a", 1n]]));
- * // { a: "1n" }
+ * // [["a", "1n"]] (arreglo de pares, no objeto)
  *
  * serializarParaAuditoria(new Set([1n, 2n]));
  * // ["1n", "2n"]
+ *
+ * serializarParaAuditoria(new URL("https://api.com/x?token=SECRETO"));
+ * // "https://api.com/x" (sin "?token=SECRETO")
+ *
+ * serializarParaAuditoria(new Error("mensaje que puede tener datos"));
+ * // { name: "Error" } (nunca .message)
  * ```
  */
 export function serializarParaAuditoria(v: unknown): unknown {

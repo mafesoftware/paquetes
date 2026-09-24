@@ -1,4 +1,16 @@
 import { esClaveSensible, normalizarTerminos } from "./coincidencia-sensible.js";
+import {
+  claveComoTexto,
+  clavesPropias,
+  esBinario,
+  llamarToJSON,
+  objetoError,
+  textoBinario,
+  textoFecha,
+  textoRegExp,
+  textoUrl,
+  tieneToJSON,
+} from "./tipos-especiales.js";
 
 /**
  * Los nombres de campo que `redactar` tapa por defecto, en cualquier
@@ -53,17 +65,51 @@ function redactarValor(valor: unknown, sensibles: ReadonlySet<string>, pila: Set
       pila.delete(valor);
     }
   }
-  if (valor instanceof Date) return new Date(valor.getTime());
+  // Tipos especiales, en ESTE orden (ver tipos-especiales.ts): binario,
+  // Date, RegExp, URL, Error, y recién después cualquier otro objeto con
+  // toJSON propio. Antes de esto, el bloque genérico de más abajo ("recorre
+  // por claves propias enumerables") los mangleaba: un RegExp quedaba `{}`,
+  // un Buffer se recorría byte a byte, una URL con "?token=..." conservaba
+  // el token porque `search`/`hash` no son claves propias enumerables (pero
+  // SÍ hubieran salido enteras si algo llamaba a su `toJSON`, que devuelve
+  // el href completo — por eso URL se resuelve ACÁ, antes del chequeo
+  // genérico de toJSON de más abajo).
+  if (esBinario(valor)) return textoBinario(valor);
+  if (valor instanceof Date) return textoFecha(valor);
+  if (valor instanceof RegExp) return textoRegExp(valor);
+  if (valor instanceof URL) return textoUrl(valor);
+  if (valor instanceof Error) return objetoError(valor);
+  if (typeof valor === "object" && valor !== null && tieneToJSON(valor)) {
+    if (pila.has(valor)) return "[ciclo]";
+    pila.add(valor);
+    try {
+      const llamado = llamarToJSON(valor);
+      if (!llamado.ok) return "[error]";
+      // El resultado de toJSON() se redacta/recorre recursivamente — puede
+      // ser cualquier cosa (un string, como en decimal.js; un objeto; un
+      // arreglo). `pila` sigue agregado por si el toJSON devuelve `this`
+      // (patológico, pero posible): la próxima vuelta lo detecta como
+      // ancestro y corta con "[ciclo]" en vez de loopear para siempre.
+      return redactarValor(llamado.valor, sensibles, pila);
+    } finally {
+      pila.delete(valor);
+    }
+  }
   if (valor instanceof Map) {
     if (pila.has(valor)) return "[ciclo]";
     pila.add(valor);
     try {
-      const resultado: Record<string, unknown> = {};
+      // Arreglo de pares `[clave, valor]`, NO un objeto `{ [String(clave)]:
+      // valor }`: dos claves DISTINTAS del Map (ej. el número `1` y el
+      // string `"1"`) pueden normalizar a la MISMA clave de objeto — con un
+      // objeto, la segunda pisaría a la primera en silencio. Un arreglo de
+      // pares no pierde ninguna entrada, sin importar qué colisione.
+      const pares: [string, unknown][] = [];
       for (const [clave, v] of valor.entries()) {
-        const claveTexto = String(clave);
-        resultado[claveTexto] = esClaveSensible(claveTexto, sensibles) ? "[redactado]" : redactarValor(v, sensibles, pila);
+        const claveTexto = claveComoTexto(clave);
+        pares.push([claveTexto, esClaveSensible(claveTexto, sensibles) ? "[redactado]" : redactarValor(v, sensibles, pila)]);
       }
-      return resultado;
+      return pares;
     } finally {
       pila.delete(valor);
     }
@@ -78,19 +124,23 @@ function redactarValor(valor: unknown, sensibles: ReadonlySet<string>, pila: Set
     }
   }
   if (typeof valor === "object" && valor !== null) {
-    // CUALQUIER objeto que no sea arreglo/Date/Map/Set — objeto plano,
-    // instancia de una clase propia, lo que sea — se recorre por sus
-    // claves propias ENUMERABLES (`Object.keys`, que para una instancia de
-    // clase son los campos de instancia, ej. `this.password = ...` en el
-    // constructor, NUNCA los métodos del prototipo). Antes de este cambio
-    // solo se recorrían objetos con `Object.prototype`/sin prototipo; una
-    // clase propia con un campo sensible quedaba SIN redactar.
+    // CUALQUIER objeto que no sea arreglo/binario/Date/RegExp/URL/Error/
+    // (algo con toJSON)/Map/Set — objeto plano, instancia de una clase
+    // propia, lo que sea — se recorre por sus claves propias ENUMERABLES
+    // (`Object.keys`, que para una instancia de clase son los campos de
+    // instancia, ej. `this.password = ...` en el constructor, NUNCA los
+    // métodos del prototipo).
     if (pila.has(valor)) return "[ciclo]";
     pila.add(valor);
     try {
       const objeto = valor as Record<string, unknown>;
+      const clavesLeidas = clavesPropias(objeto);
+      // Object.keys puede tirar (un Proxy cuya trampa ownKeys tira): sin
+      // poder enumerar nada, no hay forma de redactar nada adentro — se
+      // devuelve "[error]" para todo el objeto, no se propaga la excepción.
+      if (!clavesLeidas.ok) return "[error]";
       const resultado: Record<string, unknown> = {};
-      for (const clave of Object.keys(objeto)) {
+      for (const clave of clavesLeidas.claves) {
         const leido = leerPropiedad(objeto, clave);
         if (!leido.ok) {
           resultado[clave] = "[error]";
@@ -138,12 +188,35 @@ function redactarValor(valor: unknown, sensibles: ReadonlySet<string>, pila: Set
  * `redactar` nunca mira el CONTENIDO de un string, solo el nombre de la
  * clave que lo contiene.
  *
- * Recorre CUALQUIER objeto (plano, instancia de clase propia, `Map`
- * convertido a un objeto de entradas con la clave como `String(clave)`,
- * `Set` convertido a arreglo) y arreglos. Nunca tira por una referencia
- * circular (esa rama queda como `"[ciclo]"`) ni por una clave cuyo `get`
- * tira (esa clave queda como `"[error]"`) — un `Date` se copia por valor,
- * no se recorre como objeto.
+ * **Tipos especiales** (mismo tratamiento que `serializarParaAuditoria`,
+ * mismo orden — ver `tipos-especiales.ts`):
+ * - `Buffer`/`TypedArray`/`ArrayBuffer`/`DataView` → `"[binario N bytes]"`
+ *   (nunca el contenido byte a byte).
+ * - `Date` → ISO string (`"[fecha-invalida]"` si es una Date inválida).
+ * - `RegExp` → `String(re)` (ej. `"/abc/gi"`).
+ * - `URL` → `origin` + `pathname`, SIN `search` ni `hash` (pueden traer
+ *   secretos: `?token=...`, `#access_token=...`).
+ * - `Error` → `{ name }` únicamente (nunca `.message`, que puede traer el
+ *   valor que causó el error).
+ * - Cualquier OTRO objeto con un `toJSON` propio: se llama (atrapando una
+ *   excepción — `"[error]"` si tira) y el resultado se redacta
+ *   recursivamente. Corre DESPUÉS de los casos de arriba a propósito:
+ *   `URL.prototype.toJSON` existe y devuelve el `href` COMPLETO (con
+ *   query/hash), así que si este chequeo corriera antes, la redacción
+ *   específica de `URL` nunca se alcanzaría.
+ * - `Map` se convierte a un arreglo de pares `[String(clave), valor]` (NO
+ *   un objeto: dos claves de Map distintas pueden normalizar al MISMO
+ *   nombre de propiedad — ej. el número `1` y el string `"1"` — y un
+ *   objeto perdería una en silencio; ver el JSDoc de `redactarValor`
+ *   interno). Un par cuya clave (ya convertida a texto) es sensible tiene
+ *   su VALOR redactado.
+ * - `Set` se convierte a un arreglo.
+ *
+ * Nunca tira: una referencia circular queda como `"[ciclo]"`, una clave
+ * cuyo `get` tira queda como `"[error]"`, una clave de `Map` cuyo
+ * `toString` tira (o un objeto sin prototipo como clave) queda como
+ * `"[clave]"`, y un objeto cuyas claves no se pueden enumerar (un `Proxy`
+ * con una trampa `ownKeys` que tira) queda como `"[error]"` entero.
  *
  * ```ts
  * import { redactar, CAMPOS_SENSIBLES_POR_DEFECTO } from "@mafesoftware/auditoria";
@@ -166,6 +239,16 @@ function redactarValor(valor: unknown, sensibles: ReadonlySet<string>, pila: Set
  * class Usuario { constructor(public nombre: string, public password: string) {} }
  * redactar(new Usuario("ana", "hunter2"));
  * // { nombre: "ana", password: "[redactado]" } (instancia de clase: se redactan sus campos propios)
+ *
+ * redactar(new URL("https://api.com/perfil?token=SECRETO#frag"));
+ * // "https://api.com/perfil" (sin "?token=SECRETO" ni "#frag")
+ *
+ * class Dinero { constructor(private centavos: bigint) {} toJSON() { return `${this.centavos}c`; } }
+ * redactar({ precio: new Dinero(1250n) });
+ * // { precio: "1250c" } (toJSON corre y su resultado se redacta/recorre)
+ *
+ * redactar(new Map([[1, "hunter2"], ["contrasena", "hunter3"]]));
+ * // [["1", "hunter2"], ["contrasena", "[redactado]"]] (arreglo de pares, no objeto)
  *
  * CAMPOS_SENSIBLES_POR_DEFECTO; // ["contrasena", "password", "hash", "token", "secreto", "secret", "cbu", "cvu", "clave", "api_key", "apikey", "totp", "authorization"]
  * ```
