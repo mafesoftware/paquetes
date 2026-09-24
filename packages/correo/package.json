@@ -4,16 +4,16 @@
   "description": "Envío de mails transaccionales por Resend para los productos de MAFE Software. Sin dependencias, sin framework: fetch inyectable, resultados en vez de excepciones y una plantilla HTML con la marca de cada producto.",
   "license": "MIT",
   "type": "module",
-  "files": ["dist"],
+  "files": ["dist", "README.md", "CHANGELOG.md"],
   "exports": {
-    ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" }
+    ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" }
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
-    "prepublishOnly": "npm run typecheck && npm run test && npm run build"
+    "prepublishOnly": "bun run typecheck && bun run test && bun run build"
   },
   "devDependencies": {
     "@types/node": "^22",
@@ -22,5 +22,10 @@
   },
   "engines": { "node": ">=20" },
   "keywords": ["resend", "email", "transaccional", "argentina"],
-  "publishConfig": { "access": "public" }
+  "publishConfig": { "access": "public", "provenance": true },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mafesoftware/paquetes.git",
+    "directory": "packages/correo"
+  }
 }

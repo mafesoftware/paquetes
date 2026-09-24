@@ -23,18 +23,31 @@ const r = await enviarCorreo({
 if (!r.ok) console.error(r.categoria, r.error);
 ```
 
-## Qué trae
+## API
 
 - **`enviarCorreo(opciones)`** — POST a la API de Resend. Nunca tira: devuelve
   `{ ok: true, id }` o `{ ok: false, categoria, error }`. La categoría dice si
   reintentar sirve: `red` y `limite` sí; `credenciales` y `rechazado` no.
   Soporta varios destinatarios, `responderA` (reply-to) y adjuntos (los bytes
-  se codifican a base64 acá).
+  se codifican a base64 acá). Ejemplo arriba.
 - **`plantillaCorreo({ marca, cuerpoHtml, pie })`** — la cáscara HTML con la
   marca del producto: encabezado con color propio, ancho fijo, estilos en
   línea (los clientes de correo ignoran `<style>`). El `cuerpoHtml` lo arma la
-  aplicación; la marca y el pie se escapan acá.
-- **`botonCorreo(url, texto, color?)`** y **`escapeHtml(texto)`**.
+  aplicación; la marca y el pie se escapan acá. Ejemplo arriba.
+- **`botonCorreo(url, texto, color?)`** — un `<a>` con estilo de botón, listo
+  para meter dentro de un `cuerpoHtml`:
+
+  ```ts
+  botonCorreo("https://bestie.com.ar/cuenta", "Ver mi pedido", "#5c1f30");
+  // '<p style="..."><a href="https://bestie.com.ar/cuenta" style="...">Ver mi pedido</a></p>'
+  ```
+
+- **`escapeHtml(texto)`** — escapa `&`, `<`, `>`, `"` y `'` antes de interpolar
+  texto de usuario en HTML:
+
+  ```ts
+  escapeHtml('<b>hola</b> & "chau"'); // '&lt;b&gt;hola&lt;/b&gt; &amp; &quot;chau&quot;'
+  ```
 
 ## Reglas
 

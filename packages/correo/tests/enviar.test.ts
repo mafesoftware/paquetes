@@ -167,4 +167,78 @@ describe("enviarCorreo", () => {
 
     expect(pedidos).toHaveLength(0);
   });
+
+  it("sin asunto (o en blanco) rechaza antes de tocar la red", async () => {
+    const { fn, pedidos } = resendFalso({});
+    const r = await enviarCorreo({ ...BASE, asunto: "   ", fetch: fn });
+    expect(r).toEqual({
+      ok: false,
+      categoria: "rechazado",
+      error: "Falta el asunto.",
+    });
+    expect(pedidos).toHaveLength(0);
+  });
+
+  it("un mail solo de texto (sin html) también arma el cuerpo", async () => {
+    const { fn, pedidos } = resendFalso({});
+    await enviarCorreo({
+      ...BASE,
+      html: undefined,
+      texto: "Gracias por tu compra",
+      fetch: fn,
+    });
+    const cuerpo = JSON.parse(String(pedidos[0]!.init.body));
+    expect(cuerpo.text).toBe("Gracias por tu compra");
+    expect(cuerpo.html).toBeUndefined();
+  });
+
+  it("un array de adjuntos vacío no agrega el campo attachments", async () => {
+    const { fn, pedidos } = resendFalso({});
+    await enviarCorreo({ ...BASE, adjuntos: [], fetch: fn });
+    const cuerpo = JSON.parse(String(pedidos[0]!.init.body));
+    expect(cuerpo.attachments).toBeUndefined();
+  });
+
+  it("un estado 400 (sin ser 401/403/429/5xx) es rechazado", async () => {
+    const { fn } = resendFalso({
+      status: 400,
+      cuerpo: { message: "invalid `to` field" },
+    });
+    const r = await enviarCorreo({ ...BASE, fetch: fn });
+    expect(r).toEqual({
+      ok: false,
+      categoria: "rechazado",
+      error: "invalid `to` field",
+    });
+  });
+
+  it("una respuesta ok sin id en el cuerpo vuelve con id vacío", async () => {
+    const { fn } = resendFalso({ status: 200, cuerpo: {} });
+    const r = await enviarCorreo({ ...BASE, fetch: fn });
+    expect(r).toEqual({ ok: true, id: "" });
+  });
+
+  it("una respuesta ok con un cuerpo que no es JSON válido igual resuelve (id vacío)", async () => {
+    const fn: typeof fetch = async () =>
+      new Response("no es json", {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    const r = await enviarCorreo({ ...BASE, fetch: fn });
+    expect(r).toEqual({ ok: true, id: "" });
+  });
+
+  it("un error con un cuerpo que no es JSON válido igual resuelve, con el estado HTTP como mensaje", async () => {
+    const fn: typeof fetch = async () =>
+      new Response("<html>502 Bad Gateway</html>", {
+        status: 502,
+        headers: { "content-type": "text/html" },
+      });
+    const r = await enviarCorreo({ ...BASE, fetch: fn });
+    expect(r).toEqual({
+      ok: false,
+      categoria: "red",
+      error: "Resend contestó 502.",
+    });
+  });
 });

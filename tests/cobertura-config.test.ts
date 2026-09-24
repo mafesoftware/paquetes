@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import config, { umbralesDeCoberturaPorPaquete } from '../vitest.config.js';
 import { coincideAlguno } from './lib/glob-simple.js';
 
@@ -29,10 +30,16 @@ const thresholds = coverage.thresholds as Record<string, unknown>;
 const UMBRAL_ESPERADO = { statements: 95, branches: 95, functions: 95, lines: 95 };
 
 describe('vitest.config.ts: umbral de cobertura del núcleo (por paquete)', () => {
-  it('con packages/ vacío (estado real de hoy) no genera ningún umbral', () => {
-    // Sin paquetes, no hay claves de glob que agregar: v8 no tiene qué
-    // chequear y el run no falla (ver bun run test -- --coverage).
-    expect(thresholds).toEqual({});
+  it('genera exactamente un umbral de 95% por cada paquete real de packages/', () => {
+    // A partir de P.3 ya hay paquetes reales en packages/*: el umbral
+    // generado tiene que tener una clave de glob por cada uno (no {} como
+    // cuando el monorepo estaba recién creado, ni un agregado global).
+    const raizProyecto = fileURLToPath(new URL('..', import.meta.url));
+    const dirPackagesReal = join(raizProyecto, 'packages');
+    const esperado = umbralesDeCoberturaPorPaquete(dirPackagesReal);
+
+    expect(Object.keys(esperado).length).toBeGreaterThan(0);
+    expect(thresholds).toEqual(esperado);
   });
 
   it('NO define un umbral global agregado (lines/branches/functions/statements a nivel raíz)', () => {
