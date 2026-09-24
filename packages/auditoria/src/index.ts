@@ -1,0 +1,22 @@
+/**
+ * Registro de auditoría inmutable y por tenant: qué cambió (diff de
+ * antes/después), quién, cuándo, con campos sensibles redactados.
+ *
+ * - `lo-que-cambio.ts`: `loQueCambio` — el diff entre dos versiones de una
+ *   entidad, en rutas con puntos, determinístico y a prueba de ciclos.
+ * - `redactar.ts`: `redactar`/`CAMPOS_SENSIBLES_POR_DEFECTO` — tapa por
+ *   nombre de clave (`contrasena`, `cbu`, `token`, ...), a cualquier
+ *   profundidad.
+ * - `serializar.ts`: `serializarParaAuditoria` — deja un valor listo para
+ *   `jsonb` (bigint → string con sufijo `"n"`, Date → ISO, undefined se
+ *   descarta), sin tirar nunca.
+ *
+ * Núcleo puro: sin variables de entorno, sin framework, sin base de datos.
+ * Lo específico de Drizzle (la tabla, el trigger de inmutabilidad, y las
+ * funciones que escriben/leen contra Postgres) vive en el subpath
+ * `@mafesoftware/auditoria/drizzle`, que NO se importa desde acá
+ * (`drizzle-orm` es un peerDependency opcional solo de ese subpath).
+ */
+export { loQueCambio, type CambioAuditoria } from "./lo-que-cambio.js";
+export { redactar, CAMPOS_SENSIBLES_POR_DEFECTO } from "./redactar.js";
+export { serializarParaAuditoria } from "./serializar.js";

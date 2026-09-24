@@ -33,6 +33,25 @@
         "vitest": "^3.2.4",
       },
     },
+    "packages/auditoria": {
+      "name": "@mafesoftware/auditoria",
+      "version": "0.0.0",
+      "dependencies": {
+        "@mafesoftware/tenant": "workspace:*",
+      },
+      "devDependencies": {
+        "@types/pg": "^8.15.5",
+        "drizzle-kit": "~0.31",
+        "drizzle-orm": "~0.45.2",
+        "pg": "^8.23.0",
+      },
+      "peerDependencies": {
+        "drizzle-orm": ">=0.45 <0.46",
+      },
+      "optionalPeers": [
+        "drizzle-orm",
+      ],
+    },
     "packages/carnet-qr": {
       "name": "@mafesoftware/carnet-qr",
       "version": "0.1.0",
@@ -320,6 +339,8 @@
     "@mafesoftware/accesos": ["@mafesoftware/accesos@workspace:packages/accesos"],
 
     "@mafesoftware/arca-ar": ["@mafesoftware/arca-ar@workspace:packages/arca-ar"],
+
+    "@mafesoftware/auditoria": ["@mafesoftware/auditoria@workspace:packages/auditoria"],
 
     "@mafesoftware/carnet-qr": ["@mafesoftware/carnet-qr@workspace:packages/carnet-qr"],
 

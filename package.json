@@ -8,7 +8,7 @@
   "scripts": {
     "build": "bun scripts/correr-en-paquetes.ts build",
     "test": "vitest run",
-    "test:sin-db": "vitest run --exclude '**/tests/drizzle/postgres.test.ts'",
+    "test:sin-db": "vitest run --exclude '**/tests/drizzle/postgres*.test.ts'",
     "typecheck": "tsc -p tsconfig.json --noEmit && bun scripts/correr-en-paquetes.ts typecheck",
     "lint:paquetes": "bun scripts/lint-paquetes.ts",
     "changeset": "changeset",
