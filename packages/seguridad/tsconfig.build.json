@@ -1,0 +1,18 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "dist",
+    "rootDir": "src",
+    // A diferencia de plata-ar/fechas-ar/documentos-ar (sin dependencias,
+    // ni siquiera de node:*), este paquete usa `node:crypto`/`Buffer` en el
+    // núcleo y `Request`/`Headers` (lib.dom) en /next. Sin este "types"
+    // explícito, el TS de este repo no encuentra los tipos de Node aunque
+    // `@types/node` esté instalado (mismo motivo por el que carnet-qr
+    // declara "types": ["node"] explícito en su propio tsconfig.json).
+    "types": ["node"],
+    "lib": ["ES2022", "DOM"]
+  },
+  "include": [
+    "src"
+  ]
+}

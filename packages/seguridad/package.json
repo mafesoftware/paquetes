@@ -1,0 +1,61 @@
+{
+  "name": "@mafesoftware/seguridad",
+  "version": "0.0.0",
+  "description": "Primitivas de seguridad para los productos de MAFE Software: comparación en tiempo constante, cifrado versionado AES-256-GCM, pases firmados con vencimiento, CSP/cabeceras y auth de cron/guard() para Next.js. Sin process.env en el núcleo.",
+  "type": "module",
+  "license": "MIT",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./next": {
+      "types": "./dist/next/index.d.ts",
+      "import": "./dist/next/index.js"
+    }
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "README.md",
+    "CHANGELOG.md"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mafesoftware/paquetes.git",
+    "directory": "packages/seguridad"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.build.json --noEmit"
+  },
+  "peerDependencies": {
+    "next": ">=16"
+  },
+  "peerDependenciesMeta": {
+    "next": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "next": "^16.3.0"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "keywords": [
+    "seguridad",
+    "cifrado",
+    "aes-256-gcm",
+    "csp",
+    "cron",
+    "guard",
+    "next"
+  ]
+}
