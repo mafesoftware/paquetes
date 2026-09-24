@@ -14,6 +14,19 @@
     "isolatedModules": true,
     "resolveJsonModule": true,
     "paths": {
+      // Los subpaths primero (más específicos): TS resuelve por el patrón
+      // con el prefijo/sufijo fijo más largo, así que "@mafesoftware/*/drizzle"
+      // gana sobre "@mafesoftware/*" para "@mafesoftware/tenant/drizzle". Sin
+      // esto, un paquete que depende de OTRO por un subpath (ej. numeradores
+      // -> "@mafesoftware/tenant/drizzle") resuelve el subpath contra
+      // "./packages/tenant/drizzle/src/index.ts" (no existe) en vez de
+      // "./packages/tenant/src/drizzle/index.ts" — y como el `typecheck` de
+      // CI corre ANTES que `build`, ese paquete todavía no tiene `dist/`, así
+      // que ni siquiera resolver contra el build publicado salva el error
+      // (pasó primero con numeradores -> tenant/drizzle, tarea P.9).
+      "@mafesoftware/*/drizzle": ["./packages/*/src/drizzle/index.ts"],
+      "@mafesoftware/*/next": ["./packages/*/src/next/index.ts"],
+      "@mafesoftware/*/pruebas": ["./packages/*/src/pruebas/index.ts"],
       "@mafesoftware/*": ["./packages/*/src/index.ts"]
     }
   }

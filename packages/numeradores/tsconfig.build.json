@@ -1,15 +1,24 @@
 {
-  "extends": "../../tsconfig.base.json",
+  "extends": "./tsconfig.json",
   "compilerOptions": {
     "outDir": "dist",
     "rootDir": "src",
-    // Este paquete usa `setTimeout` (núcleo, `conReintento`) y
-    // `drizzle-orm/pg-core` (`src/drizzle/`); sin este "types" explícito, el
-    // TS de este repo no encuentra los tipos de Node aunque `@types/node`
-    // esté instalado (mismo motivo documentado en tenant/seguridad).
-    "types": ["node"]
+    "noEmit": false,
+    // Limpia el "paths" que hereda (vía tsconfig.json) de
+    // ../../tsconfig.base.json: ESE paths resuelve
+    // "@mafesoftware/tenant/drizzle" contra el código FUENTE de tenant, que
+    // queda fuera de "rootDir": "src" y TS lo rechaza con TS6059 ("not
+    // under rootDir") en cuanto intenta tipar la emisión. Con "paths"
+    // vacío, TS cae a la resolución NORMAL de node_modules: el símlink de
+    // workspace a @mafesoftware/tenant y su "exports" -> "./dist/...". Esto
+    // funciona porque `bun run --filter './packages/*' build` corre en
+    // orden topológico (tenant antes que numeradores, por la dependencia
+    // real en package.json), así que tenant YA está buildeado cuando le
+    // toca a este paquete. `tsconfig.json` (typecheck, sin build) sigue
+    // usando el "paths" con código fuente, porque en CI el paso de
+    // typecheck corre ANTES que el de build y tenant/dist todavía no
+    // existe ahí.
+    "paths": {}
   },
-  "include": [
-    "src"
-  ]
+  "include": ["src"]
 }
