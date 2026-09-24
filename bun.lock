@@ -52,6 +52,10 @@
         "@mafesoftware/plata-ar": "workspace:*",
       },
     },
+    "packages/documentos-ar": {
+      "name": "@mafesoftware/documentos-ar",
+      "version": "0.0.0",
+    },
     "packages/fechas-ar": {
       "name": "@mafesoftware/fechas-ar",
       "version": "0.1.0",
@@ -210,6 +214,8 @@
     "@mafesoftware/correo": ["@mafesoftware/correo@workspace:packages/correo"],
 
     "@mafesoftware/cuotas": ["@mafesoftware/cuotas@workspace:packages/cuotas"],
+
+    "@mafesoftware/documentos-ar": ["@mafesoftware/documentos-ar@workspace:packages/documentos-ar"],
 
     "@mafesoftware/fechas-ar": ["@mafesoftware/fechas-ar@workspace:packages/fechas-ar"],
 
