@@ -1,4 +1,5 @@
 import { redondearComercial } from "./bigint.js";
+import { escanearImporte } from "./importe-scanner.js";
 
 /**
  * Resultado de `parsearImporte`: nunca tira. Un texto mal escrito por una
@@ -6,6 +7,15 @@ import { redondearComercial } from "./bigint.js";
  * `ErrorPlata` de `reparto.ts`/`factor.ts`/`moneda.ts`, ver `errores.ts`).
  */
 export type ResultadoParseoImporte = { ok: true; centavos: bigint } | { ok: false; error: string };
+
+/**
+ * Largo máximo que acepta `parsearImporte`. Ningún importe de plata real
+ * necesita más: el más largo de los ejemplos de este archivo (con símbolo,
+ * miles y decimales) no llega a 20 caracteres. El tope existe para que un
+ * texto larguísimo (pegado por error, o adversarial) se rechace de un saque,
+ * ANTES de correr cualquier análisis sobre él.
+ */
+export const LONGITUD_MAXIMA_IMPORTE = 64;
 
 export interface OpcionesParseoImporte {
   /** Si es `false`, un importe negativo se reporta como error. `true` por defecto. */
@@ -32,34 +42,22 @@ function esGrupoDeMilesValido(texto: string): boolean {
 }
 
 /**
- * Símbolos y códigos de moneda que `parsearImporte` tolera, pero SOLO como
- * prefijo o sufijo alrededor del número con signo — nunca metidos adentro
- * de los dígitos. `"US$1.234,56"` y `"1.234,56 ARS"` son válidos; `"1ARS2"`
- * o `"12 ARS 34"` NO lo son (serían un importe distinto leído a pedazos).
+ * Símbolos y códigos de moneda que `parsearImporte` tolera: como mucho UNO
+ * en total, como prefijo o como sufijo alrededor del número con signo —
+ * nunca metidos adentro de los dígitos ni repetidos. `"US$1.234,56"` y
+ * `"1.234,56 ARS"` son válidos; `"1ARS2"`, `"12 ARS 34"` (token en el
+ * medio) y `"$$5"`/`"ARS5USD"` (dos tokens) NO lo son.
+ *
+ * El escaneo real vive en `escanearImporte` (`importe-scanner.ts`): una
+ * sola pasada de índice que solo avanza, O(n) — a propósito, no una regex
+ * con `\s*` opcionales pegados unos a otros, que puede backtrackear
+ * cuadrático sobre una corrida larga de espacios.
  */
-const TOKEN_MONEDA = "(?:US\\$|U\\$S|ARS|USD|EUR|\\$|€)";
-
-/**
- * El signo y un token de moneda pueden aparecer, en cualquier orden, como
- * prefijo (cada uno como mucho una vez, separados por espacios sueltos); un
- * token puede aparecer también como sufijo. El cuerpo numérico (dígitos,
- * `.`, `,`) tiene que ser contiguo — sin espacios ni tokens adentro, así
- * `"2 3"`/`"10 50"`/`"1 usd 2"` no se leen como un solo número.
- */
-const PATRON_IMPORTE = new RegExp(
-  `^\\s*(?:${TOKEN_MONEDA}\\s*)?(-)?\\s*(?:${TOKEN_MONEDA}\\s*)?([\\d.,]+)\\s*(?:${TOKEN_MONEDA})?\\s*$`,
-  "i",
-);
-
-/** Separa signo y símbolo/código de moneda del cuerpo numérico; `null` si no matchea la forma de arriba. */
-function limpiarImporte(textoOriginal: string): { negativo: boolean; nucleo: string } | null {
-  const texto = String(textoOriginal ?? "");
-  if (!texto.trim()) return null;
-
-  const coincidencia = PATRON_IMPORTE.exec(texto);
-  if (!coincidencia) return null;
-
-  return { negativo: coincidencia[1] === "-", nucleo: coincidencia[2]! };
+function limpiarImporte(texto: string): { negativo: boolean; nucleo: string } | null {
+  // `texto` ya es un string garantizado acá: `parsearImporte` hace
+  // `String(texto ?? "")` una sola vez, antes del tope de longitud.
+  if (!texto) return null;
+  return escanearImporte(texto);
 }
 
 /**
@@ -122,15 +120,30 @@ function analizarImporte(textoOriginal: string, decimalConPunto: boolean): Impor
  * @example
  * parsearImporte("1234.56");     // { ok: false, error: "..." }  (un punto SIEMPRE es miles acá)
  * parsearImporte("1234.56", { decimalConPunto: true }); // { ok: true, centavos: 123_456n }
+ * @example
+ * parsearImporte(" ".repeat(1000) + "5"); // { ok: false, error: "..." }  (más de LONGITUD_MAXIMA_IMPORTE caracteres)
  */
 export function parsearImporte(texto: string, opciones: OpcionesParseoImporte = {}): ResultadoParseoImporte {
+  const textoTexto = String(texto ?? "");
+  // Se rechaza por longitud ANTES de tocar un solo regex/escaneo: ni el
+  // escáner lineal (`escanearImporte`) necesita este tope para no
+  // colgarse, pero un texto de miles de caracteres no es un importe real
+  // bajo ninguna interpretación, y cortarlo acá es gratis (`.length` es
+  // O(1) en un string de JS).
+  if (textoTexto.length > LONGITUD_MAXIMA_IMPORTE) {
+    return {
+      ok: false,
+      error: `"${textoTexto.slice(0, 20)}..." tiene ${textoTexto.length} caracteres; el máximo para un importe es ${LONGITUD_MAXIMA_IMPORTE}.`,
+    };
+  }
+
   const { permitirNegativo = true, decimalConPunto = false } = opciones;
-  const analizado = analizarImporte(texto, decimalConPunto);
+  const analizado = analizarImporte(textoTexto, decimalConPunto);
   if (!analizado) {
-    return { ok: false, error: `"${String(texto)}" no es un importe válido.` };
+    return { ok: false, error: `"${textoTexto}" no es un importe válido.` };
   }
   if (analizado.negativo && !permitirNegativo) {
-    return { ok: false, error: `"${String(texto)}" es negativo y este campo no acepta negativos.` };
+    return { ok: false, error: `"${textoTexto}" es negativo y este campo no acepta negativos.` };
   }
 
   // `analizado.entero` nunca es "": `esGrupoDeMilesValido` (y, en modo

@@ -9,14 +9,14 @@ import type { Moneda } from "./moneda.js";
  * construido con aritmética `bigint`) y se lo pasa directo a
  * `Intl.NumberFormat#format`, que —a diferencia de pasarle un `number`—
  * acepta un string decimal y lo interpreta con precisión matemática exacta
- * (`ToIntlMathematicalValue`, parte del estándar ECMA-402 desde 2020;
- * soportado en los motores JS modernos, Node ≥ 20 incluido). Así `Intl`
- * resuelve símbolo, posición, separador de miles/decimal y agrupamiento
- * **del locale real** (de a 3 en la mayoría, pero irregular en otros como
- * `en-IN`: "₹12,34,567"), sin que este paquete tenga que reimplementar esa
- * lógica a mano asumiendo grupos de a 3 en todos lados — que es lo que
- * hacía una versión anterior de esta función, y que perdía el agrupamiento
- * en `es-ES` (ver test).
+ * (`ToIntlMathematicalValue`, parte de "Intl.NumberFormat v3", que llegó
+ * con ES2023 — Node ≥ 20, Safari ≥ 15.4, Firefox ≥ 116; ver la nota
+ * "Requisitos" del README). Así `Intl` resuelve símbolo, posición,
+ * separador de miles/decimal y agrupamiento **del locale real** (de a 3 en
+ * la mayoría, pero irregular en otros como `en-IN`: "₹12,34,567"), sin que
+ * este paquete tenga que reimplementar esa lógica a mano asumiendo grupos
+ * de a 3 en todos lados — que es lo que hacía una versión anterior de esta
+ * función, y que perdía el agrupamiento en `es-ES` (ver test).
  */
 export function formatearImporteExacto(
   centavos: bigint,

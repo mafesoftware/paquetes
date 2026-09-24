@@ -30,6 +30,22 @@ sin ORM, y **puros** salvo donde se indique. Todo lo que sale a la red acepta un
 bun add @mafesoftware/plata-ar
 ```
 
+## Requisitos
+
+`formatearPlata(Importe | bigint, ...)` necesita que el motor JS soporte
+**"Intl.NumberFormat v3"** (`Intl.NumberFormat#format` aceptando un string
+decimal con precisión matemática exacta, `ToIntlMathematicalValue`) — parte
+de ES2023: **Node ≥ 20, Safari ≥ 15.4, Firefox ≥ 116** (V8/Chrome lo trae
+hace más tiempo). En un motor más viejo sin esto, `Intl.NumberFormat`
+convierte el string a través de `number` antes de formatear, así que un
+importe por encima de `2^53` (`Number.MAX_SAFE_INTEGER`) pierde precisión
+en el formateo — aunque el cálculo en `bigint` de más arriba (redondeo,
+factores, reparto) siga siendo exacto en cualquier motor. `engines.node` de
+este paquete ya pide `>=20`.
+
+`parsearImporte` acepta hasta `LONGITUD_MAXIMA_IMPORTE` (64) caracteres;
+un texto más largo se rechaza antes de analizarlo (ver `parseo.ts`).
+
 La documentación de cada función está en `src/index.ts`, con **el motivo de
 cada decisión** al lado. Los tests (`tests/`) son la otra mitad de la
 documentación: cada uno dice qué bug evita.
@@ -213,7 +229,12 @@ sumar({ centavos: 100n, moneda: "ARS" }, { centavos: 100n, moneda: "USD" });
 ### Parseo (`parseo.ts`)
 
 ```ts
-import { parsearImporte, type OpcionesParseoImporte, type ResultadoParseoImporte } from "@mafesoftware/plata-ar";
+import {
+  parsearImporte,
+  LONGITUD_MAXIMA_IMPORTE,
+  type OpcionesParseoImporte,
+  type ResultadoParseoImporte,
+} from "@mafesoftware/plata-ar";
 
 // Nunca tira: ResultadoParseoImporte = { ok: true; centavos: bigint }
 //                                    | { ok: false; error: string }.
@@ -234,17 +255,26 @@ parsearImporte("1234.56");   // { ok: false, error: "..." }         (un punto SI
 parsearImporte("-500", { permitirNegativo: false });    // { ok: false, error: "..." }
 parsearImporte("44000.5", { decimalConPunto: true });   // { ok: true, centavos: 4_400_050n } (convención en inglés)
 
-// Solo tolera dígitos, un "-" inicial, ".", ",", espacios y símbolos/códigos
-// de moneda ($, US$, U$S, ARS, USD, EUR, €) -- y el signo/token SOLO como
-// prefijo o sufijo alrededor del número con signo, nunca metidos adentro de
-// los dígitos: cualquier otro caracter, o un token/espacio en el medio, es
-// inválido, no se descarta en silencio.
+// Solo tolera dígitos, un "-" inicial, ".", ",", espacios y COMO MUCHO UN
+// símbolo/código de moneda ($, US$, U$S, ARS, USD, EUR, €) en total -- y
+// ese signo/token SOLO como prefijo o sufijo alrededor del número, nunca
+// metidos adentro de los dígitos ni repetidos: cualquier otro caracter, un
+// token/espacio en el medio, o un segundo token, es inválido, no se
+// descarta en silencio.
 parsearImporte("1e3");      // { ok: false, error: "..." }  (no es "1300")
 parsearImporte("(500)");    // { ok: false, error: "..." }  (no es "500")
 parsearImporte("1$2");      // { ok: false, error: "..." }  (token en el medio, no es "12")
 parsearImporte("12 ARS 34"); // { ok: false, error: "..." } (idem)
+parsearImporte("$$5");      // { ok: false, error: "..." }  (dos tokens)
+parsearImporte("ARS5USD");  // { ok: false, error: "..." }  (idem: prefijo + sufijo)
 parsearImporte("$ -1.000"); // { ok: true, centavos: -100_000n }  (token y signo como prefijo: sí vale)
 parsearImporte("1.000,50 ARS"); // { ok: true, centavos: 100_050n } (token como sufijo: sí vale)
+
+// El escaneo es lineal (una sola pasada, sin backtracking sobre corridas
+// de espacios), pero igual hay un tope de longitud: un texto de más de
+// LONGITUD_MAXIMA_IMPORTE (64) caracteres se rechaza ANTES de analizarlo.
+// Ningún importe real necesita tanto.
+parsearImporte(" ".repeat(1000) + "5"); // { ok: false, error: "..." }
 ```
 
 **`decimalConPunto` es responsabilidad de quien llama**: `parsearImporte`

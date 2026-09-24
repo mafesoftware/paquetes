@@ -38,10 +38,14 @@ sigue funcionando):
   decimalConPunto: true` habilita la convención en inglés (responsabilidad
   de quien llama: en ese modo `"1.000"` es 1 peso, no mil). Solo tolera
   dígitos, un `-` inicial, `.`, `,`, espacios y símbolos/códigos de moneda
-  (`$`, `US$`, `U$S`, `ARS`, `USD`, `EUR`, `€`) — y el signo/token únicamente
-  como prefijo o sufijo alrededor del número, nunca metidos adentro de los
-  dígitos: `"1e3"`, `"(500)"`, `"1$2"` y `"12 ARS 34"` son inválidos, no se
-  leen a pedazos.
+  (`$`, `US$`, `U$S`, `ARS`, `USD`, `EUR`, `€`) — como mucho UNO en total, y
+  únicamente como prefijo o sufijo alrededor del número, nunca metidos
+  adentro de los dígitos ni repetidos: `"1e3"`, `"(500)"`, `"1$2"`, `"12 ARS
+  34"` y `"$$5"` son inválidos, no se leen a pedazos ni con dos monedas a la
+  vez. El escaneo es de una sola pasada, O(n) (sin la regex con `\s*`
+  adyacentes que puede backtrackear cuadrático sobre corridas largas de
+  espacio), y además rechaza de entrada textos de más de
+  `LONGITUD_MAXIMA_IMPORTE` (64) caracteres.
 - `formatearPlata` ahora también acepta `Importe | bigint` (sobrecarga sobre
   la firma 0.1 en `Centavos`), con aritmética `bigint` exacta más allá de
   `Number.MAX_SAFE_INTEGER` centavos y agrupamiento/separadores del locale

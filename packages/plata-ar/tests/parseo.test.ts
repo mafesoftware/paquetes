@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { parsearImporte } from "../src/parseo.ts";
+import { parsearImporte, LONGITUD_MAXIMA_IMPORTE } from "../src/parseo.ts";
+import { escanearImporte } from "../src/importe-scanner.ts";
 
 describe("parsearImporte", () => {
   it('"44.000" -> 4.400.000 centavos (cuarenta y cuatro mil pesos)', () => {
@@ -103,6 +104,82 @@ describe("parsearImporte", () => {
 
     it("token como sufijo (con espacio antes) sigue valiendo", () => {
       expect(parsearImporte("1.000,50 ARS")).toEqual({ ok: true, centavos: 100_050n });
+    });
+  });
+
+  describe("B1: tope de longitud + escaneo lineal (sin backtracking cuadrático)", () => {
+    it(`textos de más de ${LONGITUD_MAXIMA_IMPORTE} caracteres se rechazan, rápido, sin importar cuántos`, () => {
+      for (const n of [5_000, 10_000, 20_000, 40_000, 50_000]) {
+        const texto = " ".repeat(n) + "x";
+        const inicio = performance.now();
+        const resultado = parsearImporte(texto);
+        const duracion = performance.now() - inicio;
+        expect(resultado.ok, `n=${n}`).toBe(false);
+        expect(duracion, `n=${n} tardó ${duracion.toFixed(1)}ms`).toBeLessThan(50);
+      }
+    });
+
+    it('"$" + 50.000 espacios + "x" se rechaza rápido (el tope corta antes de escanear)', () => {
+      const texto = "$" + " ".repeat(50_000) + "x";
+      const inicio = performance.now();
+      const resultado = parsearImporte(texto);
+      const duracion = performance.now() - inicio;
+      expect(resultado.ok).toBe(false);
+      expect(duracion).toBeLessThan(50);
+    });
+
+    it('"5" + 50.000 espacios + "x" se rechaza rápido', () => {
+      const texto = "5" + " ".repeat(50_000) + "x";
+      const inicio = performance.now();
+      const resultado = parsearImporte(texto);
+      const duracion = performance.now() - inicio;
+      expect(resultado.ok).toBe(false);
+      expect(duracion).toBeLessThan(50);
+    });
+
+    it("el escáner interno (escanearImporte), sin pasar por el tope de longitud, también es lineal", () => {
+      // Prueba la propiedad de fondo (B1b), no solo el tope (B1a): un texto
+      // de 50.000 caracteres, escaneado directo, tiene que resolver rápido
+      // porque el algoritmo es O(n) de una sola pasada -- no porque algo
+      // más arriba lo haya cortado antes.
+      for (const texto of [
+        " ".repeat(50_000) + "x",
+        "$" + " ".repeat(50_000) + "x",
+        "5" + " ".repeat(50_000) + "x",
+      ]) {
+        const inicio = performance.now();
+        const resultado = escanearImporte(texto);
+        const duracion = performance.now() - inicio;
+        expect(resultado).toBeNull();
+        expect(duracion, `tardó ${duracion.toFixed(1)}ms`).toBeLessThan(50);
+      }
+    });
+  });
+
+  describe("B2: como mucho UN token de moneda en total (prefijo O sufijo, nunca los dos)", () => {
+    it("dos tokens (dos prefijos, o prefijo+sufijo) -> error", () => {
+      for (const texto of ["$$5", "$-$5", "$ 5 $", "ARS5USD", "US$ 1.000,00 USD"]) {
+        expect(parsearImporte(texto).ok, `"${texto}"`).toBe(false);
+      }
+    });
+
+    it("un solo token, en cualquier posición/orden válida, sigue pasando", () => {
+      expect(parsearImporte("$ -1.000")).toEqual({ ok: true, centavos: -100_000n });
+      expect(parsearImporte("- 5")).toEqual({ ok: true, centavos: -500n });
+      expect(parsearImporte("US$1.000,5")).toEqual({ ok: true, centavos: 100_050n });
+      expect(parsearImporte("1.000,50 ARS")).toEqual({ ok: true, centavos: 100_050n });
+      expect(parsearImporte("-$ 5")).toEqual({ ok: true, centavos: -500n });
+      expect(parsearImporte("ARS-5")).toEqual({ ok: true, centavos: -500n });
+      expect(parsearImporte("-ARS 5")).toEqual({ ok: true, centavos: -500n });
+      expect(parsearImporte("usd5")).toEqual({ ok: true, centavos: 500n });
+    });
+
+    it("tabs, saltos de línea y NBSP alrededor del número siguen valiendo como espacio", () => {
+      expect(parsearImporte("\t5\t")).toEqual({ ok: true, centavos: 500n });
+      expect(parsearImporte("\n5\n")).toEqual({ ok: true, centavos: 500n });
+      expect(parsearImporte(" 5 ")).toEqual({ ok: true, centavos: 500n });
+      expect(parsearImporte("$\t5")).toEqual({ ok: true, centavos: 500n });
+      expect(parsearImporte("5\tARS")).toEqual({ ok: true, centavos: 500n });
     });
   });
 
