@@ -61,9 +61,14 @@ function enRuta(copia: unknown, campo: string): unknown {
   const resolver = (actual: unknown, segmentos: string[]): unknown => {
     if (segmentos.length === 0) return actual;
     if (actual === null || typeof actual !== "object") return undefined;
-    for (let k = segmentos.length; k >= 1; k--) {
-      const clave = segmentos.slice(0, k).join(".");
-      if (Object.hasOwn(actual, clave)) return resolver((actual as Record<string, unknown>)[clave], segmentos.slice(k));
+    // Cada clave propia que coincide con el principio de la ruta (la más larga primero).
+    const candidatas = Object.keys(actual)
+      .map((clave) => clave.split("."))
+      .filter((partes) => partes.length <= segmentos.length && partes.every((p, i) => p === segmentos[i]))
+      .sort((x, y) => y.length - x.length);
+    for (const partes of candidatas) {
+      const r = resolver((actual as Record<string, unknown>)[partes.join(".")], segmentos.slice(partes.length));
+      if (r !== undefined) return r;
     }
     return undefined;
   };
@@ -305,13 +310,15 @@ describe("Fix round 1 (P.10b) — I1: términos y claves con punto en cambios", 
     verificar(c, ["ST1", "ST2"]);
   });
 
-  it('un término con forma de ruta sobre una hoja NO default ("cuenta.numero"): no es una ruta — las copias NO tapan cuenta.numero; cambios sí (la ruta coincide con el texto del término)', async () => {
+  it('un término con forma de ruta sobre una hoja NO default ("cuenta.numero"): desde la ronda de fix 2 tapa en las copias Y en cambios', async () => {
     const c = await auditarCapturando({ camposSensibles: ["cuenta.numero"], antes: { cuenta: { numero: "NUM1" } }, despues: { cuenta: { numero: "NUM2" } } });
-    // Documentado: los términos son NOMBRES de clave. `redactar` mira cada clave por separado ("cuenta", "numero"), ninguna es "cuenta.numero".
-    expect(c.antes).toEqual({ cuenta: { numero: "NUM1" } });
-    expect(c.despues).toEqual({ cuenta: { numero: "NUM2" } });
-    // cambios prueba cada tramo contiguo de la ruta, y "cuenta.numero" iguala al término: queda tapado (de más, nunca de menos).
+    // Ronda de fix 1 documentaba una asimetría (las copias no lo tapaban). El
+    // ruling de la ronda de fix 2 la cierra: `redactar` también prueba las
+    // colas de la ruta de claves con un término con punto.
+    expect(c.antes).toEqual({ cuenta: { numero: "[redactado]" } });
+    expect(c.despues).toEqual({ cuenta: { numero: "[redactado]" } });
     expect(c.cambios).toEqual([{ campo: "cuenta.numero", antes: "[redactado]", despues: "[redactado]" }]);
+    verificar(c, ["NUM1", "NUM2"]);
   });
 });
 
@@ -376,5 +383,144 @@ describe("Fix round 1 (P.10b) — M4: getters rotos en tenantId/actor/ip/userAge
     expect(c.params[5]).toBe("u-1");
     expect(c.params[9]).toBe("10.0.0.1");
     expect(c.params[10]).toBe("UA/1");
+  });
+});
+
+describe("Fix round 2 (P.10b) — D1: rutas con muchos puntos no bloquean", () => {
+  const TOPE_MS = 200;
+
+  it("una clave de ~10k puntos (con términos default y con uno con punto) se audita en < 200 ms", async () => {
+    const sensible = `x${".".repeat(10_000)}password`;
+    const inocente = `x${".".repeat(10_000)}y`;
+    for (const camposSensibles of [undefined, ["api.key", "password"]]) {
+      const inicio = performance.now();
+      const c = await auditarCapturando({ camposSensibles, antes: { [sensible]: "DOS1", [inocente]: 1 }, despues: { [sensible]: "DOS2", [inocente]: 2 } });
+      expect(performance.now() - inicio).toBeLessThan(TOPE_MS);
+      expect(c.cambios).toContainEqual({ campo: sensible, antes: "[redactado]", despues: "[redactado]" });
+      expect(c.cambios).toContainEqual({ campo: inocente, antes: 1, despues: 2 });
+      verificar(c, ["DOS1", "DOS2"]);
+    }
+  });
+
+  it("una ruta de 4000 segmentos (clave con puntos) se audita en < 200 ms, también con un término de 3 puntos", async () => {
+    const clave = Array.from({ length: 4000 }, (_, i) => `s${i}`).join(".");
+    for (const camposSensibles of [undefined, ["a.b.c.d"]]) {
+      const inicio = performance.now();
+      const c = await auditarCapturando({ camposSensibles, antes: { [clave]: 1 }, despues: { [clave]: 2 } });
+      expect(performance.now() - inicio).toBeLessThan(TOPE_MS);
+      expect(c.cambios).toEqual([{ campo: clave, antes: 1, despues: 2 }]);
+    }
+  });
+
+  it("un objeto anidado 300 niveles con un término con punto se audita en < 200 ms", async () => {
+    const armar = (hoja: string) => {
+      let v: Record<string, unknown> = { cuenta: { numero: hoja } };
+      for (let i = 0; i < 300; i++) v = { n: v };
+      return v;
+    };
+    const inicio = performance.now();
+    const c = await auditarCapturando({ camposSensibles: ["cuenta.numero"], antes: armar("PROF1"), despues: armar("PROF2") });
+    expect(performance.now() - inicio).toBeLessThan(TOPE_MS);
+    verificar(c, ["PROF1", "PROF2"]);
+  });
+});
+
+describe("Fix round 2 (P.10b) — términos con punto también como ruta en las copias guardadas", () => {
+  it('"cuenta.numero" tapa { cuenta: { numero } } en las copias Y en cambios, y sigue tapando la clave literal "cuenta.numero"', async () => {
+    const c = await auditarCapturando({
+      camposSensibles: ["cuenta.numero"],
+      antes: { cuenta: { numero: "CN1", banco: "X" }, "cuenta.numero": "CL1" },
+      despues: { cuenta: { numero: "CN2", banco: "X" }, "cuenta.numero": "CL2" },
+    });
+    expect(c.antes).toEqual({ cuenta: { numero: "[redactado]", banco: "X" }, "cuenta.numero": "[redactado]" });
+    expect(c.despues).toEqual({ cuenta: { numero: "[redactado]", banco: "X" }, "cuenta.numero": "[redactado]" });
+    expect(c.cambios).toEqual([
+      { campo: "cuenta.numero", antes: "[redactado]", despues: "[redactado]" },
+      { campo: "cuenta.numero", antes: "[redactado]", despues: "[redactado]" },
+    ]);
+    verificar(c, ["CN1", "CN2", "CL1", "CL2"]);
+  });
+
+  it("adentro de una hoja (arreglo) y de un Map: los arreglos no suman segmento, las claves de Map sí; copias y cambios coinciden", async () => {
+    const c = await auditarCapturando({
+      camposSensibles: ["l.cuenta", "m.numero"],
+      antes: { l: [{ cuenta: "HL1" }], m: new Map([["numero", "HM1"]]), otro: [{ cuenta: "visible" }] },
+      despues: { l: [{ cuenta: "HL2" }], m: new Map([["numero", "HM2"]]), otro: [{ cuenta: "visible" }] },
+    });
+    expect(c.despues).toEqual({ l: [{ cuenta: "[redactado]" }], m: { numero: "[redactado]" }, otro: [{ cuenta: "visible" }] });
+    expect(c.cambios).toEqual([
+      { campo: "l", antes: [{ cuenta: "[redactado]" }], despues: [{ cuenta: "[redactado]" }] },
+      { campo: "m.numero", antes: "[redactado]", despues: "[redactado]" },
+    ]);
+    verificar(c, ["HL1", "HL2", "HM1", "HM2"]);
+  });
+
+  it("un término de 3 puntos matchea SOLO una ruta con exactamente esa cola", async () => {
+    const valor = (s: string) => ({
+      x: { a: { b: { c: { d: `${s}-si` } } } }, // cola exacta a.b.c.d
+      corte: { b: { c: { d: `${s}-no1` } } }, // "corte.b.c.d" no termina en "a.b.c.d" ("corta" sí terminaría: regla "termina con")
+      otra: { a: { b: { c: { e: `${s}-no2` } } } }, // termina en "e"
+      d: { a: { b: { c: `${s}-no3` } } }, // los mismos nombres, en otro orden
+    });
+    const c = await auditarCapturando({ camposSensibles: ["a.b.c.d"], antes: valor("T3A"), despues: valor("T3B") });
+    expect(c.despues).toEqual({
+      x: { a: { b: { c: { d: "[redactado]" } } } },
+      corte: { b: { c: { d: "T3B-no1" } } },
+      otra: { a: { b: { c: { e: "T3B-no2" } } } },
+      d: { a: { b: { c: "T3B-no3" } } },
+    });
+    verificar(c, ["T3A-si", "T3B-si"]);
+  });
+
+  it("los términos default se comportan igual que antes: { cuenta: { numero } } y { api: { key } } quedan visibles", async () => {
+    const { puntosMaximos, normalizarTerminos } = await import("../../src/coincidencia-sensible.js");
+    const { CAMPOS_SENSIBLES_POR_DEFECTO } = await import("../../src/redactar.js");
+    expect(puntosMaximos(normalizarTerminos(CAMPOS_SENSIBLES_POR_DEFECTO))).toBe(0);
+    const c = await auditarCapturando({ antes: { cuenta: { numero: 1 }, api: { key: "k1" }, token: "T1" }, despues: { cuenta: { numero: 2 }, api: { key: "k2" }, token: "T2" } });
+    expect(c.despues).toEqual({ cuenta: { numero: 2 }, api: { key: "k2" }, token: "[redactado]" });
+    verificar(c, ["T1", "T2"]);
+  });
+});
+
+describe("Fix round 2 (P.10b) — \\p{Cc} y lectura única de antes/despues/camposSensibles", () => {
+  it('"pass\\u0000word" y "tok\\u0007en" (caracteres de control) se tapan', async () => {
+    const c = await auditarCapturando({ antes: { "pass\u0000word": "CC1", "tok\u0007en": "CC2" }, despues: { "pass\u0000word": "CC3", "tok\u0007en": "CC4" } });
+    expect(c.despues).toEqual({ "pass\u0000word": "[redactado]", "tok\u0007en": "[redactado]" });
+    verificar(c, ["CC1", "CC2", "CC3", "CC4"]);
+  });
+
+  for (const campo of ["antes", "despues", "camposSensibles"] as const) {
+    it(`un getter de ${campo} que tira: { ok: false } "error preparando la auditoría", sin tocar la base`, async () => {
+      const spyError = vi.spyOn(console, "error").mockImplementation(() => {});
+      const transaction = vi.fn(async () => {
+        throw new Error("no debería llamarse");
+      });
+      try {
+        const entrada: Record<string, unknown> = { tenantId: TENANT, entidad: "test", entidadId: "1", accion: "crear", actor: { tipo: "sistema" } };
+        Object.defineProperty(entrada, campo, { get: () => { throw new Error("SECRETO-R2"); }, enumerable: true });
+        const resultado = await auditar({ transaction } as unknown as DbCliente, tabla, entrada as unknown as EntradaAuditoria);
+        expect(resultado).toEqual({ ok: false, error: { codigo: null, mensaje: "error preparando la auditoría" } });
+        expect(transaction).not.toHaveBeenCalled();
+        expect(spyError.mock.calls.flat().join(" ")).not.toContain("SECRETO-R2");
+      } finally {
+        spyError.mockRestore();
+      }
+    });
+  }
+
+  it("getters que devuelven algo distinto en cada lectura: se leen UNA vez, y el diff y las copias usan el mismo valor", async () => {
+    const lecturas = { antes: 0, despues: 0, camposSensibles: 0 };
+    const entrada: Record<string, unknown> = { tenantId: TENANT, entidad: "test", entidadId: "1", accion: "actualizar", actor: { tipo: "sistema" } };
+    Object.defineProperty(entrada, "antes", { enumerable: true, get: () => (lecturas.antes++ === 0 ? { nombre: "Ana", pin: "P1" } : { nombre: "OTRO", pin: "FUGA-A" }) });
+    Object.defineProperty(entrada, "despues", { enumerable: true, get: () => (lecturas.despues++ === 0 ? { nombre: "Beto", pin: "P2" } : { nombre: "OTRO", pin: "FUGA-D" }) });
+    Object.defineProperty(entrada, "camposSensibles", { enumerable: true, get: () => (lecturas.camposSensibles++ === 0 ? ["pin"] : []) });
+    const capturas: Capturado[] = [];
+    const resultado = await auditar(dbQueCaptura(capturas), tabla, entrada as unknown as EntradaAuditoria);
+    expect(resultado).toEqual({ ok: true, id: "id-falso" });
+    expect(lecturas).toEqual({ antes: 1, despues: 1, camposSensibles: 1 });
+    const c = capturas[0]!;
+    expect(c.antes).toEqual({ nombre: "Ana", pin: "[redactado]" });
+    expect(c.despues).toEqual({ nombre: "Beto", pin: "[redactado]" });
+    verificar(c, ["P1", "P2", "FUGA-A", "FUGA-D", "OTRO"]);
   });
 });

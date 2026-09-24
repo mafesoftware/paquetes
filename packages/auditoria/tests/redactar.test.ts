@@ -484,3 +484,30 @@ describe("Fix round 1 (P.10b) — normalización NFKD, invisibles, términos vac
     expect(redactar({ secretos: ["a"], lasSecretas: "b" })).toEqual({ secretos: "[redactado]", lasSecretas: "[redactado]" });
   });
 });
+
+describe("Fix round 2 (P.10b) — control, términos como ruta y cota", () => {
+  it("\\p{Cc}: normalizarClave quita caracteres de control", async () => {
+    const { normalizarClave } = await import("../src/coincidencia-sensible.js");
+    expect(normalizarClave("pass\u0000word")).toBe("password");
+    expect(normalizarClave("\u001Btoken\u007F")).toBe("token");
+  });
+
+  it("puntosMaximos: 0 sin términos con punto; el máximo de puntos si hay", async () => {
+    const { normalizarTerminos, puntosMaximos } = await import("../src/coincidencia-sensible.js");
+    expect(puntosMaximos(normalizarTerminos(["token", "cbu"]))).toBe(0);
+    expect(puntosMaximos(normalizarTerminos(["token", "a.b", "a.b.c.d"]))).toBe(3);
+  });
+
+  it('redactar con un término con punto lo aplica como cola de la ruta de claves ("cuenta.numero")', () => {
+    expect(redactar({ cuenta: { numero: 1, banco: "x" }, numero: 2, "cuenta.numero": 3 }, ["cuenta.numero"])).toEqual({
+      cuenta: { numero: "[redactado]", banco: "x" },
+      numero: 2,
+      "cuenta.numero": "[redactado]",
+    });
+    // Los arreglos y Sets no suman segmento; las claves de Map sí.
+    expect(redactar({ cuenta: [{ numero: 1 }], m: new Map([["cuenta", { numero: 2 }]]) }, ["cuenta.numero"])).toEqual({
+      cuenta: [{ numero: "[redactado]" }],
+      m: { cuenta: { numero: "[redactado]" } },
+    });
+  });
+});

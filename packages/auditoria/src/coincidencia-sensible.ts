@@ -21,10 +21,11 @@ const SUFIJO_DE_COLISION = /(?: \(\d+\))+$/;
  * Lo que se borra después de `NFKD`: marcas combinantes (`\p{M}`, lo que
  * queda de un acento: `"ñ"` → `"n"` + `"\u0303"`) y caracteres de formato
  * (`\p{Cf}`: espacio de ancho cero `U+200B`, unidores `U+200C`/`U+200D`,
- * guion blando `U+00AD`, BOM `U+FEFF`…), que no se ven y partirían una
- * clave en dos (`"pass\u200Bword"`).
+ * guion blando `U+00AD`, BOM `U+FEFF`…) y de control (`\p{Cc}`: `U+0000`,
+ * `U+001B`, `U+007F`…), que no se ven y partirían una clave en dos
+ * (`"pass\u200Bword"`, `"pass\u0000word"`).
  */
-const INVISIBLES = /[\p{M}\p{Cf}]/gu;
+const INVISIBLES = /[\p{M}\p{Cf}\p{Cc}]/gu;
 
 /** Separadores que no cuentan: `_`, `-` y cualquier espacio en blanco. El punto NO: `"api.key"` no es `"apikey"` (ver `redactarCambios`). */
 const SEPARADORES = /[_\-\s]/g;
@@ -34,7 +35,7 @@ const SEPARADORES = /[_\-\s]/g;
  * orden:
  *
  * 1. Unicode `NFKD` y se quitan las marcas combinantes y los caracteres de
- *    formato invisibles (`"contraseña"` → `"contrasena"`, `"ＰＡＳＳＷＯＲＤ"`
+ *    formato y de control invisibles (`"contraseña"` → `"contrasena"`, `"ＰＡＳＳＷＯＲＤ"`
  *    de ancho completo → `"PASSWORD"`, `"pass\u200Bword"` → `"password"`);
  * 2. se saca el sufijo de colisión final (`"password (2)"` → `"password"`) —
  *    después del paso 1, así un sufijo con dígitos de ancho completo o con
@@ -107,6 +108,43 @@ export function esClaveSensible(clave: string, terminosNormalizados: ReadonlySet
   const normalizada = normalizarClave(clave);
   for (const termino of terminosNormalizados) {
     if (normalizada === termino || normalizada.endsWith(termino)) return true;
+  }
+  return false;
+}
+
+/**
+ * La mayor cantidad de `"."` en un término normalizado (`0` si ninguno
+ * tiene punto, como en `CAMPOS_SENSIBLES_POR_DEFECTO`). Se calcula UNA vez
+ * por lista y acota `colaSensible`: un término con `d` puntos solo puede
+ * coincidir con la cola de una ruta que abarque a lo sumo `d + 1`
+ * segmentos (cada límite entre segmentos aporta un `"."`, y la
+ * normalización puede AGREGAR puntos — `NFKD` de `"․"` da `"."` — pero
+ * nunca los quita).
+ */
+export function puntosMaximos(terminosNormalizados: ReadonlySet<string>): number {
+  let maximo = 0;
+  for (const termino of terminosNormalizados) {
+    let puntos = 0;
+    for (const caracter of termino) if (caracter === ".") puntos++;
+    if (puntos > maximo) maximo = puntos;
+  }
+  return maximo;
+}
+
+/**
+ * ¿Alguna cola de `segmentos` que TERMINA en `segmentos[fin]` es sensible?
+ * Prueba `segmentos[fin]` solo y, si hay términos con punto
+ * (`maxPuntos > 0`), las uniones con `"."` de los `k` segmentos que terminan
+ * en `fin`, con `k` hasta `maxPuntos + 1`. Con `maxPuntos === 0` es una sola
+ * llamada a `esClaveSensible`: los términos default no pagan nada extra.
+ * Así el costo por segmento está acotado por el término más largo, no por
+ * la longitud de la ruta (una clave de 10.000 puntos ya no es O(n³)).
+ */
+export function colaSensible(segmentos: readonly string[], fin: number, terminosNormalizados: ReadonlySet<string>, maxPuntos: number): boolean {
+  if (esClaveSensible(segmentos[fin]!, terminosNormalizados)) return true;
+  const inicioMinimo = Math.max(0, fin - maxPuntos);
+  for (let inicio = fin - 1; inicio >= inicioMinimo; inicio--) {
+    if (esClaveSensible(segmentos.slice(inicio, fin + 1).join("."), terminosNormalizados)) return true;
   }
   return false;
 }

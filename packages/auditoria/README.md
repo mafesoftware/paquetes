@@ -132,8 +132,8 @@ los segmentos de ruta de `cambios` (`redactarCambios`) y los TÉRMINOS de la
 lista (así un término propio con acentos, `"código"`, funciona). En orden:
 
 1. Unicode NFKD, y se quitan las marcas combinantes (acentos) y los
-   caracteres de formato invisibles (`\p{Cf}`: espacio de ancho cero, guion
-   blando, BOM…): `"contraseña"` → `"contrasena"`, `"ＰＡＳＳＷＯＲＤ"` (ancho
+   caracteres invisibles de formato (`\p{Cf}`: espacio de ancho cero, guion
+   blando, BOM…) y de control (`\p{Cc}`: `U+0000`…): `"contraseña"` → `"contrasena"`, `"ＰＡＳＳＷＯＲＤ"` (ancho
    completo) → `"PASSWORD"`, `"pass\u200Bword"` → `"password"`;
 2. se saca el sufijo de colisión final `" (N)"` (puede repetirse):
    `"password (2)"` → `"password"`, `"password (2) (3)"` → `"password"`;
@@ -160,18 +160,22 @@ todas las claves.
 | `passwordHint` | **No** | `"password"` es un PREFIJO ahí, no un sufijo |
 | `tokenizer` | **No** | no termina en `"token"` (queda al principio) |
 | `api.key` (con la lista default) | **No** | el punto no es separador: `"api.key"` no es `"apikey"` — ni en las copias ni en `cambios` |
+| `pass\u0000word` | Sí | los caracteres de control (`\p{Cc}`) también se quitan |
 
 **Claves y términos con punto.** El punto se conserva porque es el
-separador de las rutas de `cambios`. Un término propio con punto matchea
-una clave que tenga ese punto adentro: con `camposSensibles: ["api.key"]`,
-`{ "api.key": ... }` se tapa en las copias y en `cambios` (`redactarCambios`
-prueba cada tramo contiguo de la ruta, no solo cada segmento suelto).
-**Los términos son NOMBRES DE CLAVE, no rutas**: `["cuenta.numero"]` no tapa
-`{ cuenta: { numero } }` en las copias guardadas (ninguna clave se llama
-`"cuenta.numero"`); en `cambios` esa entrada sí queda tapada, porque la
-ruta `"cuenta.numero"` coincide con el texto del término — tapa de más
-ahí, pero la copia guardada lo tiene en claro. Para tapar un campo anidado
-usá su nombre de clave (`"numero"`, o un término que termine igual).
+separador de las rutas de `cambios`. Un término con punto (`"cuenta.numero"`)
+se evalúa contra la clave sola **y** contra las colas de la RUTA de claves que
+terminan en ella, en las copias guardadas y en `cambios` por igual:
+`camposSensibles: ["cuenta.numero"]` tapa `{ cuenta: { numero } }` y también
+una clave literal `{ "cuenta.numero": ... }`. Los arreglos y `Set`s no suman
+segmento a la ruta (como en `cambios`, donde un arreglo es una hoja); las
+claves de `Map` sí. Sigue valiendo "termina con": `"a.b.c.d"` tapa
+`x.a.b.c.d` y también `corta.b.c.d` (`"corta"` termina en `"a"`), pero no
+`corte.b.c.d` ni `b.c.d`. El costo está acotado: solo se prueban colas de a
+lo sumo `puntos + 1` segmentos (los puntos del término con más puntos), así
+que con la lista default (ningún término tiene punto) no hay costo extra, y
+una clave o ruta con miles de puntos no bloquea.
+
 
 Un `"contiene"` en vez de `"termina con"` hubiera tapado por error
 `passwordHint`/`tokenizer`.
@@ -599,7 +603,8 @@ paso previo no debería fallar en uso normal (`redactar`/`serializarParaAuditori
 `normalizarParaDiff` están diseñados para nunca tirar), pero una `tabla`
 malformada (una columna `undefined`) sí puede hacerlo fallar antes de tocar
 `dbOTx`. `entidad`, `entidadId`, `accion`, `tenantId`, `actor` (con `tipo` e
-`id`), `ip` y `userAgent` se leen UNA sola vez, al principio, y esas copias
+`id`), `ip`, `userAgent`, `antes`, `despues` y `camposSensibles` se leen UNA
+sola vez (el diff y las copias guardadas usan los mismos valores), al principio, y esas copias
 se usan en el `INSERT` y en el log: si alguna lectura tira (un getter roto), `auditar` igual resuelve con ese mismo
 `"error preparando la auditoría"` y el log muestra `[desconocido]` en ese
 campo (para `entidad`/`entidadId`/`accion`) — nunca rechaza.

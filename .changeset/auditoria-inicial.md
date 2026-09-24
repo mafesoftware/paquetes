@@ -221,8 +221,7 @@ de punta a punta:
     clave `"api.key"`) ya no filtra en `cambios`: `redactarCambios` prueba
     cada tramo contiguo de la ruta (`segmentos[i..j]` unidos con `"."`),
     no solo cada segmento. El punto sigue sin ser separador (`"api.key"` no
-    matchea `"apikey"`, ni en las copias ni en `cambios`). Los términos son
-    nombres de clave, no rutas (documentado).
+    matchea `"apikey"`, ni en las copias ni en `cambios`).
   - La normalización usa NFKD (ancho completo: `"ＰＡＳＳＷＯＲＤ"`) y quita
     los caracteres de formato invisibles `\p{Cf}` (`"pass\u200Bword"`).
   - Un término que normaliza a `""` (`""`, `"_"`, `" (2)"`) se descarta: ya
@@ -231,3 +230,19 @@ de punta a punta:
   - `auditar` también lee `tenantId`, `actor`, `ip` y `userAgent` una sola
     vez al principio; un getter que tira da `"error preparando la
     auditoría"`.
+- Ronda de fix 2 de P.10b:
+  - La búsqueda de tramos de `redactarCambios` ya no es O(n³) sobre una
+    ruta con muchos puntos: solo prueba las colas de a lo sumo `puntos + 1`
+    segmentos que terminan en cada segmento (`puntos`: el término con más
+    puntos, calculado una vez por lista; con la lista default es 0 y se
+    mira cada segmento suelto). Una clave de 10.000 puntos o una ruta de
+    4000 segmentos se auditan en milisegundos.
+  - Un término con punto se evalúa también como COLA DE RUTA en las copias
+    guardadas (`redactar`), con la misma cota: `["cuenta.numero"]` tapa
+    `{ cuenta: { numero } }` en las copias y en `cambios`, además de la
+    clave literal `"cuenta.numero"`. Los arreglos y `Set`s no suman segmento.
+  - La normalización también quita los caracteres de control `\p{Cc}`
+    (`"pass\u0000word"`).
+  - `auditar` lee `antes`, `despues` y `camposSensibles` una sola vez con
+    el resto de la entrada: el diff y las copias usan los mismos valores, y
+    un getter que tira da `"error preparando la auditoría"`.

@@ -1,23 +1,19 @@
 import { CAMPOS_SENSIBLES_POR_DEFECTO, redactarConTerminos } from "./redactar.js";
-import { esClaveSensible, normalizarTerminos } from "./coincidencia-sensible.js";
+import { colaSensible, normalizarTerminos, puntosMaximos } from "./coincidencia-sensible.js";
 import type { CambioAuditoria } from "./lo-que-cambio.js";
 
 /**
- * ¿Algún TRAMO contiguo de la ruta es sensible? La ruta se arma uniendo
+ * ¿Algún tramo contiguo de la ruta es sensible? La ruta se arma uniendo
  * claves con `"."`, pero una clave puede tener un punto adentro (`"api.key"`)
  * y un término también (`camposSensibles: ["api.key"]`): mirar solo cada
- * segmento suelto (`"api"`, `"key"`) no lo encontraría y el valor saldría en
- * claro en `cambios` mientras la copia guardada (que ve la clave entera) lo
- * tapa. Por eso se prueba cada unión `segmentos[i..j]` (con `j >= i`) — son
- * O(n²) llamadas sobre rutas cortas. Con un término sin punto, un tramo
- * largo nunca agrega nada que su último segmento no diera ya.
+ * segmento suelto (`"api"`, `"key"`) no lo encontraría. Para una regla de
+ * "igual o termina con" alcanza con las COLAS que terminan en cada segmento,
+ * de a lo sumo `maxPuntos + 1` segmentos (`colaSensible`): lineal en la
+ * longitud de la ruta, no cúbico.
  */
-function rutaSensible(campo: string, sensibles: ReadonlySet<string>): boolean {
-  const segmentos = campo.split(".");
-  for (let i = 0; i < segmentos.length; i++) {
-    for (let j = i; j < segmentos.length; j++) {
-      if (esClaveSensible(segmentos.slice(i, j + 1).join("."), sensibles)) return true;
-    }
+function rutaSensible(segmentos: readonly string[], sensibles: ReadonlySet<string>, maxPuntos: number): boolean {
+  for (let fin = 0; fin < segmentos.length; fin++) {
+    if (colaSensible(segmentos, fin, sensibles, maxPuntos)) return true;
   }
   return false;
 }
@@ -68,8 +64,11 @@ export function redactarCambios(
   camposSensibles: readonly string[] = CAMPOS_SENSIBLES_POR_DEFECTO,
 ): CambioAuditoria[] {
   const sensibles = normalizarTerminos(camposSensibles);
+  const maxPuntos = puntosMaximos(sensibles);
   return cambios.map((cambio) => {
-    const tieneSegmentoSensible = rutaSensible(cambio.campo, sensibles);
+    // `"(raiz)"` es la etiqueta de `loQueCambio` para el valor entero: no es una clave.
+    const segmentos = cambio.campo === "(raiz)" ? [] : cambio.campo.split(".");
+    const tieneSegmentoSensible = rutaSensible(segmentos, sensibles, maxPuntos);
     if (tieneSegmentoSensible) {
       return {
         campo: cambio.campo,
@@ -79,8 +78,10 @@ export function redactarCambios(
     }
     return {
       campo: cambio.campo,
-      antes: redactarConTerminos(cambio.antes, sensibles),
-      despues: redactarConTerminos(cambio.despues, sensibles),
+      // La ruta del cambio es la ruta de claves de los ancestros de la hoja:
+      // así un término con punto ("l.cuenta") tapa igual que en las copias.
+      antes: redactarConTerminos(cambio.antes, sensibles, segmentos),
+      despues: redactarConTerminos(cambio.despues, sensibles, segmentos),
     };
   });
 }

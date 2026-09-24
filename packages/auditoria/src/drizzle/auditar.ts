@@ -348,7 +348,8 @@ export async function auditar(
   const entidadId = leerCampo(entrada, "entidadId");
   const accion = leerCampo(entrada, "accion");
   const contexto = `entidad=${entidad.texto}, entidadId=${entidadId.texto}, accion=${accion.texto}`;
-  // M4 (P.10b, ronda de fix 1): lo demás que viaja en el INSERT también se
+  // M4 (P.10b, ronda de fix 1): lo demás que viaja en el INSERT (y, desde la
+  // ronda de fix 2, antes/despues/camposSensibles) también se
   // lee UNA vez acá, con la misma garantía. Un getter que tira en
   // `tenantId`/`actor`/`actor.tipo`/`actor.id`/`ip`/`userAgent` hace fallar la
   // PREPARACIÓN (no se toca la base), nunca rechaza.
@@ -360,6 +361,13 @@ export async function auditar(
       actorId: actor.id ?? null,
       ip: entrada.ip ?? null,
       userAgent: entrada.userAgent ?? null,
+      // Ronda de fix 2: también `antes`/`despues`/`camposSensibles`, una sola
+      // vez — el diff y las copias guardadas usan EXACTAMENTE estos valores
+      // (un getter que devuelve algo distinto en cada lectura no puede hacer
+      // que diff y copia discrepen).
+      antes: entrada.antes,
+      despues: entrada.despues,
+      camposSensibles: entrada.camposSensibles ?? CAMPOS_SENSIBLES_POR_DEFECTO,
     };
   });
 
@@ -385,7 +393,7 @@ export async function auditar(
       throw new Error("auditar: no se pudo leer la entrada");
     }
     campos = resto.valor;
-    const camposSensibles = entrada.camposSensibles ?? CAMPOS_SENSIBLES_POR_DEFECTO;
+    const { antes, despues, camposSensibles } = resto.valor;
 
     // N1 (ronda 2) + regresión de N1 (ronda 4): el diff se calcula sobre
     // los valores NORMALIZADOS (`normalizarParaDiff`, no redactados
@@ -398,8 +406,8 @@ export async function auditar(
     // aunque nada hubiera cambiado. Ver el JSDoc de `normalizarParaDiff`.
     // `cambiosCrudos` NUNCA se serializa ni se guarda tal cual: se redacta
     // acá abajo (`redactarCambios`) antes de tocar la base.
-    const antesNormalizado = normalizarParaDiff(entrada.antes);
-    const despuesNormalizado = normalizarParaDiff(entrada.despues);
+    const antesNormalizado = normalizarParaDiff(antes);
+    const despuesNormalizado = normalizarParaDiff(despues);
     const cambiosCrudos = loQueCambio(antesNormalizado, despuesNormalizado);
     const cambiosParaGuardar = redactarCambios(cambiosCrudos, camposSensibles);
 
@@ -408,10 +416,10 @@ export async function auditar(
     // originales (no los normalizados de arriba: `redactar` ya sabe
     // manejar Buffer/Date/RegExp/URL/Error/toJSON/Map/Set por su cuenta,
     // así que no hace falta pasar por `normalizarParaDiff` primero) —
-    // `redactar` ya devuelve `undefined` tal cual si `entrada.antes`/
-    // `entrada.despues` son `undefined` (no hace falta un ternario acá).
-    const antesRedactado = redactar(entrada.antes, camposSensibles);
-    const despuesRedactado = redactar(entrada.despues, camposSensibles);
+    // `redactar` ya devuelve `undefined` tal cual si `antes`/
+    // `despues` son `undefined` (no hace falta un ternario acá).
+    const antesRedactado = redactar(antes, camposSensibles);
+    const despuesRedactado = redactar(despues, camposSensibles);
 
     const antesListo = antesRedactado === undefined ? null : serializarParaAuditoria(antesRedactado);
     const despuesListo = despuesRedactado === undefined ? null : serializarParaAuditoria(despuesRedactado);

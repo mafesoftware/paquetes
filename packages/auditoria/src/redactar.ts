@@ -1,4 +1,4 @@
-import { esClaveSensible, normalizarTerminos } from "./coincidencia-sensible.js";
+import { colaSensible, normalizarTerminos, puntosMaximos } from "./coincidencia-sensible.js";
 import { clasificar, clavesPropias, definirPropiedad, elementosDeSet, entradasDeMap, intentar, llamarToJSON } from "./tipos-especiales.js";
 
 /**
@@ -50,12 +50,41 @@ function leerPropiedad(objeto: Record<string, unknown>, clave: string): { ok: tr
   }
 }
 
-function redactarValor(valor: unknown, sensibles: ReadonlySet<string>, pila: Set<object>): unknown {
+/**
+ * Lo que `redactarValor` arrastra en la recursión: los términos YA
+ * normalizados, su `puntosMaximos` (calculado una vez) y la RUTA de claves
+ * desde la raíz hasta el nodo actual. Los arreglos, `Set`s y `toJSON` no
+ * suman segmento (igual que en las rutas de `loQueCambio`, donde un arreglo
+ * es una hoja); las claves de objeto y de `Map` sí.
+ */
+interface Contexto {
+  sensibles: ReadonlySet<string>;
+  maxPuntos: number;
+  ruta: string[];
+}
+
+/**
+ * Redacta (o recorre) el valor de la clave `clave` de un objeto/`Map`. La
+ * clave es sensible si ella sola lo es o, con un término con punto, si lo
+ * es alguna cola de la ruta que termina en ella (`colaSensible`, acotada a
+ * `maxPuntos + 1` segmentos): así `"cuenta.numero"` tapa `{ cuenta: {
+ * numero } }` igual que la clave literal `"cuenta.numero"`.
+ */
+function redactarEntrada(clave: string, valor: unknown, ctx: Contexto, pila: Set<object>): unknown {
+  ctx.ruta.push(clave);
+  try {
+    return colaSensible(ctx.ruta, ctx.ruta.length - 1, ctx.sensibles, ctx.maxPuntos) ? "[redactado]" : redactarValor(valor, ctx, pila);
+  } finally {
+    ctx.ruta.pop();
+  }
+}
+
+function redactarValor(valor: unknown, ctx: Contexto, pila: Set<object>): unknown {
   if (Array.isArray(valor)) {
     if (pila.has(valor)) return "[ciclo]";
     pila.add(valor);
     try {
-      return valor.map((v) => redactarValor(v, sensibles, pila));
+      return valor.map((v) => redactarValor(v, ctx, pila));
     } finally {
       pila.delete(valor);
     }
@@ -90,7 +119,7 @@ function redactarValor(valor: unknown, sensibles: ReadonlySet<string>, pila: Set
       // arreglo). `pila` sigue agregado por si el toJSON devuelve `this`
       // (patológico, pero posible): la próxima vuelta lo detecta como
       // ancestro y corta con "[ciclo]" en vez de loopear para siempre.
-      return redactarValor(llamado.valor, sensibles, pila);
+      return redactarValor(llamado.valor, ctx, pila);
     } finally {
       pila.delete(valor);
     }
@@ -111,7 +140,7 @@ function redactarValor(valor: unknown, sensibles: ReadonlySet<string>, pila: Set
       if (!leidas.ok) return "[error]";
       const resultado: Record<string, unknown> = {};
       for (const { clave, valor: v } of leidas.entradas) {
-        definirPropiedad(resultado, clave, esClaveSensible(clave, sensibles) ? "[redactado]" : redactarValor(v, sensibles, pila));
+        definirPropiedad(resultado, clave, redactarEntrada(clave, v, ctx, pila));
       }
       return resultado;
     } finally {
@@ -125,7 +154,7 @@ function redactarValor(valor: unknown, sensibles: ReadonlySet<string>, pila: Set
     try {
       const leidos = elementosDeSet(valor as Set<unknown>);
       if (!leidos.ok) return "[error]";
-      return leidos.elementos.map((v) => redactarValor(v, sensibles, pila));
+      return leidos.elementos.map((v) => redactarValor(v, ctx, pila));
     } finally {
       pila.delete(valor);
     }
@@ -153,7 +182,7 @@ function redactarValor(valor: unknown, sensibles: ReadonlySet<string>, pila: Set
         definirPropiedad(resultado, clave, "[error]");
         continue;
       }
-      definirPropiedad(resultado, clave, esClaveSensible(clave, sensibles) ? "[redactado]" : redactarValor(leido.valor, sensibles, pila));
+      definirPropiedad(resultado, clave, redactarEntrada(clave, leido.valor, ctx, pila));
     }
     return resultado;
   } finally {
@@ -178,10 +207,14 @@ function redactarValor(valor: unknown, sensibles: ReadonlySet<string>, pila: Set
  * `"password"`); (2) se saca el sufijo de colisión final `" (N)"`
  * (`"password (2)"` → `"password"`); (3) minúsculas; (4) se quitan `_`, `-`
  * y espacios (`"clave_secreta"` → `"clavesecreta"`, que termina en
- * `"secreta"`; `"api key"` → `"apikey"`). El punto NO se quita: `"api.key"`
- * no matchea `"apikey"`, pero sí un término propio `"api.key"`. Un término
- * que normaliza a `""` se descarta. Los términos son NOMBRES de clave, no
- * rutas. Tapar de más es el costo aceptado: una clave literal
+ * `"secreta"`; `"api key"` → `"apikey"`). En el paso (1) también se quitan
+ * los caracteres de control `\p{Cc}`. El punto NO se quita: `"api.key"` no
+ * matchea `"apikey"`, pero sí un término propio `"api.key"`. Un término con
+ * punto se prueba contra la clave y contra las colas de la ruta de claves
+ * que terminan en ella (a lo sumo `puntos + 1` segmentos): `"cuenta.numero"`
+ * tapa `{ cuenta: { numero } }` y la clave literal `"cuenta.numero"`; los
+ * arreglos/`Set`s no suman segmento. Un término que normaliza a `""` se
+ * descarta. Tapar de más es el costo aceptado: una clave literal
  * `"password (2)"` se tapa aunque no venga de un `Map`.
  *
  * **La regla de matching es "igual O termina con", no "contiene".** Con
@@ -309,8 +342,11 @@ export function redactar<T>(obj: T, camposSensibles: readonly string[] = CAMPOS_
 /**
  * `redactar` con los términos YA normalizados (`normalizarTerminos`). Interno
  * (no se reexporta desde `index.ts`): lo usa `redactarCambios` para no
- * volver a normalizar la lista en cada cambio.
+ * volver a normalizar la lista en cada cambio. `rutaInicial` son las claves
+ * de los ancestros de `obj` (la ruta del cambio), para que un término con
+ * punto se evalúe igual que en las copias guardadas.
  */
-export function redactarConTerminos<T>(obj: T, terminosNormalizados: ReadonlySet<string>): T {
-  return redactarValor(obj, terminosNormalizados, new Set()) as T;
+export function redactarConTerminos<T>(obj: T, terminosNormalizados: ReadonlySet<string>, rutaInicial: readonly string[] = []): T {
+  const ctx: Contexto = { sensibles: terminosNormalizados, maxPuntos: puntosMaximos(terminosNormalizados), ruta: [...rutaInicial] };
+  return redactarValor(obj, ctx, new Set()) as T;
 }
