@@ -38,6 +38,6 @@
  */
 export { tablaAuditoria, type OpcionesTablaAuditoria, type ColumnasAuditoria, type TablaAuditoria, type ActorTipo } from "./tabla.js";
 export { sqlInmutabilidad } from "./inmutabilidad.js";
-export { auditar, type EntradaAuditoria, type ResultadoAuditar } from "./auditar.js";
+export { auditar, type EntradaAuditoria, type ResultadoAuditar, type ErrorAuditoria } from "./auditar.js";
 export { listarAuditoria, type OpcionesListarAuditoria, type FilaAuditoria, type ResultadoListarAuditoria } from "./listar.js";
 export type { DbCliente } from "./cliente.js";

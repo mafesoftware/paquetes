@@ -69,9 +69,11 @@ de Postgres bloquea `UPDATE`/`DELETE`/`TRUNCATE` sobre la tabla.
     `accion` + `code`/`message` de Postgres, SOLO de `error.cause`, nunca
     del wrapper — que trae el SQL armado y los parámetros bindeados en su
     propio `.message`) con `console.error` si falla; sin `cause` legible,
-    un string genérico fijo. `resultado.error` (cuando `ok: false`) sigue
-    siendo el error CRUDO — documentado que puede traer datos sensibles y
-    que nunca hay que mostrarlo/loguearlo tal cual. Dentro de una
+    un string genérico fijo. `resultado.error` (cuando `ok: false`) es
+    `{ codigo: string | null; mensaje: string }` — `ErrorAuditoria`,
+    SANITIZADO con la misma lógica que el log, nunca el error crudo de
+    Drizzle/`pg` (que antes se devolvía tal cual, con el SQL/params
+    incluidos si algún llamador lo mostraba o reenviaba sin saber). Dentro de una
     transacción, envuelve el insert en un `SAVEPOINT` (`tx.transaction()`
     anidado de Drizzle) para que un fallo del insert de auditoría no
     aborte la transacción externa — probado forzando un fallo (check
@@ -90,6 +92,11 @@ de Postgres bloquea `UPDATE`/`DELETE`/`TRUNCATE` sobre la tabla.
 expansión campo a campo (sin dejar de ser un valor distinto de `undefined`
 en una comparación directa), y `loQueCambio(x, x)` con `x` autoreferencial
 da `[]` en vez de `"[ciclo]"` (misma referencia = sin diferencia posible).
+
+`redactar` convierte `Date` a un ISO string (no a una copia de `Date`,
+como antes) — cambio deliberado, para que dé el mismo resultado que
+`serializarParaAuditoria` en el mismo paso (las dos funciones están
+pensadas para usarse juntas).
 
 Postgres de test compartido con `packages/tenant`/`packages/numeradores`
 vía el helper de la raíz `tests/lib/postgres-de-prueba.ts`.

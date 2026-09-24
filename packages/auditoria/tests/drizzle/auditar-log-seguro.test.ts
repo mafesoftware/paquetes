@@ -65,6 +65,15 @@ describe("N5 — resumenDeError nunca lee error.message del wrapper (DrizzleQuer
       expect(textoLogueado).not.toContain("params:");
       expect(textoLogueado).not.toContain("insert into");
       expect(textoLogueado).toContain("error de base de datos sin detalle");
+
+      // Ronda 3: resultado.error también es { codigo, mensaje } sanitizado
+      // — no el errorSintetico crudo (que SÍ tenía .query/.params propios).
+      if (resultado.ok) throw new Error("no debería pasar");
+      expect(resultado.error).toEqual({ codigo: null, mensaje: "error de base de datos sin detalle" });
+      expect(resultado.error).not.toHaveProperty("query");
+      expect(resultado.error).not.toHaveProperty("params");
+      const textoDelError = JSON.stringify(resultado.error);
+      expect(textoDelError).not.toContain(secretoEnParams);
     } finally {
       spyError.mockRestore();
     }
@@ -91,19 +100,23 @@ describe("N5 — resumenDeError nunca lee error.message del wrapper (DrizzleQuer
       expect(textoLogueado).not.toContain("params:");
       // El "code" (23514) SÍ es seguro y sigue apareciendo, aunque el message se haya filtrado.
       expect(textoLogueado).toContain("23514");
+
+      if (resultado.ok) throw new Error("no debería pasar");
+      expect(resultado.error).toEqual({ codigo: "23514", mensaje: "error de base de datos sin detalle" });
+      expect(JSON.stringify(resultado.error)).not.toContain("secreto-xyz");
     } finally {
       spyError.mockRestore();
     }
   });
 
-  it("con error.cause normal (code + message de Postgres reales): esos SÍ se loguean", async () => {
+  it("con error.cause normal (code + message de Postgres reales): esos SÍ se loguean y se devuelven", async () => {
     const errorSintetico = Object.assign(new Error("Failed query: ...\nparams: ..."), {
       cause: { code: "23514", message: 'new row for relation "x" violates check constraint "y"' },
     });
 
     const spyError = vi.spyOn(console, "error").mockImplementation(() => {});
     try {
-      await auditar(dbFalsoQueTira(errorSintetico), tabla, {
+      const resultado = await auditar(dbFalsoQueTira(errorSintetico), tabla, {
         tenantId: "11111111-1111-1111-1111-111111111111",
         entidad: "test",
         entidadId: "1",
@@ -113,6 +126,9 @@ describe("N5 — resumenDeError nunca lee error.message del wrapper (DrizzleQuer
       const textoLogueado = spyError.mock.calls.flat().map((arg) => (typeof arg === "string" ? arg : JSON.stringify(arg))).join(" ");
       expect(textoLogueado).toContain("23514");
       expect(textoLogueado).toContain("check constraint");
+
+      if (resultado.ok) throw new Error("no debería pasar");
+      expect(resultado.error).toEqual({ codigo: "23514", mensaje: 'new row for relation "x" violates check constraint "y"' });
     } finally {
       spyError.mockRestore();
     }

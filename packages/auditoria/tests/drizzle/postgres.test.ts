@@ -290,6 +290,50 @@ describe("auditar (Postgres real)", () => {
     }
   });
 
+  it("Ronda 3: resultado.error (ok:false) es { codigo, mensaje } SANITIZADO — nunca el error crudo, sin query/params, sin datos de la entrada", async () => {
+    const tenantId = randomUUID();
+    const entidadId = randomUUID();
+    const emailSecreto = "no-deberia-aparecer-en-el-error@ejemplo.com";
+    const passwordSecreto = "hunter2-no-deberia-aparecer-en-el-error";
+
+    const resultado = await auditar(db, auditoria, {
+      tenantId,
+      entidad: "usuario",
+      entidadId,
+      accion: "", // check constraint: fuerza el fallo
+      actor: { tipo: "usuario" },
+      antes: { email: emailSecreto, contrasena: passwordSecreto },
+      despues: { email: emailSecreto, contrasena: "otro-secreto-que-tampoco-deberia-aparecer" },
+    });
+
+    expect(resultado.ok).toBe(false);
+    if (resultado.ok) throw new Error("no debería pasar");
+
+    // Forma exacta: { codigo: string | null, mensaje: string } — nada más.
+    expect(Object.keys(resultado.error).sort()).toEqual(["codigo", "mensaje"]);
+    expect(typeof resultado.error.mensaje).toBe("string");
+    expect(resultado.error.codigo === null || typeof resultado.error.codigo === "string").toBe(true);
+
+    // NUNCA las propiedades propias de un DrizzleQueryError (el SQL armado
+    // y los parámetros bindeados).
+    expect(resultado.error).not.toHaveProperty("query");
+    expect(resultado.error).not.toHaveProperty("params");
+    expect(resultado.error).not.toHaveProperty("cause");
+
+    const textoDelError = JSON.stringify(resultado.error);
+    expect(textoDelError).not.toContain(emailSecreto);
+    expect(textoDelError).not.toContain(passwordSecreto);
+    expect(textoDelError).not.toContain("otro-secreto-que-tampoco-deberia-aparecer");
+    expect(textoDelError).not.toContain("insert into");
+    expect(textoDelError).not.toContain("params:");
+
+    // Sigue siendo útil: el code real de Postgres, o al menos una mención
+    // de la restricción, en el mensaje.
+    expect(resultado.error.codigo === "23514" || resultado.error.mensaje.toLowerCase().includes("constraint")).toBe(
+      true,
+    );
+  });
+
   it("I4: pagina/porPagina con NaN o Infinity caen a los defaults en vez de romper la consulta", async () => {
     const tenantId = randomUUID();
     await auditar(db, auditoria, { tenantId, entidad: "x", entidadId: randomUUID(), accion: "crear", actor: { tipo: "sistema" } });

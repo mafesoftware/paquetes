@@ -151,6 +151,17 @@ resuelve ANTES del chequeo genérico de `toJSON`):
 | `Map` | arreglo de pares `[String(clave), valor]` — **no un objeto**: dos claves de `Map` distintas (ej. el número `1` y el string `"1"`) pueden normalizar al MISMO nombre de propiedad, y un objeto perdería una en silencio. Un par cuya clave (ya convertida a texto) es sensible tiene su VALOR redactado |
 | `Set` | arreglo |
 
+**`redactar` convierte `Date` a un ISO string, no a una copia de `Date`.**
+Es un cambio deliberado (no un descuido): antes, `redactar` clonaba la
+`Date` (`new Date(valor.getTime())`) y `serializarParaAuditoria` la
+convertía a ISO por separado — dos comportamientos distintos para el mismo
+tipo, en dos funciones pensadas para usarse juntas (`serializarParaAuditoria(redactar(x))`,
+como hace `auditar`). Ahora las dos dan el MISMO resultado para una
+`Date`, en el mismo paso — si tu código usaba `redactar` solo (sin pasar
+el resultado por `serializarParaAuditoria` después) y esperaba recibir de
+vuelta un objeto `Date`, este es un cambio de comportamiento a tener en
+cuenta.
+
 Nunca tira: una referencia circular queda como `"[ciclo]"`, una clave cuyo
 `get` tira queda como `"[error]"`, una clave de `Map` cuyo `toString` tira
 (o un objeto sin prototipo como clave) queda como `"[clave]"`, y un objeto
@@ -321,7 +332,9 @@ sqlInmutabilidad("Auditoria; DROP TABLE x --"); // tira: nombre inválido
 sqlInmutabilidad("a".repeat(41)); // tira: nombre demasiado largo
 ```
 
-#### `auditar(dbOTx, tabla: TablaAuditoria, entrada): Promise<{ ok: true; id: string } | { ok: false; error: unknown }>`
+#### `auditar(dbOTx, tabla: TablaAuditoria, entrada): Promise<{ ok: true; id: string } | { ok: false; error: ErrorAuditoria }>`
+
+`ErrorAuditoria` es `{ codigo: string | null; mensaje: string }`.
 
 Calcula `cambios` con `loQueCambio` sobre los valores CRUDOS de
 `entrada.antes`/`entrada.despues`, redacta `antes`/`despues`/`cambios`,
@@ -354,14 +367,17 @@ valor que la violó (eso vive en `DETAIL`, que tampoco se lee). Si
 fijo (`"error de base de datos sin detalle"`), nunca "lo que haya" del
 error de afuera.
 
-**`resultado.error` (cuando `ok: false`) es el error CRUDO**, no un
-resumen — puede traer el SQL/params igual que arriba. Se devuelve así por
-si un llamador necesita inspeccionarlo en código (ej. reintentar según
-`error.cause.code`), pero eso significa que **nunca hay que
-loguearlo/mostrarlo tal cual** a un usuario final o a un sistema externo.
-Si tu app necesita mostrar o reenviar el motivo de un fallo, armá tu propio
-resumen seguro (mismo patrón que el interno de `auditar`) en vez de asumir
-que `resultado.error` ya es seguro para mostrar.
+**`resultado.error` (cuando `ok: false`) es `{ codigo, mensaje }`
+SANITIZADO — no el error crudo.** `codigo` es el `code` de Postgres (ej.
+`"23514"`, desde `error.cause`) o `null` si no se pudo determinar;
+`mensaje` es el `message` de Postgres, o el mismo string genérico fijo si
+no hay uno seguro. Se arma con la MISMA función que el resumen que se
+loguea, así que las dos superficies son igual de seguras: el SQL armado y
+los parámetros bindeados NUNCA aparecen en ninguna de las dos. Antes,
+`resultado.error` era el error crudo (con el riesgo de que un llamador lo
+mostrara o lo reenviara sin saber que traía el SQL/los parámetros
+adentro) — ahora es seguro de mostrar/loguear tal cual, sin que la app
+tenga que armar su propio resumen.
 
 El trade-off de "nunca tira" adentro de una transacción: un `INSERT` que
 falla deja esa transacción ABORTADA en Postgres — un simple `try/catch` NO
@@ -400,7 +416,9 @@ const resultado = await auditar(db, auditoria, {
 });
 if (!resultado.ok) {
   // resultado.error ya se logueó (resumen seguro) con console.error;
-  // seguir igual, no relanzar — y nunca mostrar resultado.error tal cual.
+  // seguir igual, no relanzar. resultado.error = { codigo, mensaje } ya es
+  // seguro para mostrar/loguear tal cual (nunca el SQL/los parámetros).
+  console.log(resultado.error.codigo, resultado.error.mensaje); // ej. "23514", "new row for relation ... violates check constraint ..."
 }
 
 // Un campo sensible que CAMBIÓ queda registrado (sin el valor real):

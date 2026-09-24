@@ -24,7 +24,19 @@ export interface EntradaAuditoria {
   camposSensibles?: readonly string[];
 }
 
-export type ResultadoAuditar = { ok: true; id: string } | { ok: false; error: unknown };
+/**
+ * El motivo SANITIZADO de un fallo de `auditar` — nunca el error crudo de
+ * Drizzle/`pg` (que puede traer, como propiedades propias, el SQL armado y
+ * los parámetros bindeados). Ver el JSDoc de `auditar`.
+ */
+export interface ErrorAuditoria {
+  /** El código de error de Postgres (ej. `"23514"`), tomado de `error.cause`. `null` si `auditar` no pudo determinarlo. */
+  codigo: string | null;
+  /** El mensaje de Postgres (nunca el SQL armado ni los parámetros bindeados) — o un texto genérico fijo si no se pudo determinar uno seguro. */
+  mensaje: string;
+}
+
+export type ResultadoAuditar = { ok: true; id: string } | { ok: false; error: ErrorAuditoria };
 
 /**
  * Redacta `cambios` (el resultado de `loQueCambio` sobre los valores
@@ -81,38 +93,50 @@ function mensajeSeguro(mensaje: string): string | undefined {
   return mensaje;
 }
 
+/** El texto fijo que usan `errorSeguro`/el log cuando no hay un mensaje seguro que mostrar. */
+const MENSAJE_GENERICO = "error de base de datos sin detalle";
+
 /**
- * Un resumen SEGURO de `error` para loguear: nunca el objeto de error
- * completo, y nunca — ni siquiera como fallback — `error.message`/
- * `error.code` del error de AFUERA. Para un fallo de Postgres vía Drizzle,
- * `error` es un `DrizzleQueryError` cuyo PROPIO `.message` es justamente
- * `"Failed query: <sql>\nparams: <valores bindeados>"` — leerlo (aunque
- * fuera como último recurso, cuando `error.cause` faltara) filtraría el SQL
- * armado y cada parámetro, exactamente lo que esta función existe para
- * evitar. Por eso: SOLO `code`/`message` de `error.cause` (donde Drizzle
- * deja el error original del driver `pg`) — nunca `error.query`/
- * `error.params` del wrapper, que ni siquiera se leen acá — y si `cause`
- * falta o no tiene nada legible, un string genérico FIJO, nunca "lo que
- * haya" del error de afuera. El `message` de un error de Postgres (`null
- * value in column ... violates not-null constraint`, `new row for relation
- * ... violates check constraint ...`) describe la RESTRICCIÓN que falló,
- * nunca el VALOR que la violó (eso vive en `DETAIL`, que tampoco se lee
- * acá) — por eso es seguro de loguear, y además se filtra con
- * `mensajeSeguro` por si alguna vez llegara a traer esas frases.
+ * Un resumen SEGURO de `error` — nunca el objeto de error completo, y nunca
+ * — ni siquiera como fallback — `error.message`/`error.code` del error de
+ * AFUERA. Para un fallo de Postgres vía Drizzle, `error` es un
+ * `DrizzleQueryError` cuyo PROPIO `.message` es justamente `"Failed query:
+ * <sql>\nparams: <valores bindeados>"` — leerlo (aunque fuera como último
+ * recurso, cuando `error.cause` faltara) filtraría el SQL armado y cada
+ * parámetro, exactamente lo que esta función existe para evitar. Por eso:
+ * SOLO `code`/`message` de `error.cause` (donde Drizzle deja el error
+ * original del driver `pg`) — nunca `error.query`/`error.params` del
+ * wrapper, que ni siquiera se leen acá. `codigo` queda `null` si no se
+ * pudo determinar; `mensaje` cae al texto genérico fijo `MENSAJE_GENERICO`
+ * si no hay uno seguro (ausente, o filtrado por `mensajeSeguro` porque
+ * traía "Failed query"/"params:"). El `message` de un error de Postgres
+ * (`null value in column ... violates not-null constraint`, `new row for
+ * relation ... violates check constraint ...`) describe la RESTRICCIÓN que
+ * falló, nunca el VALOR que la violó (eso vive en `DETAIL`, que tampoco se
+ * lee acá) — por eso es seguro de devolver/loguear.
+ *
+ * Esta es la MISMA función que arma tanto el resumen que se loguea con
+ * `console.error` como el `ErrorAuditoria` que `auditar` devuelve en
+ * `{ ok: false, error }` — las dos superficies tienen que ser igual de
+ * seguras, así que comparten la lógica de extracción en vez de cada una
+ * mirando el error por su cuenta.
  */
-function resumenDeError(error: unknown): string {
+function errorSeguro(error: unknown): ErrorAuditoria {
   const causa = error && typeof error === "object" && "cause" in error ? (error as { cause?: unknown }).cause : undefined;
-  if (causa && typeof causa === "object") {
-    const code = "code" in causa ? (causa as { code?: unknown }).code : undefined;
-    const messageCruda = "message" in causa ? (causa as { message?: unknown }).message : undefined;
-    const message = typeof messageCruda === "string" ? mensajeSeguro(messageCruda) : undefined;
-    const partes = [
-      typeof code === "string" || typeof code === "number" ? `code=${String(code)}` : undefined,
-      message !== undefined ? `message=${message}` : undefined,
-    ].filter((p): p is string => p !== undefined);
-    if (partes.length > 0) return partes.join(", ");
-  }
-  return "error de base de datos sin detalle";
+  const causaObjeto = causa && typeof causa === "object" ? causa : undefined;
+
+  const codeCrudo = causaObjeto && "code" in causaObjeto ? (causaObjeto as { code?: unknown }).code : undefined;
+  const codigo = typeof codeCrudo === "string" || typeof codeCrudo === "number" ? String(codeCrudo) : null;
+
+  const messageCruda = causaObjeto && "message" in causaObjeto ? (causaObjeto as { message?: unknown }).message : undefined;
+  const mensajeCrudo = typeof messageCruda === "string" ? mensajeSeguro(messageCruda) : undefined;
+
+  return { codigo, mensaje: mensajeCrudo ?? MENSAJE_GENERICO };
+}
+
+/** El texto que se loguea con `console.error` para un `ErrorAuditoria` — `"code=X, message=Y"`, o solo `Y` si no hay código. */
+function textoParaLog(error: ErrorAuditoria): string {
+  return error.codigo !== null ? `code=${error.codigo}, message=${error.mensaje}` : error.mensaje;
 }
 
 /**
@@ -121,20 +145,28 @@ function resumenDeError(error: unknown): string {
  * `antes`/`despues`/`cambios`, serializa los tres, e inserta.
  *
  * **Nunca tira.** Devuelve `{ ok: true, id } | { ok: false, error }` y, si
- * falla, además loguea un RESUMEN seguro con `console.error` (ver
- * `resumenDeError`: nunca el objeto de error completo, nunca sus
- * parámetros bindeados) — una falla de auditoría NO tiene que tirar abajo
- * la operación de negocio que la disparó (crear el pedido, cobrar la
- * factura, ...). **`resultado.error` (cuando `ok: false`) es el error CRUDO
- * de Drizzle/`pg`**, no un resumen — puede traer, como propiedades propias,
- * el SQL armado y los parámetros bindeados (lo mismo que `resumenDeError`
- * evita loguear). Se devuelve así porque un llamador puede necesitar
- * inspeccionarlo en código (ej. reintentar según `error.cause.code`), pero
- * eso significa que **nunca hay que loguearlo/mostrarlo tal cual a un
- * usuario final o a un sistema externo** — si tu app necesita mostrar o
- * reenviar el motivo del fallo, armá tu propio resumen seguro (mismo patrón
- * que `resumenDeError`, interno de este archivo) en vez de asumir que
- * `resultado.error` ya es seguro.
+ * falla, además loguea un RESUMEN seguro con `console.error` — una falla
+ * de auditoría NO tiene que tirar abajo la operación de negocio que la
+ * disparó (crear el pedido, cobrar la factura, ...).
+ *
+ * **`resultado.error` (cuando `ok: false`) es `{ codigo: string | null;
+ * mensaje: string }` — un `ErrorAuditoria` SANITIZADO, nunca el error
+ * crudo de Drizzle/`pg`.** Antes, esta función devolvía el error tal cual
+ * lo atrapaba — pero para un fallo de Postgres vía Drizzle, ese error es
+ * un `DrizzleQueryError` que trae, como propiedad PROPIA (`.message`), el
+ * SQL armado seguido de los parámetros bindeados (`"Failed query:
+ * <sql>\nparams: <valores>"`) — devolverlo tal cual era, en la práctica,
+ * devolver el SQL y los datos insertados a quien llamó a `auditar`, con el
+ * riesgo de que ese código lo logueara o lo mostrara sin saber que traía
+ * eso adentro. Ahora `codigo`/`mensaje` se arman con la MISMA función
+ * (`errorSeguro`, interna) que usa el log: `codigo` es el `code` de
+ * Postgres (ej. `"23514"`) tomado de `error.cause` — `null` si no se pudo
+ * determinar — y `mensaje` es el `message` de Postgres (nunca el `.message`
+ * del wrapper) o un texto genérico fijo si no hay uno seguro. El SQL
+ * armado y los parámetros bindeados NUNCA aparecen en ninguno de los dos
+ * campos. Esto significa que ya no hace falta armar un resumen propio para
+ * mostrar/loguear el motivo de un fallo — `resultado.error` ya es seguro
+ * para eso.
  *
  * **Cómo se evita que un secreto (cambiado o no) llegue a `cambios`.**
  * `cambios` se calcula con `loQueCambio` sobre los valores CRUDOS de
@@ -210,7 +242,9 @@ function resumenDeError(error: unknown): string {
  * });
  * if (!resultado.ok) {
  *   // resultado.error ya se logueó (resumen seguro) con console.error;
- *   // seguir igual, no relanzar — y no mostrar resultado.error tal cual.
+ *   // seguir igual, no relanzar. resultado.error ya es seguro de mostrar:
+ *   // resultado.error.codigo ("23514" | null), resultado.error.mensaje
+ *   // (nunca el SQL/los parámetros).
  * }
  *
  * // Un campo sensible que CAMBIÓ queda registrado (sin el valor real):
@@ -328,15 +362,17 @@ export async function auditar(
     }
     return { ok: true, id: fila.id };
   } catch (error) {
-    // NUNCA `console.error(mensaje, error)`: `error` (o su `.cause`, si es
-    // un `DrizzleQueryError`) puede traer, como propiedades PROPIAS, el SQL
+    // NUNCA `console.error(mensaje, error)` ni `return { ok: false, error }`
+    // con el error CRUDO: `error` (o su `.cause`, si es un
+    // `DrizzleQueryError`) puede traer, como propiedades PROPIAS, el SQL
     // armado y los PARÁMETROS bindeados — que incluyen cualquier dato que
-    // se intentó insertar, redactado o no. Solo un resumen seguro
-    // (`entidad`/`entidadId`/`accion` de la propia `entrada`, más
-    // `code`/`message` de `resumenDeError`) va al log.
+    // se intentó insertar, redactado o no. `errorSeguro` arma la MISMA
+    // versión sanitizada para las dos superficies (el log y el valor
+    // devuelto): solo `code`/`message` de `error.cause`.
+    const errorParaDevolver = errorSeguro(error);
     console.error(
-      `auditar: no se pudo escribir el registro de auditoría (entidad=${entrada.entidad}, entidadId=${entrada.entidadId}, accion=${entrada.accion}): ${resumenDeError(error)}`,
+      `auditar: no se pudo escribir el registro de auditoría (entidad=${entrada.entidad}, entidadId=${entrada.entidadId}, accion=${entrada.accion}): ${textoParaLog(errorParaDevolver)}`,
     );
-    return { ok: false, error };
+    return { ok: false, error: errorParaDevolver };
   }
 }
