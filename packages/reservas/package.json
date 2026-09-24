@@ -1,0 +1,40 @@
+{
+  "name": "@mafesoftware/reservas",
+  "version": "0.1.0",
+  "description": "Motor de disponibilidad, turnos y lista de espera. Puro.",
+  "license": "MIT",
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "publishConfig": {
+    "main": "./dist/index.js",
+    "types": "./dist/index.d.ts",
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      }
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@mafesoftware/fechas-ar": "workspace:*",
+    "@mafesoftware/plata-ar": "workspace:*"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
