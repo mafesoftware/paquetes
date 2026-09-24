@@ -1,0 +1,17 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    // Sin "rootDir" acá a propósito: este archivo es el que usa
+    // `bun run typecheck` (vía "paths" de ../../tsconfig.base.json, que
+    // resuelve "@mafesoftware/tenant/drizzle" contra su CÓDIGO FUENTE, no
+    // contra dist — tenant todavía no está buildeado en el paso de
+    // typecheck de CI). Si tuviera "rootDir": "src" como tsconfig.build.json,
+    // TS rechazaría esos archivos de tenant/src con TS6059 ("not under
+    // rootDir") aunque no vaya a emitir nada. `tsconfig.build.json` (que si
+    // necesita "rootDir": "src", para el dist) extiende este archivo y
+    // limpia "paths" para no pisar este problema: ver su comentario.
+    "types": ["node"]
+  },
+  "include": ["src"]
+}

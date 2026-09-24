@@ -113,6 +113,25 @@
         "drizzle-orm",
       ],
     },
+    "packages/outbox": {
+      "name": "@mafesoftware/outbox",
+      "version": "0.0.0",
+      "dependencies": {
+        "@mafesoftware/tenant": "workspace:*",
+      },
+      "devDependencies": {
+        "@types/pg": "^8.15.5",
+        "drizzle-kit": "~0.31",
+        "drizzle-orm": "~0.45.2",
+        "pg": "^8.23.0",
+      },
+      "peerDependencies": {
+        "drizzle-orm": ">=0.45 <0.46",
+      },
+      "optionalPeers": [
+        "drizzle-orm",
+      ],
+    },
     "packages/permisos": {
       "name": "@mafesoftware/permisos",
       "version": "0.1.0",
@@ -357,6 +376,8 @@
     "@mafesoftware/mercadopago-ar": ["@mafesoftware/mercadopago-ar@workspace:packages/mercadopago-ar"],
 
     "@mafesoftware/numeradores": ["@mafesoftware/numeradores@workspace:packages/numeradores"],
+
+    "@mafesoftware/outbox": ["@mafesoftware/outbox@workspace:packages/outbox"],
 
     "@mafesoftware/permisos": ["@mafesoftware/permisos@workspace:packages/permisos"],
 
