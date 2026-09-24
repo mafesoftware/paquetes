@@ -10,10 +10,12 @@ jobs:
     name: typecheck, test (cobertura), build, lint
     runs-on: ubuntu-latest
     # Puerto 5475 (no 5432/5433): en esta máquina y en CI conviven varios
-    # Postgres de otros proyectos (ver `~/.claude/CLAUDE.md`). Ningún paquete
-    # usa todavía este servicio (los paquetes con subpath /drizzle llegan en
-    # P.8+), pero lo dejamos funcionando desde ya para no tener que tocar este
-    # workflow cuando lleguen. Los tests de hoy deben pasar sin usarlo.
+    # Postgres de otros proyectos (ver `~/.claude/CLAUDE.md`). Desde P.8
+    # (`@mafesoftware/tenant`, primer paquete con subpath /drizzle) los tests
+    # de `packages/*/tests/drizzle/` lo usan de verdad (DATABASE_URL_TEST más
+    # abajo); GitHub Actions espera solo a que el healthcheck del servicio
+    # pase antes de correr los steps del job, así que no hace falta un paso
+    # de espera aparte.
     services:
       postgres:
         image: postgres:17-alpine
@@ -44,7 +46,12 @@ jobs:
         run: bun run typecheck
 
       - name: Test con cobertura (umbral 95% en el núcleo de cada paquete)
+        # DATABASE_URL_TEST apunta al servicio "postgres" de arriba (mismas
+        # credenciales que sus env), no al db_test local del docker-compose.yml
+        # de la raíz (ese es para levantarlo a mano en esta máquina).
         run: bun run test -- --coverage
+        env:
+          DATABASE_URL_TEST: postgres://paquetes:paquetes@localhost:5475/paquetes
 
       - name: Build (cada packages/*)
         run: bun run build

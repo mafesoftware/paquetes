@@ -83,6 +83,23 @@ ver `~/.claude/CLAUDE.md` para la tabla completa de puertos en uso en esta
 máquina). Antes de asumir un puerto libre, `docker ps --format '{{.Names}}\t
 {{.Ports}}'`.
 
+`docker-compose.yml` en la raíz define el servicio `db_test`
+(`postgres:17-alpine`, tmpfs, `POSTGRES_PASSWORD=postgres`, base
+`paquetes_test`, healthcheck):
+
+```sh
+docker compose up -d db_test
+```
+
+Los tests de `/drizzle` (bajo `packages/*/tests/drizzle/`) leen
+`DATABASE_URL_TEST` (default `postgres://postgres:postgres@localhost:5475/paquetes_test`,
+que coincide con `db_test`). **Si Postgres no está arriba, esos tests FALLAN**
+con un mensaje que dice "correr `docker compose up -d db_test`" — nunca se
+saltean en silencio. `bun run test` los corre junto con el resto (requiere
+Docker); `bun run test:sin-db` corre todo LO DEMÁS sin necesitar Docker
+(excluye `**/tests/drizzle/**`) — para iterar rápido en el núcleo puro de un
+paquete.
+
 ## Tooling
 
 - **bun 1.3.x únicamente** — nunca `npm`/`npx`. `bunx` para correr binarios de

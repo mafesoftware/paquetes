@@ -1,0 +1,15 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "dist",
+    "rootDir": "src",
+    // Este paquete usa `node:async_hooks` en el núcleo y `drizzle-orm/pg-core`
+    // en `src/drizzle/`; sin este "types" explícito, el TS de este repo no
+    // encuentra los tipos de Node aunque `@types/node` esté instalado (mismo
+    // motivo documentado en `packages/seguridad/tsconfig.build.json`).
+    "types": ["node"]
+  },
+  "include": [
+    "src"
+  ]
+}

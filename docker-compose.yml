@@ -1,0 +1,27 @@
+# Postgres para los tests con base real de los paquetes con subpath /drizzle
+# (hoy solo `tenant`; ver packages/tenant/tests/drizzle/). Puerto 5475, NO
+# 5432/5433: en esta máquina conviven Postgres de otros proyectos (ver
+# `~/.claude/CLAUDE.md` para la tabla completa). Antes de asumir el puerto
+# libre: `docker ps --format '{{.Names}}\t{{.Ports}}'`.
+#
+# `docker compose up -d db_test` (a secas, sin DOCKER_API_VERSION ni otras
+# variables — ver CLAUDE.md, sección "Postgres para tests").
+services:
+  db_test:
+    image: postgres:17-alpine
+    container_name: paquetes-db_test
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: paquetes_test
+    ports:
+      - "5475:5432"
+    tmpfs:
+      # Sin volumen: es una base de test, se recrea vacía en cada corrida.
+      # tmpfs además evita escribir datos de test a disco.
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d paquetes_test"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
