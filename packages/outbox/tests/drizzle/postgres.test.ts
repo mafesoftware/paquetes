@@ -567,16 +567,13 @@ describe("procesarOutbox: fencing por lease — C1, reproducción del bug real (
         db,
         tabla,
         leaseMs: 5000,
-        // Ronda de fix 3b: el default de "timeoutMs" ya no escala con
-        // "leaseMs" (es un fijo de 60_000) — con un "leaseMs" chico como
-        // este hay que pasarlo explícito, o "timeoutMs" (60_000) viola
-        // "<= leaseMs / 2" (2500) y tira ErrorOutbox("opciones_invalidas").
-        // 1000 ms le da de sobra a este test (B, más abajo, cierra la fila
-        // en un puñado de milisegundos reales) y, con "lote"/"concurrencia"
-        // por defecto (20/5, "olas" = 4), 1000 * 4 = 4000 <= 5000: tampoco
-        // dispara la advertencia de "Cola del pool y lease" — no hace
-        // falta acotar "lote" a mano.
-        timeoutMs: 1000,
+        // Ronda de fix 3c: "timeoutMs" ya NO hace falta explícito acá — el
+        // default (Math.min(60_000, Math.floor(leaseMs / 2))) da 2500 para
+        // este "leaseMs", válido por construcción. Pero con "lote"/
+        // "concurrencia" por defecto (20/5, "olas" = 4), 2500 * 4 = 10_000
+        // > 5000 SÍ dispara la advertencia de "Cola del pool y lease" — de
+        // ahí el "lote: 1" (solo hay 1 fila en este test de todos modos).
+        lote: 1,
         transportes: {
           correo: async () => {
             envios.push("A");

@@ -72,8 +72,8 @@ negocio.
     UPDATE SKIP LOCKED ... UPDATE ... RETURNING` (transacción corta), llama
     al `Transporte` de cada canal FUERA de esa transacción (tope de
     `concurrencia` simultáneos, `5` por defecto; `timeoutMs` por intento,
-    `60_000` — 1 min, FIJO desde la ronda de fix 3b, ver más abajo — por
-    defecto), y registra el resultado en su
+    `Math.min(60_000, Math.floor(leaseMs / 2))` por defecto — ver "Ronda de
+    fix 3b"/"3c" más abajo), y registra el resultado en su
     propia transacción corta por fila — CERROJADA por el lease exacto con
     el que se reclamó (`estado = 'procesando' and bloqueado_hasta =
     <lease>`), para que un worker "zombi" nunca pise lo que otro worker ya
@@ -318,3 +318,26 @@ defaults del propio paquete no pueden dispararse su propia advertencia):
   disparando la advertencia igual.
 - README y JSDoc de `procesarOutbox`/`OpcionesProcesarOutbox` actualizados
   con el nuevo default y su consecuencia sobre `leaseMs` customizado.
+
+**Ronda de fix 3c** (un último ajuste chico, pedido por el controller
+sobre la ronda 3b): el tope fijo de `timeoutMs` (`60_000`) de la ronda 3b
+SÍ podía violar `timeoutMs <= leaseMs / 2` con un `leaseMs` customizado por
+debajo de `120_000` sin pasar `timeoutMs` explícito. Cambiado a
+`Math.min(60_000, Math.floor(leaseMs / 2))`: mantiene el default de
+`60_000` con `leaseMs` en su propio default (`600_000`) o más grande (así
+que los defaults del paquete SIGUEN sin dispararse su propia advertencia,
+ver "Ronda de fix 3b"), pero cae a `Math.floor(leaseMs / 2)` — el mismo
+default de la ronda 2 — con un `leaseMs` chico, que por definición nunca
+excede `leaseMs / 2`. Resultado: **customizar solo `leaseMs`, sin
+`timeoutMs`, ya NO puede tirar** `ErrorOutbox("opciones_invalidas")`, para
+ningún `leaseMs >= 5000`. Se revirtieron los `timeoutMs` explícitos que la
+ronda 3b había agregado SOLO para esquivar ese tiro (en el test de fencing
+C1 y en el test de borde `leaseMs === 5000`, que ya no lo necesitan); se
+reemplazó el test "customizar leaseMs solo tira" por tres tests que
+verifican el valor DERIVADO de verdad (`5000 -> 2500`, `90_000 -> 45_000`,
+`600_000 -> 60_000`), usando la propia advertencia de "Cola del pool y
+lease" como sonda indirecta (armada para que solo dispare si
+`procesarOutbox` usara el `timeoutMs` fijo equivocado de la 3b en vez del
+derivado esperado) — confirmado con una mutación manual (revertir
+`Math.min(...)` al fijo puro de la 3b) que los tres tests nuevos fallan, y
+que vuelven a pasar al restaurar el código correcto.

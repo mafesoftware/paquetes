@@ -292,20 +292,22 @@ await db.transaction(async (tx) => {
 Procesa hasta `lote` (`20` por defecto) mensajes debidos: los reclama de
 forma atómica (`FOR UPDATE SKIP LOCKED`), llama al `Transporte` de cada
 canal (con un tope de `concurrencia` simultáneos, `5` por defecto, y un
-`timeoutMs` por intento, `60_000` — 1 min — por defecto), y registra el
-resultado — CERROJADO por el lease con el que se reclamó (ver "Entrega al
-menos una vez" arriba): si otro worker ya reclamó la fila de nuevo, el
-registro se descarta sin pisar nada (`perdidos`), nunca vuelve la fila a un
-estado anterior.
+`timeoutMs` por intento, `Math.min(60_000, Math.floor(leaseMs / 2))` por
+defecto — `60_000`, 1 min, con `leaseMs` en su propio default o más
+grande), y registra el resultado — CERROJADO por el lease con el que se
+reclamó (ver "Entrega al menos una vez" arriba): si otro worker ya reclamó
+la fila de nuevo, el registro se descarta sin pisar nada (`perdidos`),
+nunca vuelve la fila a un estado anterior.
 
 `leaseMs` (`600_000` — 10 min — por defecto) tiene que ser `>= 5000`;
-`timeoutMs` tiene que ser `<= leaseMs / 2` (si se customiza `leaseMs` por
-debajo de `120_000` sin pasar `timeoutMs` explícito, el default fijo de
-`60_000` viola esa cota y `procesarOutbox` tira
-`ErrorOutbox("opciones_invalidas")` — con un lease chico, hay que pasar
-`timeoutMs` a mano). Las dos validaciones existen para que "Cola del pool y
-lease" (abajo) tenga margen real para decidir "alcanza" o "no alcanza", en
-vez de un timeout efectivo de milisegundos.
+`timeoutMs` tiene que ser `<= leaseMs / 2`. El default de `timeoutMs`
+NUNCA puede violar esa cota por sí solo (el `Math.min` lo garantiza para
+cualquier `leaseMs`), así que customizar SOLO `leaseMs` (sin pasar
+`timeoutMs`) nunca tira por esto — con un `leaseMs` chico, el default cae
+a `Math.floor(leaseMs / 2)` en vez del tope de `60_000`. Las dos
+validaciones existen para que "Cola del pool y lease" (abajo) tenga margen
+real para decidir "alcanza" o "no alcanza", en vez de un timeout efectivo
+de milisegundos.
 
 **Cola del pool y lease.** Todas las filas de un reclamo comparten el mismo
 `bloqueado_hasta`, pero con `concurrencia` limitada no todas se procesan al

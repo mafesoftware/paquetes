@@ -30,23 +30,27 @@ export interface OpcionesProcesarOutbox {
   /**
    * Cuánto esperar la respuesta de un `Transporte` antes de darla por
    * perdida y tratarla como `"transitorio"` (`codigo: "timeout"`).
-   * `60_000` (1 min) por defecto — antes (ronda de fix 3) era `Math.floor(leaseMs
-   * / 2)`, pero eso hacía que los valores por defecto del PROPIO paquete
-   * (`lote: 20`, `concurrencia: 5`, `leaseMs: 600_000`) dispararan su
-   * propia advertencia de "Cola del pool y lease" (más abajo): con
-   * `timeoutMs` igual a `leaseMs / 2`, `timeoutMs * ceil(lote /
-   * concurrencia)` da `leaseMs * (olas / 2)`, que para cualquier `olas >=
-   * 3` ya supera `leaseMs` — los defaults de este paquete tienen `olas =
-   * 4`. Con `60_000` fijo, `60_000 * 4 = 240_000 < 600_000`: los defaults
-   * no se avisan a sí mismos (ronda de fix 3b). Tiene que ser `> 0` y `<=
-   * leaseMs / 2` — no solo `< leaseMs` (la validación de la ronda 2): con
-   * un `timeoutMs` cercano a `leaseMs` casi cualquier fila termina con
-   * `restante < timeoutMs` para cuando le toca su turno en el pool (ver
-   * "Cola del pool y lease" más abajo) y se LIBERA en vez de intentarse.
-   * **Si se customiza `leaseMs` por debajo de `120_000` sin pasar
-   * `timeoutMs` explícito, el default fijo (`60_000`) va a violar `<=
-   * leaseMs / 2` y `procesarOutbox` tira `ErrorOutbox("opciones_invalidas")`**
-   * — con un `leaseMs` chico, hay que pasar `timeoutMs` explícito.
+   * `Math.min(60_000, Math.floor(leaseMs / 2))` por defecto (ronda de fix
+   * 3c) — un tope de 1 min, pero nunca más de `leaseMs / 2`:
+   * - Con `leaseMs` en su propio default (`600_000`) o más grande, da
+   *   `60_000` — el tope fijo de la ronda 3b, que evita que los defaults
+   *   del PROPIO paquete (`lote: 20`, `concurrencia: 5`) disparen su
+   *   propia advertencia de "Cola del pool y lease" (más abajo):
+   *   `60_000 * ceil(20 / 5) = 240_000 < 600_000`.
+   * - Con `leaseMs` customizado por DEBAJO de `120_000` (por ejemplo, en
+   *   un test), da `Math.floor(leaseMs / 2)` — el mismo default de la
+   *   ronda 2, que por definición nunca excede `leaseMs / 2`. **A
+   *   diferencia del tope fijo puro de la ronda 3b, este default NUNCA
+   *   puede violar su propia validación (`timeoutMs <= leaseMs / 2`) — el
+   *   `Math.min` lo garantiza para CUALQUIER `leaseMs >= 5000`**:
+   *   customizar solo `leaseMs`, sin pasar `timeoutMs`, ya no puede tirar
+   *   `ErrorOutbox("opciones_invalidas")`.
+   *
+   * Tiene que ser `> 0` y `<= leaseMs / 2` — no solo `< leaseMs` (la
+   * validación de la ronda 2): con un `timeoutMs` cercano a `leaseMs` casi
+   * cualquier fila termina con `restante < timeoutMs` para cuando le toca
+   * su turno en el pool (ver "Cola del pool y lease" más abajo) y se
+   * LIBERA en vez de intentarse.
    */
   timeoutMs?: number;
   /**
@@ -310,10 +314,13 @@ export async function procesarOutbox(opciones: OpcionesProcesarOutbox): Promise<
   if (!(leaseMs >= 5000)) {
     throw new ErrorOutbox("opciones_invalidas", `procesarOutbox: "leaseMs" tiene que ser >= 5000 (fue ${leaseMs}).`);
   }
-  // Ronda de fix 3b: default FIJO (60_000), no más `Math.floor(leaseMs / 2)`
-  // — ver el JSDoc de la opción para el porqué (los defaults del propio
-  // paquete disparaban su propia advertencia con el default anterior).
-  const timeoutMs = opciones.timeoutMs ?? 60_000;
+  // Ronda de fix 3c: `Math.min(60_000, Math.floor(leaseMs / 2))` — tope
+  // fijo de la ronda 3b (evita que los defaults del PROPIO paquete se
+  // avisen a sí mismos) PERO nunca por encima de `leaseMs / 2` (a
+  // diferencia del fijo puro de la 3b): customizar solo `leaseMs`, sin
+  // `timeoutMs`, ya no puede violar la validación de abajo. Ver el JSDoc
+  // de la opción para el detalle.
+  const timeoutMs = opciones.timeoutMs ?? Math.min(60_000, Math.floor(leaseMs / 2));
   if (!(timeoutMs > 0)) {
     throw new ErrorOutbox("opciones_invalidas", `procesarOutbox: "timeoutMs" tiene que ser > 0 (fue ${timeoutMs}).`);
   }
