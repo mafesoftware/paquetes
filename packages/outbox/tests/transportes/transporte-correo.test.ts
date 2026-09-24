@@ -21,7 +21,7 @@ function render(mensaje: Pick<MensajeParaEnviar, "plantilla" | "datos">) {
 }
 
 describe("transporteCorreo", () => {
-  it("arma el envío con render() y pasa para/asunto/html/texto/de/claveIdempotencia a enviar()", async () => {
+  it("arma el envío con render() y pasa para/asunto/html/texto/de/claveIdempotencia/señal a enviar()", async () => {
     const enviar = vi.fn().mockResolvedValue({ ok: true, id: "resend_1" });
     const transporte = transporteCorreo({ remitente: "Mi App <no-reply@mi-app.com>", enviar, render });
 
@@ -34,8 +34,20 @@ describe("transporteCorreo", () => {
       texto: undefined,
       de: "Mi App <no-reply@mi-app.com>",
       claveIdempotencia: "t1:k1",
+      señal: CONTEXTO.señal,
     });
     expect(resultado).toEqual({ ok: true, idExterno: "resend_1" });
+  });
+
+  it("reenvía LA MISMA señal (AbortSignal) que le llegó en el contexto — L2", async () => {
+    const enviar = vi.fn().mockResolvedValue({ ok: true, id: "resend_1" });
+    const transporte = transporteCorreo({ remitente: "x@y.com", enviar, render });
+    const contexto = { señal: new AbortController().signal };
+
+    await transporte(MENSAJE, contexto);
+
+    const opcionesRecibidas = enviar.mock.calls[0]![0] as { señal: AbortSignal };
+    expect(opcionesRecibidas.señal).toBe(contexto.señal);
   });
 
   it("un resultado { ok: false } de enviar() se traduce a categoria/codigo (mismo valor en los dos)", async () => {

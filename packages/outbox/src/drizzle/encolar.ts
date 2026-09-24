@@ -105,6 +105,17 @@ export async function encolar(tx: DbCliente, tabla: TablaOutbox, opciones: Opcio
   if (typeof opciones.claveIdempotencia !== "string" || !opciones.claveIdempotencia.trim()) {
     throw new ErrorOutbox("opciones_invalidas", 'encolar: "claveIdempotencia" no puede estar vacía.');
   }
+  // 200, no 256: MensajeParaEnviar.claveIdempotencia compone
+  // "${tenantId}:${claveIdempotencia}" (ver transporte.ts) y ESO es lo que
+  // transporteCorreo manda como header Idempotency-Key a Resend, que lo
+  // limita a 256 caracteres. Un tenantId uuid + ":" son 37; 200 deja margen
+  // de sobra incluso para un tenantId más largo que un uuid.
+  if (opciones.claveIdempotencia.length > 200) {
+    throw new ErrorOutbox(
+      "opciones_invalidas",
+      `encolar: "claveIdempotencia" no puede tener más de 200 caracteres (tiene ${opciones.claveIdempotencia.length}) — junto con "tenantId" forma la clave de idempotencia que se le manda al proveedor (Resend limita el header Idempotency-Key a 256 caracteres).`,
+    );
+  }
   if (opciones.maxIntentos !== undefined && (!Number.isInteger(opciones.maxIntentos) || opciones.maxIntentos < 1)) {
     throw new ErrorOutbox("opciones_invalidas", `encolar: "maxIntentos" tiene que ser un entero >= 1 (fue ${opciones.maxIntentos}).`);
   }

@@ -5,10 +5,14 @@ import { ErrorOutbox } from "../errores.js";
 import type { CanalOutbox } from "../tipos.js";
 import type { Transporte } from "../transporte.js";
 import type { DbCliente } from "./cliente.js";
+import { contarAfectadas } from "./contar-afectadas.js";
 import type { TablaOutbox } from "./tabla.js";
 
 /** Tope de caracteres de `ultimo_error_codigo` — ver el JSDoc de `Transporte` sobre por qué nunca debería necesitarse tanto margen (nunca debería traer texto libre), y por qué igual se recorta. */
 const MAXIMO_LARGO_CODIGO = 64;
+
+/** Piso del backoff para `"conflicto_idempotencia"` (HTTP 409 de Resend) — ver `registrarResultado`. */
+const BACKOFF_MINIMO_CONFLICTO_IDEMPOTENCIA_MS = 60_000;
 
 /** Opciones de `procesarOutbox`. */
 export interface OpcionesProcesarOutbox {
@@ -29,7 +33,8 @@ export interface OpcionesProcesarOutbox {
    * `Math.floor(leaseMs / 2)` por defecto. Tiene que ser `> 0` y `<
    * leaseMs` — si un intento pudiera durar más que el lease, otro worker lo
    * reclamaría de nuevo (`"destrabar"`) ANTES de que este termine, y los
-   * dos mandarían el mismo mensaje a la vez.
+   * dos mandarían el mismo mensaje a la vez. También es el `margen` que usa
+   * el chequeo de "cola del pool" — ver "Cola del pool y lease" más abajo.
    */
   timeoutMs?: number;
   /**
@@ -44,12 +49,12 @@ export interface OpcionesProcesarOutbox {
 
 /** Resumen de una corrida de `procesarOutbox`. */
 export interface ResumenProcesarOutbox {
-  /** Cuántas filas se reclamaron en esta corrida (incluye las que venían `"pendiente"` y las `"procesando"` con el lease vencido, y las que se cerraron directo a `"fallido"` por `lease_agotado` sin llegar a intentar el envío). */
+  /** Cuántas filas se reclamaron en esta corrida (incluye las que venían `"pendiente"` y las `"procesando"` con el lease vencido, y las que se cerraron directo a `"fallido"` por intentos agotados sin llegar a intentar el envío). */
   reclamados: number;
   enviados: number;
   /** Fallo transitorio, todavía con intentos disponibles: quedó `"pendiente"` de nuevo, agendada con `backoff`. */
   reintentar: number;
-  /** Fallo transitorio que agotó `maxIntentos` (incluido agotarlo por leases vencidos repetidos — `codigo: "lease_agotado"`, sin haber llegado a intentar el envío esa vez): quedó `"fallido"`, no se reintenta más. */
+  /** Fallo transitorio que agotó `maxIntentos` (incluido agotarlo por leases vencidos repetidos — `codigo: "lease_agotado"`/`"intentos_agotados"`, sin haber llegado a intentar el envío esa vez): quedó `"fallido"`, no se reintenta más. */
   fallidos: number;
   /** Fallo permanente (o canal sin `Transporte` configurado): quedó `"descartado"` sin gastar reintentos. */
   descartados: number;
@@ -64,6 +69,15 @@ export interface ResumenProcesarOutbox {
    * la señal de que la protección contra sobre-escritura funcionó.
    */
   perdidos: number;
+  /**
+   * La fila se devolvió a `"pendiente"` SIN llamar a ningún `Transporte`
+   * porque, para cuando le tocó su turno (cola del pool con `concurrencia`
+   * limitada), ya no quedaba margen seguro de lease para intentar un envío
+   * — ver "Cola del pool y lease" en el JSDoc de `procesarOutbox`. El
+   * intento se "devuelve" (`intentos - 1`) porque nunca se gastó de
+   * verdad: no se llamó a nada.
+   */
+  liberados: number;
   /**
    * Cuántas operaciones de BASE (el reclamo del lote, o el registro de un
    * resultado) tiraron una excepción — `procesarOutbox` las atrapa todas,
@@ -80,7 +94,7 @@ export interface ResumenProcesarOutbox {
   ultimoError?: { codigo: string | null };
 }
 
-/** Una fila ya reclamada (estado `"procesando"`, `intentos` ya incrementado si corresponde), tal como la devuelve `reclamarLote`. */
+/** Una fila ya reclamada, tal como la devuelve `reclamarLote`. */
 interface FilaReclamada {
   id: string;
   tenantId: string;
@@ -89,13 +103,17 @@ interface FilaReclamada {
   plantilla: string;
   datos: unknown;
   claveIdempotencia: string;
+  /** Ya incluye el intento que se acaba de reclamar (incrementado al reclamarla), salvo en la rama `"fallido"` de `estadoResultante` (ver su JSDoc), donde NO se incrementó. */
   intentos: number;
   maxIntentos: number;
-  /** El lease con el que ESTE worker la reclamó — se usa para "cerrojar" el `UPDATE` que registra el resultado (ver `registrarResultado`). `null` cuando `estadoResultante` ya es `"fallido"` (lease agotado: no hay lease nuevo, la fila ya quedó cerrada). */
+  /** El lease con el que ESTE worker la reclamó — se usa para "cerrojar" el `UPDATE` que registra el resultado o la libera (ver `registrarResultado`/`liberarFila`). `null` cuando `estadoResultante` ya es `"fallido"` (la fila ya quedó cerrada en el reclamo mismo, sin lease nuevo). */
   bloqueadoHasta: Date | null;
-  /** `"procesando"`: hay que llamar al `Transporte` y registrar el resultado. `"fallido"`: `reclamarLote` ya la cerró (lease agotado con `intentos >= maxIntentos`) — no se llama a ningún `Transporte`. */
+  /** `"procesando"`: hay que decidir si llamar al `Transporte` (ver "Cola del pool y lease") y registrar el resultado. `"fallido"`: `reclamarLote` ya la cerró (intentos agotados, por lease vencido repetidas veces o de entrada) — no se llama a ningún `Transporte`. */
   estadoResultante: "procesando" | "fallido";
 }
+
+/** Lo que devuelve la consulta de reclamo TAL CUAL (antes de normalizar `bloqueadoHasta` a `Date` — ver `reclamarLote`). */
+type FilaReclamadaCruda = Omit<FilaReclamada, "bloqueadoHasta"> & { bloqueadoHasta: string | null };
 
 const RESUMEN_VACIO: ResumenProcesarOutbox = {
   reclamados: 0,
@@ -104,6 +122,7 @@ const RESUMEN_VACIO: ResumenProcesarOutbox = {
   fallidos: 0,
   descartados: 0,
   perdidos: 0,
+  liberados: 0,
   errores: 0,
 };
 
@@ -128,26 +147,56 @@ const RESUMEN_VACIO: ResumenProcesarOutbox = {
  * (`${tenantId}:${claveIdempotencia}` de la fila) y `transporteCorreo` la
  * pasa como header `Idempotency-Key` de Resend (ver
  * `@mafesoftware/correo`); para WhatsApp, `kapso-wa` hoy no expone ese
- * mecanismo — ver el JSDoc de `transporteWhatsApp`.
+ * mecanismo — ver el JSDoc de `transporteWhatsApp`. **Lo mismo vale para el
+ * timeout**: si un intento tarda más que `timeoutMs`, `procesarOutbox` lo
+ * da por perdido y sigue (ver `intentarTransporte`), pero el PROVEEDOR
+ * puede haber recibido el pedido igual y entregarlo más tarde — abortar la
+ * `señal` corta el pedido de ESTE lado, no lo deshace del otro.
  *
  * **Escrituras con cerrojo (fencing).** Cada fila que `reclamarLote`
  * reclama se marca con su PROPIO `bloqueado_hasta` (el lease nuevo). El
- * `UPDATE` que registra el resultado (`registrarResultado`) SIEMPRE incluye
- * `WHERE ... AND estado = 'procesando' AND bloqueado_hasta = <ese mismo
- * lease>` — nunca solo `WHERE id = ...`. Si para cuando el `Transporte`
- * responde la fila YA NO tiene ese lease exacto (otro worker la reclamó de
- * nuevo porque el lease de ESTE worker venció mientras esperaba, y
- * probablemente ya registró su propio resultado), el `UPDATE` no afecta
- * ninguna fila — se cuenta en `perdidos`, y el resultado que llegó tarde
- * NUNCA pisa lo que el otro worker ya haya escrito. Sin este cerrojo, un
- * worker "zombi" (crasheado a medias, o con una llamada de red que tardó
- * más que el lease) podía sobreescribir con datos viejos una fila que otro
- * worker ya había cerrado correctamente — reproducido con Postgres real:
- * dos workers reclamando la misma fila con leases distintos, el más lento
- * respondiendo DESPUÉS de que el más rápido ya la marcó `"enviado"`, y sin
- * este cerrojo esa respuesta tardía la volvía a dejar `"pendiente"` (con
- * intentos ya gastados) — un tercer envío esperando a la vuelta de la
- * esquina.
+ * `UPDATE` que registra el resultado (`registrarResultado`) o que libera
+ * una fila sin intentarla (`liberarFila`) SIEMPRE incluye `WHERE ... AND
+ * estado = 'procesando' AND bloqueado_hasta = <ese mismo lease>` — nunca
+ * solo `WHERE id = ...`. Si para cuando se escribe la fila YA NO tiene ese
+ * lease exacto (otro worker la reclamó de nuevo porque el lease de ESTE
+ * worker venció mientras esperaba, y probablemente ya registró su propio
+ * resultado), el `UPDATE` no afecta ninguna fila — se cuenta en `perdidos`,
+ * y el resultado que llegó tarde NUNCA pisa lo que el otro worker ya haya
+ * escrito.
+ *
+ * **Cola del pool y lease.** Todas las filas de UN reclamo comparten el
+ * mismo `bloqueado_hasta` (calculado una vez, al reclamar el lote entero) —
+ * pero con `concurrencia` limitada, no todas empiezan a procesarse al
+ * mismo tiempo: una fila puede quedar esperando su turno en el pool
+ * mientras OTRAS, antes en la cola, todavía están "en vuelo" (sobre todo
+ * si tardan hasta `timeoutMs` cada una). Si a una fila le toca el turno
+ * cuando ya casi no le queda lease, intentar el envío de todos modos es
+ * peligroso: para cuando el intento termine, el lease puede haber vencido
+ * hace rato, y OTRO worker puede haberla reclamado y ya estar mandándola —
+ * dos invocaciones reales del `Transporte` para la MISMA fila, reproducido
+ * contra Postgres real (lote de varias filas, `concurrencia: 1`, un
+ * `Transporte` lento, un segundo worker que arranca antes de que el
+ * primero termine de vaciar su cola).
+ *
+ * Por eso, INMEDIATAMENTE ANTES de llamar al `Transporte` de cada fila, se
+ * recalcula `restante = bloqueadoHasta - ahora()` (con el reloj real de
+ * ESE momento, no el del reclamo). Si `restante <= timeoutMs` (el mismo
+ * `timeoutMs` hace de margen de seguridad), la fila se LIBERA sin llamar a
+ * nada: vuelve a `"pendiente"`, con `bloqueado_hasta = null`,
+ * `proximo_intento_en = ahora()` (vuelve a estar debida ya mismo) e
+ * `intentos - 1` (el intento que se reclamó pero nunca se gastó de
+ * verdad, porque no se llegó a intentar nada) — cerrojado igual que
+ * `registrarResultado`, así que si para cuando se escribe esto la fila ya
+ * no tiene el mismo lease, no pisa nada (se cuenta en `perdidos`, no en
+ * `liberados`). Se cuenta en el balde nuevo `liberados`.
+ *
+ * Si en cambio SÍ alcanza el margen, el intento corre igual, pero con un
+ * timeout EFECTIVO recortado a `min(timeoutMs, restante - 1000)` — nunca
+ * más que el `timeoutMs` configurado, pero tampoco más que lo que
+ * realmente queda de lease (menos un segundo de margen para la propia
+ * escritura del resultado) — así ningún intento puede terminar DESPUÉS de
+ * que su lease haya vencido.
  *
  * **Dos fases, con transacciones DISTINTAS a propósito:**
  *
@@ -159,10 +208,12 @@ const RESUMEN_VACIO: ResumenProcesarOutbox = {
  *    `intentos >= maxIntentos` YA (agotó los intentos a fuerza de leases
  *    vencidos sucesivos, sin que ninguno haya llegado a registrar un
  *    resultado real), la fila se cierra DIRECTO a `"fallido"`
- *    (`codigo: "lease_agotado"`) EN ESA MISMA sentencia — sin incrementar
- *    `intentos` de nuevo, y sin llamar a ningún `Transporte` — ver
- *    "Bucle de caídas" más abajo. El resto se marca `"procesando"`, con su
- *    lease nuevo, `intentos + 1`. `SKIP LOCKED` es lo que hace que dos
+ *    (`codigo: "lease_agotado"` si venía `"procesando"`, `codigo:
+ *    "intentos_agotados"` si venía `"pendiente"` — salvaguarda, no debería
+ *    pasar en el flujo normal) EN ESA MISMA sentencia — sin incrementar
+ *    `intentos` de nuevo, y sin llamar a ningún `Transporte` — ver "Bucle
+ *    de caídas" más abajo. El resto se marca `"procesando"`, con su lease
+ *    nuevo, `intentos + 1`. `SKIP LOCKED` es lo que hace que dos
  *    `procesarOutbox` concurrentes se REPARTAN el trabajo en vez de
  *    pisarse. Esta fase es TAN CORTA como sea posible (nada de llamadas de
  *    red adentro).
@@ -170,11 +221,11 @@ const RESUMEN_VACIO: ResumenProcesarOutbox = {
  *    `concurrencia` simultáneos, una transacción corta POR FILA para el
  *    `UPDATE` final, cerrojada como se explicó arriba).
  *
- * **Bucle de caídas (`"lease_agotado"`).** Sin el chequeo del punto 1, una
- * fila cuyo `Transporte` SIEMPRE tarda más que el lease (o cuyo worker
- * SIEMPRE se cae antes de registrar) se reclamaría para siempre, sumando
- * `intentos` sin tope real — `maxIntentos` dejaría de significar nada.
- * Con el chequeo, al tercer... o quinto... reclamo con lease vencido (según
+ * **Bucle de caídas.** Sin el chequeo del punto 1, una fila cuyo
+ * `Transporte` SIEMPRE tarda más que el lease (o cuyo worker SIEMPRE se
+ * cae antes de registrar) se reclamaría para siempre, sumando `intentos`
+ * sin tope real — `maxIntentos` dejaría de significar nada. Con el
+ * chequeo, al tercer... o quinto... reclamo con lease vencido (según
  * `maxIntentos`), la fila se cierra sola, sin más intentos de red.
  *
  * **La comparación del lease vencido es `bloqueado_hasta <= ahora`**
@@ -187,21 +238,19 @@ const RESUMEN_VACIO: ResumenProcesarOutbox = {
  * **Nunca tira.** Un `Transporte` que TIRA (no respeta su contrato) se
  * atrapa y se trata como `"transitorio"` (`codigo:
  * "transporte_excepcion"`), sin loguear el error crudo. Un `Transporte`
- * que no responde en `timeoutMs` se trata igual (`codigo: "timeout"`). Y
- * — a diferencia de la versión anterior de este paquete — **un fallo de la
- * BASE (el reclamo del lote, o el `UPDATE` que registra un resultado)
- * TAMPOCO se propaga**: se atrapa, se cuenta en `errores`, y el código de
- * Postgres (nunca el mensaje ni los parámetros) queda en `ultimoError`. Si
- * el reclamo mismo falla, esta función devuelve `{ ...vacío, errores: 1,
- * ultimoError }` sin haber tocado ninguna fila. Si falla el registro de
- * UNA fila entre varias (`concurrencia` > 1, semántica `allSettled`: un
- * fallo en una fila no aborta el resto), esa fila queda sin sumar en
- * ningún balde de resultado — el `Transporte` para ella SÍ se llamó, pero
- * no se sabe si el resultado quedó guardado; en la próxima corrida se
- * reclama de nuevo, mismas garantías de "al menos una vez" que el resto.
+ * que no responde en el timeout efectivo se trata igual (`codigo:
+ * "timeout"`). Y un fallo de la BASE (el reclamo del lote, o el `UPDATE`
+ * que registra un resultado o libera una fila) TAMPOCO se propaga: se
+ * atrapa, se cuenta en `errores`, y el código de Postgres (nunca el
+ * mensaje ni los parámetros) queda en `ultimoError`. Si el reclamo mismo
+ * falla, esta función devuelve `{ ...vacío, errores: 1, ultimoError }` sin
+ * haber tocado ninguna fila. Si falla el registro de UNA fila entre varias
+ * (`concurrencia` > 1, semántica `allSettled`: un fallo en una fila no
+ * aborta el resto), esa fila queda sin sumar en ningún balde de
+ * resultado.
  *
  * Devuelve `{ reclamados, enviados, reintentar, fallidos, descartados,
- * perdidos, errores, ultimoError? }`.
+ * perdidos, liberados, errores, ultimoError? }`.
  *
  * ```ts
  * import { procesarOutbox, transporteCorreo, transporteWhatsApp } from "@mafesoftware/outbox/drizzle";
@@ -216,7 +265,7 @@ const RESUMEN_VACIO: ResumenProcesarOutbox = {
  *   lote: 50,
  *   concurrencia: 10,
  * });
- * // { reclamados: 12, enviados: 10, reintentar: 1, fallidos: 0, descartados: 1, perdidos: 0, errores: 0 }
+ * // { reclamados: 12, enviados: 10, reintentar: 1, fallidos: 0, descartados: 1, perdidos: 0, liberados: 0, errores: 0 }
  * ```
  */
 export async function procesarOutbox(opciones: OpcionesProcesarOutbox): Promise<ResumenProcesarOutbox> {
@@ -269,11 +318,22 @@ export async function procesarOutbox(opciones: OpcionesProcesarOutbox): Promise<
 
   const resultados = await procesarConLimite(reclamados, concurrencia, async (fila) => {
     if (fila.estadoResultante === "fallido") {
-      // Ya la cerró reclamarLote (lease agotado, ver su JSDoc) — no hay
+      // Ya la cerró reclamarLote (intentos agotados, ver su JSDoc) — no hay
       // Transporte que llamar ni resultado que registrar.
       return "fallidos" as const;
     }
-    const resultado = await intentarTransporte(opciones.transportes, fila, timeoutMs);
+
+    // "Cola del pool y lease" (ver el JSDoc de arriba): se recalcula con el
+    // reloj de ESTE momento, no el del reclamo — puede haber pasado tiempo
+    // real esperando su turno en el pool.
+    const momentoDelTurno = ahora();
+    const restanteMs = (fila.bloqueadoHasta as Date).getTime() - momentoDelTurno.getTime();
+    if (restanteMs <= timeoutMs) {
+      return liberarFila(opciones.db, opciones.tabla, fila, momentoDelTurno);
+    }
+
+    const timeoutEfectivoMs = Math.max(1, Math.min(timeoutMs, restanteMs - 1000));
+    const resultado = await intentarTransporte(opciones.transportes, fila, timeoutEfectivoMs);
     return registrarResultado(opciones.db, opciones.tabla, fila, resultado, ahora());
   });
 
@@ -348,7 +408,7 @@ async function procesarConLimite<T, R>(
  * LOCKED` (candidatos) + `UPDATE ... FROM candidatos` (marca y devuelve).
  * Ver el JSDoc de `procesarOutbox` para el porqué de cada pieza, en
  * particular "Bucle de caídas" (el `CASE` que cierra a `"fallido"` sin
- * reintentar cuando el lease se agotó y ya no quedan intentos).
+ * reintentar cuando ya no quedan intentos).
  *
  * **Pensada para `READ COMMITTED`** (el aislamiento default de Postgres) —
  * bajo ese aislamiento, `FOR UPDATE SKIP LOCKED` alcanza solo para el
@@ -380,6 +440,7 @@ async function reclamarLote(
   const colActualizadoEn = sql.identifier(tabla.actualizadoEn.name);
 
   const bloqueadoHastaNuevo = new Date(momento.getTime() + leaseMs);
+  const agotada = sql`${tabla}.${colIntentos} >= ${tabla}.${colMaxIntentos}`;
 
   const consulta = sql`
     with candidatos as (
@@ -400,11 +461,20 @@ async function reclamarLote(
     )
     update ${tabla}
     set
-      ${colEstado} = case when ${tabla}.${colIntentos} >= ${tabla}.${colMaxIntentos} then 'fallido' else 'procesando' end,
-      ${colIntentos} = case when ${tabla}.${colIntentos} >= ${tabla}.${colMaxIntentos} then ${tabla}.${colIntentos} else ${tabla}.${colIntentos} + 1 end,
-      ${colBloqueadoHasta} = case when ${tabla}.${colIntentos} >= ${tabla}.${colMaxIntentos} then null else ${bloqueadoHastaNuevo}::timestamptz end,
-      ${colUltimoErrorCategoria} = case when ${tabla}.${colIntentos} >= ${tabla}.${colMaxIntentos} then 'red'::text else ${tabla}.${colUltimoErrorCategoria} end,
-      ${colUltimoErrorCodigo} = case when ${tabla}.${colIntentos} >= ${tabla}.${colMaxIntentos} then 'lease_agotado'::text else ${tabla}.${colUltimoErrorCodigo} end,
+      ${colEstado} = case when ${agotada} then 'fallido' else 'procesando' end,
+      ${colIntentos} = case when ${agotada} then ${tabla}.${colIntentos} else ${tabla}.${colIntentos} + 1 end,
+      ${colBloqueadoHasta} = case when ${agotada} then null else ${bloqueadoHastaNuevo}::timestamptz end,
+      ${colUltimoErrorCategoria} = case when ${agotada} then 'red'::text else ${tabla}.${colUltimoErrorCategoria} end,
+      -- L3: el motivo distingue si YA estaba "procesando" (reclamos repetidos
+      -- con el lease vencido, sin que ninguno llegara a intentar el envío —
+      -- "lease_agotado") de la salvaguarda de una fila "pendiente" que
+      -- llegara acá con los intentos ya agotados sin que nadie la haya
+      -- cerrado ("intentos_agotados", no debería pasar en el flujo normal).
+      ${colUltimoErrorCodigo} = case
+        when ${agotada} and ${tabla}.${colEstado} = 'procesando' then 'lease_agotado'::text
+        when ${agotada} then 'intentos_agotados'::text
+        else ${tabla}.${colUltimoErrorCodigo}
+      end,
       ${colActualizadoEn} = now()
     from candidatos
     where ${tabla}.${colId} = candidatos.id
@@ -422,12 +492,26 @@ async function reclamarLote(
       ${tabla}.${colEstado} as "estadoResultante"
   `;
 
-  const resultado = (await tx.execute(consulta)) as unknown as { rows: FilaReclamada[] };
-  return resultado.rows;
+  const resultado = (await tx.execute(consulta)) as unknown as { rows: FilaReclamadaCruda[] };
+  // `tx.execute(...)` con SQL crudo (no el query builder de Drizzle) NO
+  // decodifica columnas `timestamptz` a `Date` — vuelven como el texto
+  // que da Postgres (ej. `"2026-09-24 16:19:35.239+00"`), a diferencia de
+  // una columna leída con el query builder, o de una consulta hecha
+  // directo con `pg` (`Pool.query`, que SÍ la parsea sola). Se normaliza
+  // acá, una vez, para que el resto de este archivo pueda tratar
+  // `bloqueadoHasta` como el `Date` que dice su tipo — reproducido con
+  // Postgres real: sin esto, `fila.bloqueadoHasta.getTime()` tira
+  // `TypeError` (ver la ronda de fix 2 de este paquete).
+  return resultado.rows.map((fila) => ({
+    ...fila,
+    bloqueadoHasta: fila.bloqueadoHasta === null ? null : new Date(fila.bloqueadoHasta),
+  }));
 }
 
 /**
- * Llama al `Transporte` del canal de `fila`, con un tope de `timeoutMs`.
+ * Llama al `Transporte` del canal de `fila`, con un tope de `timeoutMs`
+ * (el EFECTIVO, ya recortado por "Cola del pool y lease" en el JSDoc de
+ * `procesarOutbox` — esta función no sabe ni le importa de dónde salió).
  * Nunca tira: un canal sin `Transporte` configurado, un `Transporte` que
  * TIRA, o uno que no responde a tiempo, dan un `ResultadoTransporte` —
  * nunca se propaga ni se loguea el error crudo (puede traer datos del
@@ -440,7 +524,9 @@ async function reclamarLote(
  * que sigue en vuelo puede terminar más tarde igual, pero para entonces ya
  * se decidió tratar este intento como fallido; su resultado (si llega) se
  * descarta sin volver a tirar ni a colgar el proceso (queda atrapado en su
- * propio `try/catch`, nunca sin manejar).
+ * propio `try/catch`, nunca sin manejar). Abortar la señal NO deshace un
+ * envío que el proveedor ya haya aceptado del otro lado — ver "Entrega al
+ * menos una vez" en el JSDoc de `procesarOutbox`.
  */
 async function intentarTransporte(
   transportes: { correo?: Transporte; whatsapp?: Transporte },
@@ -495,17 +581,54 @@ async function intentarTransporte(
   }
 }
 
-type Desenlace = "enviados" | "reintentar" | "fallidos" | "descartados" | "perdidos";
+type Desenlace = "enviados" | "reintentar" | "fallidos" | "descartados" | "perdidos" | "liberados";
+
+/** Arma la condición `WHERE` cerrojada — compartida por `registrarResultado` y `liberarFila`. Ver "Escrituras con cerrojo" en el JSDoc de `procesarOutbox`. */
+function cerrojoDe(tabla: TablaOutbox, fila: FilaReclamada) {
+  const colId = sql.identifier(tabla.id.name);
+  const colEstado = sql.identifier(tabla.estado.name);
+  const colBloqueadoHasta = sql.identifier(tabla.bloqueadoHasta.name);
+  return sql`${colId} = ${fila.id} and ${colEstado} = 'procesando' and ${colBloqueadoHasta} = ${fila.bloqueadoHasta}::timestamptz`;
+}
+
+/**
+ * Libera `fila` SIN haber llamado a ningún `Transporte` — ver "Cola del
+ * pool y lease" en el JSDoc de `procesarOutbox`: para cuando le tocó su
+ * turno, ya no quedaba margen seguro de lease. Vuelve a `"pendiente"`,
+ * `bloqueado_hasta = null`, `proximo_intento_en = momento` (debida ya
+ * mismo) e `intentos - 1` (el intento reclamado nunca se gastó de verdad).
+ * Cerrojada igual que `registrarResultado`: si la fila ya no tiene el
+ * mismo lease, no escribe nada y devuelve `"perdidos"` en vez de
+ * `"liberados"`.
+ */
+async function liberarFila(db: DbCliente, tabla: TablaOutbox, fila: FilaReclamada, momento: Date): Promise<Desenlace> {
+  const colEstado = sql.identifier(tabla.estado.name);
+  const colBloqueadoHasta = sql.identifier(tabla.bloqueadoHasta.name);
+  const colIntentos = sql.identifier(tabla.intentos.name);
+  const colProximoIntentoEn = sql.identifier(tabla.proximoIntentoEn.name);
+  const colActualizadoEn = sql.identifier(tabla.actualizadoEn.name);
+  const colId = sql.identifier(tabla.id.name);
+
+  const consulta = sql`
+    update ${tabla}
+    set
+      ${colEstado} = 'pendiente',
+      ${colBloqueadoHasta} = null,
+      ${colIntentos} = ${tabla}.${colIntentos} - 1,
+      ${colProximoIntentoEn} = ${momento}::timestamptz,
+      ${colActualizadoEn} = now()
+    where ${cerrojoDe(tabla, fila)}
+    returning ${colId}
+  `;
+  const resultado = await db.execute(consulta);
+  return contarAfectadas(resultado) > 0 ? "liberados" : "perdidos";
+}
 
 /**
  * Registra el resultado de un intento en la fila `fila`, en su propia
  * transacción corta, CERROJADA por el lease con el que se reclamó (ver
- * "Escrituras con cerrojo" en el JSDoc de `procesarOutbox`): cada `UPDATE`
- * incluye `estado = 'procesando' and bloqueado_hasta = <fila.bloqueadoHasta>`
- * además de `id = <fila.id>` — si eso ya no matchea (otro worker la
- * reclamó de nuevo mientras este intento estaba en vuelo), el `UPDATE` no
- * afecta ninguna fila y esta función devuelve `"perdidos"` SIN reintentar
- * ni tirar. Devuelve la clave del resumen a incrementar.
+ * "Escrituras con cerrojo" en el JSDoc de `procesarOutbox`). Devuelve la
+ * clave del resumen a incrementar.
  */
 async function registrarResultado(
   db: DbCliente,
@@ -524,17 +647,14 @@ async function registrarResultado(
   const colProximoIntentoEn = sql.identifier(tabla.proximoIntentoEn.name);
   const colActualizadoEn = sql.identifier(tabla.actualizadoEn.name);
 
-  // El cerrojo: SIEMPRE en el WHERE de cada UPDATE de esta función.
-  // `fila.bloqueadoHasta` es el lease exacto con el que `reclamarLote`
-  // marcó esta fila — comparar por VALOR (no solo por `id`) es lo que hace
-  // que un resultado tardío de un worker "zombi" nunca pise lo que otro
-  // worker, que ya reclamó la fila de nuevo con un lease DISTINTO, haya
-  // escrito después.
-  const cerrojo = sql`${colId} = ${fila.id} and ${colEstado} = 'procesando' and ${colBloqueadoHasta} = ${fila.bloqueadoHasta}::timestamptz`;
+  const cerrojo = cerrojoDe(tabla, fila);
 
   async function ejecutarCerrojado(fragmento: ReturnType<typeof sql>): Promise<boolean> {
-    const res = (await db.execute(sql`update ${tabla} set ${fragmento} where ${cerrojo}`)) as unknown as { rowCount: number | null };
-    return (res.rowCount ?? 0) > 0;
+    // `RETURNING` (aunque acá no se usen las filas) es lo que le da a
+    // `contarAfectadas` un `rows` con el que contar si el driver no trae
+    // `rowCount` — ver su JSDoc.
+    const res = await db.execute(sql`update ${tabla} set ${fragmento} where ${cerrojo} returning ${colId}`);
+    return contarAfectadas(res) > 0;
   }
 
   if (resultado.ok) {
@@ -584,7 +704,16 @@ async function registrarResultado(
   // `fila.intentos` ya incluye el intento que acaba de fallar (incrementado
   // al reclamarla, ver `reclamarLote`): `fila.intentos - 1` es el número
   // 0-based de fallos previos, la misma convención que espera `backoff`.
-  const esperaMs = backoff(fila.intentos - 1);
+  //
+  // L4: `"conflicto_idempotencia"` (HTTP 409 de Resend, ver
+  // `clasificarResultado`) lleva un backoff más largo — al menos 60 s, sin
+  // importar `intentos` — porque la causa más probable es una carrera
+  // contra el propio caché de idempotencia del proveedor, que necesita más
+  // tiempo para asentarse que un simple problema de red pasajero.
+  const esperaMs =
+    categoria === "conflicto_idempotencia"
+      ? Math.max(BACKOFF_MINIMO_CONFLICTO_IDEMPOTENCIA_MS, backoff(fila.intentos - 1, { base: BACKOFF_MINIMO_CONFLICTO_IDEMPOTENCIA_MS }))
+      : backoff(fila.intentos - 1);
   const proximoIntento = new Date(momento.getTime() + esperaMs);
   const escrito = await ejecutarCerrojado(sql`
     ${colEstado} = 'pendiente',

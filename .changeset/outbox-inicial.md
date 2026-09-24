@@ -19,9 +19,11 @@ negocio.
     inyectable para tests deterministas. Valida las opciones y tira
     `ErrorOutbox("opciones_invalidas")` si no tienen sentido.
   - `clasificarResultado(resultado)`: `"ok" | "transitorio" | "permanente"`.
-    Transitorio: `red`, `limite`, y cualquier categoría NO catalogada
-    (default seguro: nunca se descarta un mensaje real por una categoría
-    nueva sin enumerar). Permanente: `credenciales`, `rechazado`,
+    Transitorio: `red`, `limite`, `conflicto_idempotencia` (HTTP 409 de
+    Resend, backoff más largo — ver `procesarOutbox`), y cualquier
+    categoría NO catalogada (default seguro: nunca se descarta un mensaje
+    real por una categoría nueva sin enumerar). Permanente: `credenciales`,
+    `rechazado`,
     `facturacion`, `plantilla`, `numero`, `ventana` — las mismas categorías
     de `@mafesoftware/correo`/`@mafesoftware/kapso-wa`, sin importar
     ninguno de los dos paquetes (`categoria` es `string`, no una unión
@@ -141,3 +143,67 @@ Postgres real antes de esta tarea considerarse cerrada):
   máquina específicas); `ultimo_error_codigo` recortado a 64 caracteres;
   `render`/`parametrosDe` que tiran se clasifican permanentes
   (`codigo: "render"`) en vez de transitorios genéricos.
+
+**Ronda de fix 2** (re-revisión: I4 quedó parcial, más un Importante nuevo):
+
+- **Importante — la cola del pool rompía el límite del lease.** Con
+  `concurrencia` acotada, las filas de un mismo reclamo (que comparten UN
+  solo `bloqueado_hasta`) no se procesan todas al mismo tiempo — una podía
+  esperar su turno mientras el lease de TODO el lote seguía corriendo, y
+  para cuando le tocaba, ya casi no quedaba margen: si el intento se
+  hacía igual, otro worker podía reclamarla y mandarla A LA VEZ (doble
+  envío real, reproducido contra Postgres con el escenario exacto de la
+  revisión: lote 4, concurrencia 1, lease 1000 ms, timeout 400 ms,
+  `Transporte` colgado, un segundo worker arrancando a los 1100 ms).
+  Arreglado: antes de llamar al `Transporte`, se recalcula cuánto lease
+  queda; si no alcanza margen seguro (`<= timeoutMs`), la fila se LIBERA
+  sola (cerrojada, `"pendiente"` de nuevo, `intentos - 1` porque el intento
+  nunca se gastó — nuevo balde `liberados` en el resumen) en vez de
+  arriesgarse; si sí alcanza, el timeout efectivo de ESE intento se recorta
+  a lo que realmente queda de lease. De paso se encontró (con Postgres
+  real) que `bloqueado_hasta`, leído por SQL crudo (`tx.execute`, no el
+  query builder), vuelve como `string`, no como `Date` — se normaliza una
+  vez al reclamar.
+  - Se detectó un bug de test (no del paquete): la primera versión de la
+    prueba de este escenario medía "no hay dos invocaciones casi
+    simultáneas" (una tolerancia de milisegundos), que pasaba igual con el
+    código VIEJO (con bug) porque las dos invocaciones quedaban separadas
+    por cientos de ms — no detectaba el problema real (que el MISMO
+    `Transporte`, para la MISMA fila, fuera invocado por DOS workers
+    DISTINTOS, sin importar cuánto tiempo los separara). Reescrita para
+    verificar exactamente eso.
+- `Transporte` (núcleo) ahora recibe un segundo argumento,
+  `{ señal: AbortSignal }`; `transporteCorreo`/`transporteWhatsApp` la
+  reenvían a `enviar`. `@mafesoftware/correo` (`enviarCorreo`) acepta una
+  `señal` opcional y la pasa al `fetch` (changeset propio).
+  `@mafesoftware/kapso-wa` NO la acepta (arma su propio
+  `AbortController` interno, sin forma de inyectar uno externo) —
+  documentado, no modificado. Documentado en todos lados que abortar por
+  timeout NO deshace un envío que el proveedor ya haya aceptado del otro
+  lado (parte de "entrega al menos una vez").
+- La consulta de reclamo distingue ahora `"lease_agotado"` (venía
+  `"procesando"`, el caso real) de `"intentos_agotados"` (venía
+  `"pendiente"`, salvaguarda que no debería pasar en el flujo normal) —
+  antes los dos usaban el mismo código. `decidir` (núcleo) alineado: una
+  fila `"procesando"` con el lease vencido Y los intentos agotados ahora da
+  `"descartar"` (antes daba `"destrabar"`, que implica "dale otra
+  vuelta" — ya no hay otra vuelta). Nuevo test de PARIDAD que corre el
+  mismo conjunto de fixtures por `decidir()` y por la consulta de reclamo
+  real contra Postgres, y verifica que dan la misma respuesta.
+- `"conflicto_idempotencia"` (HTTP 409 de Resend — la MISMA
+  `Idempotency-Key` usada con un cuerpo distinto) nueva categoría
+  transitoria, con un backoff de al menos 60 s (más largo que el resto,
+  incluso en el primer intento) — la causa más probable es una carrera
+  contra el propio caché de idempotencia del proveedor.
+  `encolar` valida que `claveIdempotencia` mida entre 1 y 200 caracteres
+  (junto con `tenantId` compone la clave real, y Resend limita su header a
+  256).
+- **OUT OF SCOPE, arreglado de paso:** el conteo de filas afectadas por un
+  `UPDATE`/`DELETE` (usado para el fencing y para `purgarOutbox`) ahora
+  cae a `rows.length` (vía `RETURNING`) cuando el driver no expone
+  `rowCount` (node-postgres siempre lo tiene; algún otro driver, como
+  ciertos modos de neon-serverless, puede no traerlo) — sin este
+  fallback, esos drivers hubieran hecho que CUALQUIER escritura pareciera
+  "no afectó nada" (todo reportado como `perdidos`, en silencio). Probado
+  con un `db` de test que envuelve `execute()` y le saca `rowCount` a
+  propósito.

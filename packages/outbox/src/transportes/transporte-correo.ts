@@ -46,6 +46,8 @@ export interface OpcionesTransporteCorreo {
     texto?: string;
     de: string;
     claveIdempotencia: string;
+    /** La `señal` del `contexto` que le llegó a este `Transporte` (ver `ContextoTransporte`) — reenviada tal cual, para que `(o) => enviarCorreo({ ...o, apiKey })` la pase sola al `fetch` de Resend. */
+    señal: AbortSignal;
   }) => Promise<ResultadoEnvioCorreo>;
   /** El remitente (`"de"`) de cada envío — un mail transaccional de una app suele tener uno solo, no uno por tenant. */
   remitente: string;
@@ -72,13 +74,23 @@ export interface OpcionesTransporteCorreo {
  * `ErrorOutbox("opciones_invalidas")` si no — un error de PROGRAMACIÓN
  * (configurar mal el cron), no algo que dependa de un mensaje puntual.
  *
+ * **`contexto.señal` se reenvía tal cual** a `enviar` (como `opciones.señal`)
+ * — `(o) => enviarCorreo({ ...o, apiKey })` ya la pasa sola al `fetch` de
+ * Resend (`@mafesoftware/correo` la soporta desde su changeset de
+ * idempotencia/señal). Abortarla corta el PEDIDO de este lado, pero **no
+ * deshace un envío que Resend ya haya aceptado** — si `procesarOutbox` la
+ * aborta por `timeoutMs`, el mail puede salir igual, y el próximo intento
+ * (con la MISMA `claveIdempotencia`) es lo único que evita que le llegue
+ * dos veces al destinatario — parte de "entrega al menos una vez", ver el
+ * JSDoc de `procesarOutbox`.
+ *
  * ```ts
  * import { transporteCorreo } from "@mafesoftware/outbox";
  * import { enviarCorreo } from "@mafesoftware/correo";
  *
  * const correo = transporteCorreo({
  *   remitente: "Mi Club <no-reply@miclub.com.ar>",
- *   enviar: (o) => enviarCorreo({ ...o, apiKey: apiKeyDeResend }), // apiKeyDeResend: leída de la config de la app, no de este paquete
+ *   enviar: (o) => enviarCorreo({ ...o, apiKey: apiKeyDeResend }), // apiKeyDeResend: leída de la config de la app, no de este paquete; "señal" ya viaja en "o"
  *   render: (mensaje) => {
  *     if (mensaje.plantilla === "bienvenida") {
  *       const { nombre } = mensaje.datos as { nombre: string };
@@ -107,7 +119,7 @@ export function transporteCorreo(opciones: OpcionesTransporteCorreo): Transporte
 
   const { enviar, remitente, render } = opciones;
 
-  return async (mensaje) => {
+  return async (mensaje, contexto) => {
     let renderizado: CorreoRenderizado;
     try {
       renderizado = render(mensaje);
@@ -124,6 +136,7 @@ export function transporteCorreo(opciones: OpcionesTransporteCorreo): Transporte
       texto: renderizado.texto,
       de: remitente,
       claveIdempotencia: mensaje.claveIdempotencia,
+      señal: contexto.señal,
     });
 
     if (resultado.ok) return { ok: true, idExterno: resultado.id };

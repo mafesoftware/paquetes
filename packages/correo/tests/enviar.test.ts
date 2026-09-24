@@ -120,6 +120,29 @@ describe("enviarCorreo", () => {
     expect(headers["idempotency-key"]).toBeUndefined();
   });
 
+  it("señal (AbortSignal) viaja al fetch — L2", async () => {
+    const { fn, pedidos } = resendFalso({});
+    const controlador = new AbortController();
+    await enviarCorreo({ ...BASE, señal: controlador.signal, fetch: fn });
+    expect(pedidos[0]!.init.signal).toBe(controlador.signal);
+  });
+
+  it("sin señal, no se manda ningún signal al fetch (comportamiento de siempre)", async () => {
+    const { fn, pedidos } = resendFalso({});
+    await enviarCorreo({ ...BASE, fetch: fn });
+    expect(pedidos[0]!.init.signal).toBeUndefined();
+  });
+
+  it("409 es conflicto_idempotencia: la MISMA Idempotency-Key se usó con un cuerpo distinto — L4", async () => {
+    const { fn } = resendFalso({ status: 409, cuerpo: { message: "Idempotency key already used with a different request body" } });
+    const r = await enviarCorreo({ ...BASE, claveIdempotencia: "tenant-1:aviso-42", fetch: fn });
+    expect(r).toEqual({
+      ok: false,
+      categoria: "conflicto_idempotencia",
+      error: "Idempotency key already used with a different request body",
+    });
+  });
+
   it("401 es credenciales: reintentar no arregla una API key mala", async () => {
     const { fn } = resendFalso({
       status: 401,

@@ -64,6 +64,18 @@ describe("decidir", () => {
     expect(decidir(mensaje({ estado: "procesando", bloqueadoHasta: AHORA }), AHORA)).toBe("destrabar");
   });
 
+  it('"procesando" con lease vencido Y intentos >= maxIntentos -> "descartar" (la consulta de reclamo la cierra directo a "fallido", no la reintenta — L3)', () => {
+    expect(
+      decidir(mensaje({ estado: "procesando", bloqueadoHasta: PASADO, intentos: 5, maxIntentos: 5 }), AHORA),
+    ).toBe("descartar");
+  });
+
+  it('"procesando" con lease VIGENTE e intentos >= maxIntentos sigue siendo "esperar" (todavía no le toca a nadie decidir nada)', () => {
+    expect(
+      decidir(mensaje({ estado: "procesando", bloqueadoHasta: FUTURO, intentos: 5, maxIntentos: 5 }), AHORA),
+    ).toBe("esperar");
+  });
+
   it.each<EstadoOutbox>(["enviado", "fallido", "descartado"])('"%s" -> "descartar" (terminal)', (estado) => {
     expect(decidir(mensaje({ estado }), AHORA)).toBe("descartar");
   });

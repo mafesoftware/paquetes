@@ -51,8 +51,19 @@ export interface OpcionesTransporteWhatsApp {
    * de `procesarOutbox`) puede llegarle DOS VECES al destinatario sin que
    * este paquete (ni Kapso) puedan evitarlo hoy. Si tu integración de
    * WhatsApp sí soporta una clave de idempotencia propia, pasala desde acá.
+   *
+   * `señal` (`contexto.señal` — ver `ContextoTransporte`) se pasa como
+   * sexto argumento, reenviada tal cual. **`@mafesoftware/kapso-wa` hoy NO
+   * la acepta**: sus funciones de envío (`enviarPlantilla`, `enviarTexto`,
+   * ...) arman su PROPIO `AbortController` internamente atado a
+   * `cred.timeoutMs` (`15_000` por defecto), sin forma de pasarle una señal
+   * externa — así que un `enviar` que solo llame a `enviarPlantilla` la
+   * recibe y no hace nada con ella (mismo tipo de limitación que
+   * `claveIdempotencia`, arriba). Se pasa igual para que un `enviar` PROPIO
+   * (que envuelva su propio `fetch`) pueda cooperar con el timeout de
+   * `procesarOutbox` si quiere.
    */
-  enviar: (credenciales: unknown, destino: string, plantilla: string, parametros: unknown[], claveIdempotencia: string) => Promise<ResultadoEnvioWhatsApp>;
+  enviar: (credenciales: unknown, destino: string, plantilla: string, parametros: unknown[], claveIdempotencia: string, señal: AbortSignal) => Promise<ResultadoEnvioWhatsApp>;
   /**
    * Arma los parámetros posicionales de la plantilla (`{{1}}`, `{{2}}`...)
    * a partir de `datos`. Por defecto: `datos` tal cual si ya es un arreglo,
@@ -125,7 +136,7 @@ export function transporteWhatsApp(opciones: OpcionesTransporteWhatsApp): Transp
   const { credencialesDe, enviar } = opciones;
   const parametrosDe = opciones.parametrosDe ?? parametrosPorDefecto;
 
-  return async (mensaje) => {
+  return async (mensaje, contexto) => {
     let credenciales: unknown;
     try {
       // `await` sobre un valor NO-Promise lo deja pasar tal cual (no hace
@@ -147,7 +158,7 @@ export function transporteWhatsApp(opciones: OpcionesTransporteWhatsApp): Transp
       return { ok: false, categoria: "plantilla", codigo: "render" };
     }
 
-    const resultado = await enviar(credenciales, mensaje.destino, mensaje.plantilla, parametros, mensaje.claveIdempotencia);
+    const resultado = await enviar(credenciales, mensaje.destino, mensaje.plantilla, parametros, mensaje.claveIdempotencia, contexto.señal);
     if (resultado.ok) return { ok: true, idExterno: resultado.id };
     return { ok: false, categoria: resultado.categoria, codigo: resultado.categoria };
   };

@@ -30,16 +30,19 @@ export interface MensajeParaDecidir {
  * - `"esperar"`: está `"pendiente"`, nunca se intentó todavía, y
  *   `programadoPara` es futuro (un envío agendado) — o está `"procesando"`
  *   con el lease todavía vigente (otro worker la tiene ahora mismo).
- * - `"destrabar"`: está `"procesando"` pero el lease VENCIÓ — el worker que
- *   la reclamó se cayó a mitad de camino (o tardó más que `leaseMs`); hay
- *   que reclamarla de nuevo.
+ * - `"destrabar"`: está `"procesando"`, el lease VENCIÓ, y todavía quedan
+ *   intentos disponibles — el worker que la reclamó se cayó a mitad de
+ *   camino (o tardó más que `leaseMs`); hay que reclamarla de nuevo.
  * - `"descartar"`: terminal — ya está `"enviado"`, `"fallido"` o
- *   `"descartado"`, o (salvaguarda) quedó `"pendiente"` con
- *   `intentos >= maxIntentos` sin que nadie la haya cerrado — no debería
- *   pasar en el flujo normal (`procesarOutbox` cierra una fila a
- *   `"fallido"` en el mismo intento en que agota `maxIntentos`), pero si
- *   pasara (una fila tocada a mano, una migración de datos), no hay que
- *   reintentarla nunca más.
+ *   `"descartado"`; o quedó `"procesando"` con el lease vencido Y
+ *   `intentos >= maxIntentos` (agotó los intentos a fuerza de leases
+ *   vencidos sucesivos: la consulta de reclamo la cierra DIRECTO a
+ *   `"fallido"`, `codigo: "lease_agotado"`, sin darle otra vuelta); o
+ *   (salvaguarda) quedó `"pendiente"` con `intentos >= maxIntentos` sin que
+ *   nadie la haya cerrado — no debería pasar en el flujo normal
+ *   (`procesarOutbox` cierra una fila a `"fallido"` en el mismo intento en
+ *   que agota `maxIntentos`), pero si pasara (una fila tocada a mano, una
+ *   migración de datos), no hay que reintentarla nunca más.
  */
 export type Decision = "enviar" | "reintentar_luego" | "descartar" | "destrabar" | "esperar";
 
@@ -92,7 +95,15 @@ export function decidir(mensaje: MensajeParaDecidir, ahora: Date): Decision {
 
   if (mensaje.estado === "procesando") {
     const leaseVencido = mensaje.bloqueadoHasta !== null && mensaje.bloqueadoHasta.getTime() <= ahora.getTime();
-    return leaseVencido ? "destrabar" : "esperar";
+    if (!leaseVencido) return "esperar";
+    // El lease venció Y ya no quedan intentos: la consulta de reclamo de
+    // `procesarOutbox` cierra esta fila DIRECTO a `"fallido"` (`codigo:
+    // "lease_agotado"`) en la misma sentencia — no la reintenta, no llama a
+    // ningún `Transporte`. `"destrabar"` implica "reclamarla y darle otra
+    // vuelta"; acá no hay otra vuelta, así que la respuesta correcta es
+    // `"descartar"` (terminal), no `"destrabar"` — mismo criterio que la
+    // salvaguarda de `"pendiente"` más abajo.
+    return mensaje.intentos >= mensaje.maxIntentos ? "descartar" : "destrabar";
   }
 
   // "pendiente": la única rama que queda (EstadoOutbox no tiene más valores).

@@ -18,10 +18,15 @@ pase: si no, un worker caído perdería el mensaje para siempre). La única
 defensa real contra ESE duplicado es que el proveedor reconozca una clave de
 idempotencia propia — por eso `transporteCorreo` pasa
 `MensajeParaEnviar.claveIdempotencia` como header `Idempotency-Key` de
-Resend (ver `@mafesoftware/correo`). Ver "Entrega al menos una vez" en el
-JSDoc de `procesarOutbox` para el detalle completo, incluida la protección
-contra que un worker "zombi" pise lo que otro ya escribió (fencing por
-lease).
+Resend (ver `@mafesoftware/correo`). **Lo mismo vale para un timeout**: si
+`procesarOutbox` aborta la `señal` de un intento porque tardó más que
+`timeoutMs`, el proveedor puede haber recibido el pedido igual y entregarlo
+más tarde — abortar corta el pedido de ESTE lado, no lo deshace del otro.
+Ver "Entrega al menos una vez" en el JSDoc de `procesarOutbox` para el
+detalle completo, incluida la protección contra que un worker "zombi" pise
+lo que otro ya escribió (fencing por lease) y contra que la cola del pool
+(`concurrencia`) haga que una fila se intente mandar con el lease ya casi
+vencido.
 
 La entrega usa los paquetes que ya existen en este monorepo — nunca los
 reimplementa:
@@ -107,9 +112,11 @@ backoff(2, { base: 1000, factor: 3, tope: 10_000, jitter: 0, aleatorio: () => 0.
 #### `clasificarResultado(resultado: ResultadoTransporte): ClaseResultado`
 
 Clasifica el resultado de un `Transporte` en `"ok" | "transitorio" |
-"permanente"`. Transitorio: `red`, `limite` (y cualquier categoría NO
-catalogada — default seguro, ver el JSDoc). Permanente: `credenciales`,
-`rechazado`, `facturacion`, `plantilla`, `numero`, `ventana`.
+"permanente"`. Transitorio: `red`, `limite`, `conflicto_idempotencia` (HTTP
+409 de Resend: la misma `Idempotency-Key` con un cuerpo distinto — ver
+`@mafesoftware/correo`) y cualquier categoría NO catalogada (default
+seguro, ver el JSDoc). Permanente: `credenciales`, `rechazado`,
+`facturacion`, `plantilla`, `numero`, `ventana`.
 
 ```ts
 import { clasificarResultado } from "@mafesoftware/outbox";
@@ -134,7 +141,9 @@ mensaje. Si `render` tira, se clasifica `{ ok: false, categoria: "plantilla",
 codigo: "render" }` (PERMANENTE: el mismo mensaje mal armado no se arregla
 reintentando) — `enviar`, en cambio, no tiene try/catch propio, porque
 `procesarOutbox` ya atrapa cualquier excepción de un `Transporte` como
-transitorio. Valida las opciones al construirlo.
+transitorio. `contexto.señal` se reenvía tal cual a `enviar` (como
+`opciones.señal`) — `(o) => enviarCorreo({ ...o, apiKey })` ya la pasa sola
+al `fetch` de Resend. Valida las opciones al construirlo.
 
 ```ts
 import { transporteCorreo } from "@mafesoftware/outbox";
@@ -171,8 +180,11 @@ envío; si `credencialesDe` RECHAZA, se trata como `"transitorio"` (`codigo:
 "credenciales_excepcion"`). `enviar` siempre manda una PLANTILLA (nunca
 texto libre: la ventana de 24h no se puede garantizar para un mensaje que
 se procesa minutos u horas después) y recibe `claveIdempotencia` como
-quinto argumento — `kapso-wa` hoy no hace nada con ella (no tiene
-mecanismo de idempotencia propio). Si `parametrosDe` tira, se clasifica
+quinto argumento y `contexto.señal` como sexto — `kapso-wa` hoy no hace
+nada con ninguno de los dos (sus funciones arman su propio
+`AbortController` interno, sin aceptar una señal externa, y no tiene
+mecanismo de idempotencia propio) — se pasan igual por si tu propio
+`enviar` sabe qué hacer con ellos. Si `parametrosDe` tira, se clasifica
 igual que `render` en `transporteCorreo` (`{ ok: false, categoria:
 "plantilla", codigo: "render" }`, permanente).
 
@@ -250,9 +262,12 @@ Encola un mensaje. **Exige transacción** (tira
 encolar si la transacción del hecho de negocio que lo dispara confirma.
 **Idempotente** por `(tenantId, claveIdempotencia)`: `INSERT ... ON
 CONFLICT DO NOTHING`; devuelve `{ id, nuevo: false }` con el id de la fila
-EXISTENTE si ya había una. `programadoPara` (si no se pasa) se calcula con
-el reloj de JS, no `now()` de Postgres — ver "Reloj: JS, no de Postgres" en
-el JSDoc de `tablaOutbox`.
+EXISTENTE si ya había una. `claveIdempotencia` tiene que medir entre 1 y
+200 caracteres — junto con `tenantId` compone la clave que se le manda al
+proveedor (`${tenantId}:${claveIdempotencia}`, ver `MensajeParaEnviar`), y
+Resend limita su header `Idempotency-Key` a 256. `programadoPara` (si no
+se pasa) se calcula con el reloj de JS, no `now()` de Postgres — ver
+"Reloj: JS, no de Postgres" en el JSDoc de `tablaOutbox`.
 
 ```ts
 import { encolar } from "@mafesoftware/outbox/drizzle";
@@ -283,21 +298,38 @@ al menos una vez" arriba): si otro worker ya reclamó la fila de nuevo, el
 registro se descarta sin pisar nada (`perdidos`), nunca vuelve la fila a un
 estado anterior.
 
+**Cola del pool y lease.** Todas las filas de un reclamo comparten el mismo
+`bloqueado_hasta`, pero con `concurrencia` limitada no todas se procesan al
+mismo tiempo — una fila puede esperar su turno mientras otras, antes en la
+cola, siguen "en vuelo". Si a una fila le toca el turno cuando ya casi no
+le queda lease, `procesarOutbox` NO intenta mandarla: la libera sola
+(`"pendiente"`, `intentos - 1`, debida de nuevo ya mismo — cuenta en
+`liberados`, o en `perdidos` si para cuando se escribe esto otro worker ya
+la reclamó). Si sí alcanza el margen, el intento corre con un timeout
+recortado a lo que realmente queda de lease. Sin esto, un lote con
+`concurrencia` baja y filas lentas podía terminar con DOS workers mandando
+la MISMA fila a la vez — reproducido contra Postgres real.
+
 **Nunca tira** — ni por un fallo de `Transporte` (excepción, o que no
-responda en `timeoutMs`: los dos se tratan como `"transitorio"`), NI por un
-fallo de la BASE (el reclamo del lote, o el registro de un resultado): se
-atrapan, se cuentan en `errores`, y el código de Postgres (nunca el mensaje
-ni los parámetros) queda en `ultimoError`.
+responda en el timeout efectivo: los dos se tratan como `"transitorio"`),
+NI por un fallo de la BASE (el reclamo del lote, o el registro/liberación
+de una fila): se atrapan, se cuentan en `errores`, y el código de Postgres
+(nunca el mensaje ni los parámetros) queda en `ultimoError`.
 
 Una fila `"procesando"` cuyo lease venció (`bloqueado_hasta <= ahora`,
 inclusive) se reclama de nuevo (`"destrabar"`) — salvo que ya agotó
 `maxIntentos` a fuerza de leases vencidos sucesivos (un worker que SIEMPRE
 se cae, o SIEMPRE tarda más que el lease): ahí se cierra directo a
-`"fallido"` (`codigo: "lease_agotado"`) sin llamar a ningún `Transporte` de
-nuevo — sin este chequeo, `maxIntentos` no significaría nada para ese caso.
+`"fallido"` (`codigo: "lease_agotado"`, o `"intentos_agotados"` si venía
+`"pendiente"` — salvaguarda) sin llamar a ningún `Transporte` de nuevo —
+sin este chequeo, `maxIntentos` no significaría nada para ese caso.
+
+Un fallo `"conflicto_idempotencia"` (ver `clasificarResultado`) agenda su
+reintento con un backoff más largo — al menos 60 s, incluso en el primer
+intento.
 
 Devuelve `{ reclamados, enviados, reintentar, fallidos, descartados,
-perdidos, errores, ultimoError? }`.
+perdidos, liberados, errores, ultimoError? }`.
 
 ```ts
 import { procesarOutbox, transporteCorreo, transporteWhatsApp } from "@mafesoftware/outbox/drizzle";
@@ -312,7 +344,7 @@ const resumen = await procesarOutbox({
   lote: 50,
   concurrencia: 10,
 });
-// { reclamados: 12, enviados: 10, reintentar: 1, fallidos: 0, descartados: 1, perdidos: 0, errores: 0 }
+// { reclamados: 12, enviados: 10, reintentar: 1, fallidos: 0, descartados: 1, perdidos: 0, liberados: 0, errores: 0 }
 ```
 
 #### `purgarOutbox(opciones: OpcionesPurgarOutbox): Promise<ResultadoPurgarOutbox>`

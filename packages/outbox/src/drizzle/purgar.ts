@@ -2,6 +2,7 @@ import { sql } from "drizzle-orm";
 import { ErrorOutbox } from "../errores.js";
 import type { EstadoOutbox } from "../tipos.js";
 import type { DbCliente } from "./cliente.js";
+import { contarAfectadas } from "./contar-afectadas.js";
 import type { TablaOutbox } from "./tabla.js";
 
 /** Los únicos estados que `purgarOutbox` acepta borrar — los tres TERMINALES. Borrar `"pendiente"`/`"procesando"` sería borrar trabajo activo, nunca lo que este paquete debería hacer. */
@@ -72,6 +73,7 @@ export async function purgarOutbox(opciones: OpcionesPurgarOutbox): Promise<Resu
     throw new ErrorOutbox("opciones_invalidas", 'purgarOutbox: "antesDe" tiene que ser una fecha válida.');
   }
 
+  const colId = sql.identifier(opciones.tabla.id.name);
   const colEstado = sql.identifier(opciones.tabla.estado.name);
   const colActualizadoEn = sql.identifier(opciones.tabla.actualizadoEn.name);
   const listaEstados = sql.join(
@@ -79,11 +81,15 @@ export async function purgarOutbox(opciones: OpcionesPurgarOutbox): Promise<Resu
     sql`, `,
   );
 
+  // `RETURNING` (aunque no se use el valor) es lo que le da a
+  // `contarAfectadas` un `rows` con el que contar si el driver no trae
+  // `rowCount` — ver su JSDoc.
   const consulta = sql`
     delete from ${opciones.tabla}
     where ${colEstado} in (${listaEstados}) and ${colActualizadoEn} < ${opciones.antesDe}::timestamptz
+    returning ${colId}
   `;
 
-  const resultado = (await opciones.db.execute(consulta)) as unknown as { rowCount: number | null };
-  return { eliminadas: resultado.rowCount ?? 0 };
+  const resultado = await opciones.db.execute(consulta);
+  return { eliminadas: contarAfectadas(resultado) };
 }

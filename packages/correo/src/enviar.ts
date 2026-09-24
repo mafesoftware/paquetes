@@ -23,7 +23,17 @@ export type CategoriaErrorCorreo =
   /** Demasiados envíos por segundo. Reintentar más tarde sí arregla. */
   | "limite"
   /** No se llegó a Resend, o Resend devolvió 5xx. Reintentar puede arreglar. */
-  | "red";
+  | "red"
+  /**
+   * HTTP 409: la MISMA `claveIdempotencia` ya se usó con un cuerpo de
+   * request DISTINTO — a diferencia de un duplicado exacto (que Resend
+   * resuelve solo, devolviendo el resultado del primer envío sin volver a
+   * mandar nada), esto es una inconsistencia real entre dos llamadas que
+   * comparten clave. Reintentar SIN cambiar nada puede arreglarlo (ej. una
+   * carrera contra el propio caché de idempotencia de Resend, si dos
+   * intentos casi simultáneos usaron la misma clave).
+   */
+  | "conflicto_idempotencia";
 
 export type Adjunto = {
   /** Con extensión: es lo que ve quien recibe ("factura-0001.pdf"). */
@@ -61,12 +71,23 @@ export type OpcionesEnvio = {
    * pasa), cada llamada es un envío nuevo para Resend, como hasta ahora.
    */
   claveIdempotencia?: string;
+  /**
+   * Se pasa tal cual al `fetch` (real o inyectado). Cancelar la señal corta
+   * el pedido a Resend — pensada para un caller con su propio timeout (ej.
+   * `@mafesoftware/outbox`, que aborta la llamada cuando un intento tarda
+   * más que su `timeoutMs`). Abortar NO deshace un envío que Resend ya
+   * haya aceptado del otro lado: el mail puede salir igual aunque el
+   * `fetch` de este lado se corte — ver "Entrega al menos una vez" en la
+   * documentación de `@mafesoftware/outbox`.
+   */
+  señal?: AbortSignal;
   /** Inyectable para los tests: no salen a hablar con Resend de verdad. */
   fetch?: Fetch;
 };
 
 function categoriaDeEstado(estado: number): CategoriaErrorCorreo {
   if (estado === 401 || estado === 403) return "credenciales";
+  if (estado === 409) return "conflicto_idempotencia";
   if (estado === 429) return "limite";
   if (estado >= 500) return "red";
   return "rechazado";
@@ -151,6 +172,7 @@ export async function enviarCorreo(
         ...(opciones.claveIdempotencia ? { "idempotency-key": opciones.claveIdempotencia } : {}),
       },
       body: JSON.stringify(cuerpo),
+      ...(opciones.señal ? { signal: opciones.señal } : {}),
     });
   } catch {
     return {

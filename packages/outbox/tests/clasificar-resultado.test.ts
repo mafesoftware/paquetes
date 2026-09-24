@@ -34,4 +34,9 @@ describe("clasificarResultado", () => {
     expect(clasificarResultado({ ok: false, categoria: "red", codigo: "ECONNRESET" })).toBe("transitorio");
     expect(clasificarResultado({ ok: false, categoria: "credenciales", codigo: "401" })).toBe("permanente");
   });
+
+  it('"conflicto_idempotencia" (HTTP 409 de Resend: misma Idempotency-Key con un cuerpo distinto) está catalogada explícitamente como transitoria — L4', () => {
+    expect(CATEGORIAS_TRANSITORIAS.has("conflicto_idempotencia")).toBe(true);
+    expect(clasificarResultado({ ok: false, categoria: "conflicto_idempotencia" })).toBe("transitorio");
+  });
 });

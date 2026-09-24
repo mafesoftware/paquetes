@@ -25,15 +25,29 @@ export type ResultadoTransporte =
 export type ClaseResultado = "ok" | "transitorio" | "permanente";
 
 /**
- * Categorías de `@mafesoftware/correo` (`red`, `limite`) y
- * `@mafesoftware/kapso-wa` (`red`, `limite`) que valen la pena reintentar:
+ * Categorías de `@mafesoftware/correo` (`red`, `limite`, `conflicto_idempotencia`)
+ * y `@mafesoftware/kapso-wa` (`red`, `limite`) que valen la pena reintentar:
  * un problema de RED o de LÍMITE de envíos (rate limit) del proveedor, no
  * del mensaje en sí — el mismo mensaje puede salir bien en el próximo
  * intento. `categoria` no reconocida (de un canal futuro, o un typo en un
  * `Transporte` casero) cae acá también — ver el JSDoc de
  * `clasificarResultado` para el porqué.
+ *
+ * `conflicto_idempotencia` (HTTP 409 de Resend, ver `@mafesoftware/correo`):
+ * la MISMA `Idempotency-Key` (`MensajeParaEnviar.claveIdempotencia`) ya se
+ * usó con un cuerpo de request DISTINTO — a diferencia de un duplicado
+ * exacto (que Resend resuelve solo, devolviendo el resultado del primer
+ * envío), esto es una inconsistencia real. Se trata como transitorio
+ * porque la causa más probable en este paquete es una carrera contra el
+ * propio caché de idempotencia de Resend (dos intentos casi simultáneos
+ * para la MISMA fila, algo que `procesarOutbox` ya evita con `SKIP LOCKED`
+ * y el cerrojo por lease, pero no puede descartarse del todo) — esperando
+ * un poco más (`procesarOutbox` le da un backoff de al menos 60 s, más
+ * largo que el resto, ver `registrarResultado`) suele alcanzar para que se
+ * asiente. Si el conflicto persiste tras varios intentos, la fila termina
+ * en `"fallido"` igual (agotando `maxIntentos`), visible para diagnóstico.
  */
-export const CATEGORIAS_TRANSITORIAS: ReadonlySet<string> = new Set(["red", "limite"]);
+export const CATEGORIAS_TRANSITORIAS: ReadonlySet<string> = new Set(["red", "limite", "conflicto_idempotencia"]);
 
 /**
  * Categorías de `@mafesoftware/correo` (`credenciales`, `rechazado`) y

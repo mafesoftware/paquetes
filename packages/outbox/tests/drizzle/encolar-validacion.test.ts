@@ -54,6 +54,18 @@ describe("encolar: valida las opciones antes de tocar tx/tabla", () => {
     ).rejects.toMatchObject({ codigo: "opciones_invalidas" });
   });
 
+  it('"claveIdempotencia" de más de 200 caracteres tira ErrorOutbox("opciones_invalidas") — L4 (junto con tenantId tiene que entrar en el límite de 256 de Resend)', async () => {
+    await expect(
+      encolar(undefined as never, undefined as never, { ...validas, claveIdempotencia: "x".repeat(201) }),
+    ).rejects.toMatchObject({ codigo: "opciones_invalidas" });
+  });
+
+  it('"claveIdempotencia" de EXACTAMENTE 200 caracteres (el máximo válido) NO tira por validación', async () => {
+    await expect(
+      encolar(undefined as never, undefined as never, { ...validas, claveIdempotencia: "x".repeat(200) }),
+    ).rejects.not.toMatchObject({ codigo: "opciones_invalidas" });
+  });
+
   it('"maxIntentos" no entero o < 1 tira ErrorOutbox("opciones_invalidas")', async () => {
     await expect(
       encolar(undefined as never, undefined as never, { ...validas, maxIntentos: 0 }),

@@ -16,7 +16,7 @@ const MENSAJE: MensajeParaEnviar = {
 const CONTEXTO = { señal: new AbortController().signal };
 
 describe("transporteWhatsApp", () => {
-  it("busca credenciales por tenantId y las pasa a enviar() junto a destino/plantilla/parametros/claveIdempotencia", async () => {
+  it("busca credenciales por tenantId y las pasa a enviar() junto a destino/plantilla/parametros/claveIdempotencia/señal", async () => {
     const credencial = { apiKey: "k", phoneNumberId: "p" };
     const credencialesDe = vi.fn().mockReturnValue(credencial);
     const enviar = vi.fn().mockResolvedValue({ ok: true, id: "wamid.1" });
@@ -25,8 +25,19 @@ describe("transporteWhatsApp", () => {
     const resultado = await transporte(MENSAJE, CONTEXTO);
 
     expect(credencialesDe).toHaveBeenCalledWith("t1");
-    expect(enviar).toHaveBeenCalledWith(credencial, "5491122334455", "gf_turno_manana", ["10:00"], "t1:k1");
+    expect(enviar).toHaveBeenCalledWith(credencial, "5491122334455", "gf_turno_manana", ["10:00"], "t1:k1", CONTEXTO.señal);
     expect(resultado).toEqual({ ok: true, idExterno: "wamid.1" });
+  });
+
+  it("reenvía LA MISMA señal (AbortSignal) que le llegó en el contexto — L2 (kapso-wa no la usa hoy, pero un enviar propio puede)", async () => {
+    const enviar = vi.fn().mockResolvedValue({ ok: true, id: "wamid.x" });
+    const transporte = transporteWhatsApp({ credencialesDe: () => ({}), enviar });
+    const contexto = { señal: new AbortController().signal };
+
+    await transporte(MENSAJE, contexto);
+
+    const señalRecibida = enviar.mock.calls[0]![5] as AbortSignal;
+    expect(señalRecibida).toBe(contexto.señal);
   });
 
   it("datos que NO es un arreglo -> parametrosDe por defecto manda [] (no revienta armando parametros)", async () => {
@@ -34,7 +45,7 @@ describe("transporteWhatsApp", () => {
     const transporte = transporteWhatsApp({ credencialesDe: () => ({}), enviar });
 
     await transporte({ ...MENSAJE, datos: { turno: "10:00" } }, CONTEXTO);
-    expect(enviar).toHaveBeenCalledWith({}, "5491122334455", "gf_turno_manana", [], "t1:k1");
+    expect(enviar).toHaveBeenCalledWith({}, "5491122334455", "gf_turno_manana", [], "t1:k1", CONTEXTO.señal);
   });
 
   it("parametrosDe propio decide los parámetros posicionales", async () => {
@@ -46,7 +57,7 @@ describe("transporteWhatsApp", () => {
     });
 
     await transporte({ ...MENSAJE, datos: { turno: "11:00" } }, CONTEXTO);
-    expect(enviar).toHaveBeenCalledWith({}, "5491122334455", "gf_turno_manana", ["11:00"], "t1:k1");
+    expect(enviar).toHaveBeenCalledWith({}, "5491122334455", "gf_turno_manana", ["11:00"], "t1:k1", CONTEXTO.señal);
   });
 
   it('si parametrosDe() tira, se clasifica { ok: false, categoria: "plantilla", codigo: "render" } (permanente, NO rechaza)', async () => {
