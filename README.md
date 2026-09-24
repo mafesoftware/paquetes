@@ -66,9 +66,46 @@ Publicación por [changesets](https://github.com/changesets/changesets):
 `bun run changeset` agrega uno por cada cambio, y al mergearse a `main`,
 `.github/workflows/release.yml` (`changesets/action`) abre o actualiza un PR
 "Version Packages"; al mergear ESE PR, el mismo workflow corre `bun run release`
-(`tsc` + `changeset publish`) y publica en npm con **provenance** vía
-**OIDC trusted publishing** (`permissions.id-token: write`, variable
-`NPM_CONFIG_PROVENANCE=true`) — sin ningún `NPM_TOKEN` en secrets.
+(`build` + `reescribir-workspace.ts` + `changeset publish`) y publica en npm
+con **provenance** vía **OIDC trusted publishing**
+(`permissions.id-token: write`, variable `NPM_CONFIG_PROVENANCE=true`) — sin
+ningún `NPM_TOKEN` en secrets.
+
+### Dependencias entre paquetes del monorepo (`workspace:*`)
+
+Un paquete puede depender de otro de este mismo monorepo (hoy,
+`@mafesoftware/numeradores` de `@mafesoftware/tenant`, vía
+`@mafesoftware/tenant/drizzle`) con `"workspace:*"` en su `package.json` —
+así `bun install` resuelve esa dependencia contra el `packages/<nombre>`
+local, no contra un paquete publicado, y no hace falta bumpear/publicar el
+paquete del que depende antes de poder desarrollar el que lo consume.
+
+**`changeset publish` NO reescribe `"workspace:"`** — corre `npm publish` por
+abajo, y npm no entiende ese protocolo (es de los gestores de paquetes con
+workspaces: bun/pnpm/yarn). Publicado tal cual, un consumidor externo
+(`npm install @mafesoftware/numeradores`) recibiría un `package.json` con
+`"@mafesoftware/tenant": "workspace:*"` literal, que npm no puede resolver.
+
+`scripts/reescribir-workspace.ts` (funciones puras testeadas en
+`tests/reescribir-workspace.test.ts`) reescribe, en cada
+`packages/*/package.json`, todo especificador `"workspace:"` de
+`dependencies`/`peerDependencies`/`optionalDependencies` a la versión REAL
+del paquete referenciado (`"workspace:*"` → `"x.y.z"` exacta; `workspace:^`/
+`workspace:~` → `"^x.y.z"`/`"~x.y.z"`). El script `"release"` de la
+raíz lo corre DESPUÉS de `build` y ANTES de `changeset publish` — mutando
+los `package.json` del checkout de ESE job de CI, que es descartable (no hay
+ningún paso posterior en "Release" que dependa del código fuente sin
+reescribir). Nunca se corre en el job "CI" (typecheck/test/build/lint): esos
+pasos necesitan el `"workspace:*"` real para que `bun` resuelva las
+dependencias de workspace en desarrollo.
+
+`bun run lint:paquetes` incluye, para cada paquete con alguna dependencia
+`"workspace:"`, un chequeo de regresión de esto: copia el paquete a un
+directorio descartable, aplica la misma reescritura, empaqueta con
+`bun pm pack` y falla si el `package.json` EMPAQUETADO todavía tiene
+`"workspace:"` — la misma combinación que corre `release`, para detectar acá
+(en cada CI normal) un `reescribirPackageJson` que dejó de cubrir algo,
+en vez de recién notarlo cuando `npm install` le falla a un consumidor real.
 
 Trusted publishing exige que el paquete **ya exista** en npm y tenga el
 "Trusted Publisher" de ese repo configurado ahí. Para un paquete nuevo, hay un

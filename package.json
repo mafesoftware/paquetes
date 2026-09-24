@@ -12,7 +12,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit && bun scripts/correr-en-paquetes.ts typecheck",
     "lint:paquetes": "bun scripts/lint-paquetes.ts",
     "changeset": "changeset",
-    "release": "bun run build && changeset publish"
+    "release": "bun run build && bun scripts/reescribir-workspace.ts && changeset publish"
   },
   "devDependencies": {
     "@arethetypeswrong/cli": "^0.18.5",

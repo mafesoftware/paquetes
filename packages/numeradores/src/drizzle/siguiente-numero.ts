@@ -59,6 +59,30 @@ interface FilaSiguienteNumero {
  * `UPDATE` en la que un `SELECT ... FOR UPDATE` mal armado (sin `FOR
  * UPDATE`, por ejemplo) dejaría pasar una lectura sucia.
  *
+ * **Pensada para `READ COMMITTED`** (el aislamiento default de Postgres, y
+ * el que usa `db.transaction(...)` si no se pide otro). Bajo `READ
+ * COMMITTED`, dos transacciones que compiten por la MISMA fila nunca
+ * fallan entre sí por esto: la segunda simplemente ESPERA a que la primera
+ * termine (bloqueada en el `UPDATE` que arma el `ON CONFLICT`) y sigue con
+ * el valor ya actualizado — exactamente lo que prueba el test de 100
+ * transacciones concurrentes contra Postgres real
+ * (`tests/drizzle/postgres.test.ts`): ninguna de las 100 necesita
+ * reintentar nada.
+ *
+ * **Bajo `REPEATABLE READ` o `SERIALIZABLE` es distinto.** Con esos
+ * aislamientos más estrictos, la transacción que pierde la carrera por
+ * esta fila puede ABORTAR en vez de simplemente esperar: Postgres tira
+ * `40001` (`serialization_failure`, "could not serialize access due to
+ * concurrent update") o, más raro, `40P01` (`deadlock_detected`) —
+ * `esFallaDeSerializacion` de este mismo paquete detecta los dos. Cuando
+ * eso pasa, TODA la transacción queda abortada (no solo esta sentencia), así
+ * que hay que reintentar la transacción ENTERA con `conReintento`
+ * envolviendo el `db.transaction(...)` completo, no la llamada a
+ * `siguienteNumero` sola — ver el ejemplo de `conReintento` (en el núcleo
+ * del paquete) y el README. **Esta función no tira `esChoqueDeUnico`**
+ * (`23505`): el `ON CONFLICT DO UPDATE` absorbe ese choque adentro de la
+ * misma sentencia, nunca llega a violar el índice único.
+ *
  * ```ts
  * import { siguienteNumero } from "@mafesoftware/numeradores/drizzle";
  *

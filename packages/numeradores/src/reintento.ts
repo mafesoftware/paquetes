@@ -19,13 +19,24 @@ export interface OpcionesConReintento {
  * Llama a `fn` y, si tira un error reintentable, vuelve a llamarla con una
  * espera creciente entre intentos, hasta `intentos` veces en total.
  *
- * Pensado para el choque de índice único que produce `siguienteNumero` bajo
- * concurrencia: con N transacciones pidiendo el mismo número a la vez, todas
- * calculan (o compiten por) el mismo valor y el índice único de
- * `(tenant, ambito, tipo)` — o, en el enfoque de `insertarNumerado` de
- * store360, del propio comprobante — rechaza a todas menos una. Esa no es
- * una falla de datos: es la carrera que el índice está para ganar, y lo que
- * corresponde es volver a pedir.
+ * Genérico: no asume qué es `fn` ni qué error tira. En este paquete tiene
+ * dos usos bien distintos, cada uno con su propio predicado:
+ *
+ * - El choque de índice único (`23505`, `esChoqueDeUnico`) del patrón
+ *   `max + 1` + insert (`insertarNumerado` de store360): con N
+ *   transacciones calculando el mismo valor a la vez, el índice único
+ *   rechaza a todas menos una, y lo que corresponde es volver a pedir. NO
+ *   es lo que produce `siguienteNumero` de este paquete (su `INSERT ... ON
+ *   CONFLICT DO UPDATE` absorbe ese choque adentro de la misma sentencia,
+ *   nunca llega a violar el índice — ver su JSDoc).
+ * - La falla de serialización (`40001`/`40P01`, `esFallaDeSerializacion`)
+ *   que SÍ puede tirar `siguienteNumero`, pero solo si la transacción que
+ *   lo envuelve corre con aislamiento `REPEATABLE READ`/`SERIALIZABLE` (no
+ *   con `READ COMMITTED`, el default, para el que `siguienteNumero` está
+ *   pensado). Con esos aislamientos, hay que envolver la transacción
+ *   ENTERA, no solo la llamada a `siguienteNumero`: una vez que Postgres
+ *   aborta una transacción por esto, TODA sentencia posterior en esa misma
+ *   transacción falla también, así que reintentar de adentro no alcanza.
  *
  * **La espera con jitter, no solo los intentos, es parte del mecanismo.**
  * Sin espera, los perdedores de la carrera reintentan todos juntos sobre la
@@ -34,15 +45,28 @@ export interface OpcionesConReintento {
  * `insertarNumerado` de store360).
  *
  * Cualquier error NO reintentable (según `esReintentable`) sale tal cual, de
- * inmediato: reintentar un error que no es de choque de único escondería un
- * bug de datos detrás de varios intentos idénticos.
+ * inmediato: reintentar un error que no corresponde escondería un bug de
+ * datos detrás de varios intentos idénticos.
  *
  * ```ts
- * import { conReintento, esChoqueDeUnico } from "@mafesoftware/numeradores";
+ * import { conReintento, esChoqueDeUnico, esFallaDeSerializacion } from "@mafesoftware/numeradores";
+ * import { siguienteNumero } from "@mafesoftware/numeradores/drizzle";
  *
- * const fila = await conReintento(
- *   () => db.transaction((tx) => siguienteNumero(tx, tabla, { tenantId, tipo: "recibo" })),
- *   { intentos: 8 }, // esReintentable: esChoqueDeUnico por defecto
+ * // Uso típico con READ COMMITTED (el default de siguienteNumero): no hace
+ * // falta reintentar nada — el bloqueo de fila del INSERT ... ON CONFLICT
+ * // ya serializa a las transacciones concurrentes sin que ninguna falle.
+ * const { numero, formateado } = await db.transaction((tx) =>
+ *   siguienteNumero(tx, tabla, { tenantId, tipo: "recibo" }),
+ * );
+ *
+ * // Con SERIALIZABLE (o REPEATABLE READ) explícito, envolver la
+ * // TRANSACCIÓN ENTERA con conReintento, combinando los dos predicados:
+ * const { numero: numeroSerializable } = await conReintento(
+ *   () =>
+ *     db.transaction((tx) => siguienteNumero(tx, tabla, { tenantId, tipo: "recibo" }), {
+ *       isolationLevel: "serializable",
+ *     }),
+ *   { intentos: 8, esReintentable: (e) => esChoqueDeUnico(e) || esFallaDeSerializacion(e) },
  * );
  * ```
  */

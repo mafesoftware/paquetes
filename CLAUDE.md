@@ -20,6 +20,13 @@ repo.
 - **npm**: usuario/org `mafe-software`, scope `@mafesoftware`. Publicación por
   **changesets** con **npm trusted publishing (OIDC) + provenance** al mergear a
   `main` (no token en texto plano). Detalle del flujo completo: tarea P.2.
+  **Ojo con `"workspace:*"` entre paquetes de ESTE monorepo** (ej.
+  `numeradores` -> `tenant`): `changeset publish` no lo reescribe (usa `npm
+  publish`, que no entiende ese protocolo). `bun run release` corre
+  `scripts/reescribir-workspace.ts` antes de `changeset publish` para
+  convertirlo a una versión real, y `bun run lint:paquetes` verifica (con
+  `bun pm pack` real, en una copia descartable) que ningún tarball empaquetado
+  se quede con `"workspace:"` — ver "Publicar" en el README de la raíz.
 - Commits: autor `MFSoftware <mafesoftware@gmail.com>` (pasar `-c user.name=... -c
   user.email=...` si el git config local no lo tiene por defecto), mensajes en
   español. No pushear ni publicar salvo que se pida explícitamente.

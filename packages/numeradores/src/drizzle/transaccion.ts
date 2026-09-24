@@ -1,3 +1,4 @@
+import { is } from "drizzle-orm";
 import { PgTransaction } from "drizzle-orm/pg-core";
 import { ErrorNumeradores } from "../errores.js";
 import type { DbCliente } from "./cliente.js";
@@ -14,12 +15,23 @@ import type { DbCliente } from "./cliente.js";
  * que un error DESPUÉS de numerar (por ejemplo, al insertar el comprobante)
  * dejaría el número gastado sin ningún comprobante que lo use — un hueco.
  *
- * **Detección:** `db instanceof PgTransaction`, la clase abstracta de
- * `drizzle-orm/pg-core` de la que heredan tanto `NodePgTransaction`
- * (node-postgres) como `NeonTransaction` (neon-serverless) — no una
- * reimplementación por driver, la MISMA clase base. Es robusta porque
- * inspecciona el objeto que Drizzle arma de verdad para representar "estoy
- * dentro de una transacción", no una heurística contra la base:
+ * **Detección:** `is(db, PgTransaction)`, no `db instanceof PgTransaction`.
+ * `PgTransaction` es la clase abstracta de `drizzle-orm/pg-core` de la que
+ * heredan tanto `NodePgTransaction` (node-postgres) como `NeonTransaction`
+ * (neon-serverless) — no una reimplementación por driver, la MISMA clase
+ * base. `is()` (que exporta el propio `drizzle-orm`) compara por
+ * `entityKind`, una marca que Drizzle le pone a sus clases en vez de
+ * depender de la identidad del constructor — `instanceof` falla en silencio
+ * (da `false` para un objeto que SÍ es una `PgTransaction`) si el bundler o
+ * el gestor de paquetes terminan con dos copias de `drizzle-orm` instaladas
+ * (dos `node_modules/drizzle-orm` distintos, cada uno con su propia clase
+ * `PgTransaction`, aunque sea la misma versión) — un caso real en monorepos
+ * con hoisting parcial o en apps que traen su propio `drizzle-orm` además
+ * del que arrastra este paquete como peerDependency.
+ *
+ * Es robusta además porque inspecciona el objeto que Drizzle arma de
+ * verdad para representar "estoy dentro de una transacción", no una
+ * heurística contra la base:
  *
  * - `SELECT current_setting('transaction_isolation')` NO alcanza: devuelve
  *   un valor igual de "válido" para una sentencia suelta, porque toda
@@ -33,12 +45,25 @@ import type { DbCliente } from "./cliente.js";
  *   `siguienteNumero`, así que una detección basada en eso podría aprobar
  *   una conexión y ejecutar la numeración en otra.
  *
- * El `instanceof` no tiene ese problema: mira el objeto de JavaScript que la
- * propia app va a usar para la consulta siguiente, no un estado de la base
- * que podría corresponder a otra conexión.
+ * `is()` no tiene ese problema: mira el objeto de JavaScript que la propia
+ * app va a usar para la consulta siguiente, no un estado de la base que
+ * podría corresponder a otra conexión.
+ *
+ * **Lo que NINGUNA detección en tiempo de ejecución puede atrapar:** una
+ * `tx` que se GUARDA en una variable y se usa DESPUÉS de que termine el
+ * callback de `db.transaction(async (tx) => ...)` (ya confirmado o
+ * revertido). Sigue siendo, en tiempo de ejecución, una instancia de
+ * `PgTransaction` — `is(tx, PgTransaction)` da `true` igual — pero la
+ * conexión física que representaba ya volvió al pool (o al pool de otra
+ * transacción), así que una llamada a `siguienteNumero` con esa `tx`
+ * reutilizada corre sobre una conexión en un estado impredecible: puede
+ * tirar un error de driver ("Client has encountered a connection error"),
+ * o peor, ejecutar contra la conexión que el pool le asignó mientras tanto
+ * a OTRA transacción sin relación. Nunca guardes ni reuses una `tx` fuera
+ * del callback que la recibió.
  */
 export function exigirTransaccion(db: DbCliente): void {
-  if (db instanceof PgTransaction) return;
+  if (is(db, PgTransaction)) return;
   throw new ErrorNumeradores(
     "requiere_transaccion",
     'siguienteNumero requiere una transacción: llamalo con la "tx" que entrega db.transaction(async (tx) => ...), no con "db" directo. El número solo se debe consumir si la transacción que lo pide confirma.',

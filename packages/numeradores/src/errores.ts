@@ -1,11 +1,15 @@
 /** Por qué tiró `ErrorNumeradores`. */
-export type CodigoErrorNumeradores = "requiere_transaccion" | "retroceso_no_permitido";
+export type CodigoErrorNumeradores =
+  | "requiere_transaccion"
+  | "retroceso_no_permitido"
+  | "proximo_invalido"
+  | "relleno_invalido";
 
 /**
  * El único error que tira este paquete. Siempre por un error de
  * PROGRAMACIÓN (llamar `siguienteNumero` sin transacción, o pedirle a
- * `configurarNumerador` que baje el `proximo`), nunca por datos que mandó un
- * usuario.
+ * `configurarNumerador` un `proximo`/`relleno` que no tiene sentido), nunca
+ * por datos que mandó un usuario final.
  *
  * `codigo` distingue el motivo sin parsear el mensaje:
  * - `"requiere_transaccion"`: `siguienteNumero` se llamó con un `db` que no
@@ -16,6 +20,10 @@ export type CodigoErrorNumeradores = "requiere_transaccion" | "retroceso_no_perm
  * - `"retroceso_no_permitido"`: `configurarNumerador` intentó bajar
  *   `proximo` por debajo del valor actual, lo que generaría números
  *   repetidos con los que ya se emitieron.
+ * - `"proximo_invalido"`: `configurarNumerador` recibió un `proximo` menor
+ *   a `1n` — no hay número de comprobante `0` o negativo.
+ * - `"relleno_invalido"`: `configurarNumerador` recibió un `relleno` que no
+ *   es un entero `>= 0`.
  */
 export class ErrorNumeradores extends Error {
   readonly codigo: CodigoErrorNumeradores;

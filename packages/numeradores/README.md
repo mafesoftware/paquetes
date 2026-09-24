@@ -74,14 +74,49 @@ query: …"`) y dejan el de Postgres en `cause`, así que mirar solo
 `error.code` a secas nunca lo encuentra — y también baja adentro de un
 `AggregateError.errors` (con la cadena de `cause` de cada uno).
 
+**`siguienteNumero` de este paquete NO produce este error** (su
+`INSERT ... ON CONFLICT DO UPDATE` absorbe el choque adentro de la misma
+sentencia, nunca llega a violar el índice — ver `esFallaDeSerializacion`
+para el fallo real de `siguienteNumero` bajo concurrencia). Sigue sirviendo
+para el patrón más viejo de `max + 1` + insert (el de `numeracion.ts` de
+store360) o cualquier otro insert con una clave única calculada antes de
+escribir.
+
 ```ts
 import { esChoqueDeUnico } from "@mafesoftware/numeradores";
 
 try {
-  await db.insert(tabla).values(fila);
+  await db.insert(tabla).values(fila); // clave única calculada antes de escribir
 } catch (error) {
   if (esChoqueDeUnico(error)) {
     // reintentar: dos transacciones calcularon el mismo valor único
+  }
+  throw error;
+}
+```
+
+#### `esFallaDeSerializacion(error: unknown): boolean`
+
+¿Es `error` (en cualquier punto de su cadena) una falla de serialización de
+Postgres — `40001` (`serialization_failure`) o `40P01`
+(`deadlock_detected`)? Misma caminata de `cause`/`AggregateError` que
+`esChoqueDeUnico`. Es el fallo REAL que puede tirar `siguienteNumero` bajo
+concurrencia si la transacción que lo envuelve corre con aislamiento
+`REPEATABLE READ` o `SERIALIZABLE` (no bajo `READ COMMITTED`, el default de
+Postgres y para el que `siguienteNumero` está pensado — ver su sección más
+abajo). Cuando pasa, TODA la transacción queda abortada, no solo la
+sentencia — hay que reintentar la transacción ENTERA.
+
+```ts
+import { esFallaDeSerializacion } from "@mafesoftware/numeradores";
+
+try {
+  await db.transaction((tx) => siguienteNumero(tx, numeradores, { tenantId, tipo: "recibo" }), {
+    isolationLevel: "serializable",
+  });
+} catch (error) {
+  if (esFallaDeSerializacion(error)) {
+    // hay que reintentar la transacción ENTERA, no solo esta llamada — ver conReintento
   }
   throw error;
 }
@@ -93,17 +128,35 @@ Llama a `fn` y, si tira un error reintentable (`esChoqueDeUnico` por
 defecto), vuelve a llamarla con una espera creciente y con jitter entre
 intentos, hasta `intentos` veces en total (`5` por defecto). La espera con
 jitter es parte del mecanismo, no un detalle: sin ella, los perdedores de
-una carrera de choque de único reintentarían todos juntos sobre la misma
-foto y volverían a chocar entre sí. `espera` es inyectable para tests
-deterministas.
+una carrera reintentarían todos juntos sobre la misma foto y volverían a
+chocar entre sí. `espera` es inyectable para tests deterministas.
+
+Con `siguienteNumero` bajo `READ COMMITTED` (el uso típico, default de
+`db.transaction(...)`) **no hace falta reintentar nada**: el bloqueo de
+fila del `INSERT ... ON CONFLICT` ya serializa a las transacciones
+concurrentes sin que ninguna falle (lo prueban los tests de concurrencia
+contra Postgres real). `conReintento` entra en juego recién si se pide
+`REPEATABLE READ`/`SERIALIZABLE` explícito — ahí hay que envolver la
+**transacción entera**, no la llamada a `siguienteNumero` sola (una
+transacción abortada por Postgres rechaza cualquier sentencia posterior
+hasta que termina):
 
 ```ts
-import { conReintento } from "@mafesoftware/numeradores";
+import { conReintento, esChoqueDeUnico, esFallaDeSerializacion } from "@mafesoftware/numeradores";
 import { siguienteNumero } from "@mafesoftware/numeradores/drizzle";
 
-const { numero, formateado } = await conReintento(
-  () => db.transaction((tx) => siguienteNumero(tx, numeradores, { tenantId, tipo: "recibo" })),
-  { intentos: 8 },
+// READ COMMITTED (default): sin conReintento, no hace falta.
+const { numero, formateado } = await db.transaction((tx) =>
+  siguienteNumero(tx, numeradores, { tenantId, tipo: "recibo" }),
+);
+
+// SERIALIZABLE explícito: conReintento envuelve TODA la transacción.
+const { numero: numeroSerializable } = await conReintento(
+  () =>
+    db.transaction((tx) => siguienteNumero(tx, numeradores, { tenantId, tipo: "recibo" }), {
+      isolationLevel: "serializable",
+    }),
+  { intentos: 8, esReintentable: (e) => esChoqueDeUnico(e) || esFallaDeSerializacion(e) },
 );
 ```
 
@@ -111,7 +164,8 @@ const { numero, formateado } = await conReintento(
 
 El único error que tira este paquete (`siguienteNumero`,
 `configurarNumerador`). `codigo` distingue el motivo sin parsear el
-mensaje: `"requiere_transaccion"` o `"retroceso_no_permitido"`.
+mensaje: `"requiere_transaccion"`, `"retroceso_no_permitido"`,
+`"proximo_invalido"` o `"relleno_invalido"`.
 
 ```ts
 import { ErrorNumeradores } from "@mafesoftware/numeradores";
@@ -168,15 +222,22 @@ tira `ErrorNumeradores("requiere_transaccion")`. El número solo se
 considera consumido cuando esa transacción confirma: si se pudiera llamar
 fuera de una, un rollback más adelante en el mismo flujo (por ejemplo,
 falló insertar el comprobante) dejaría el número gastado sin nada que lo
-use — un hueco. La detección es `tx instanceof PgTransaction` (la clase
-abstracta de `drizzle-orm/pg-core` de la que heredan tanto
-`NodePgTransaction`, node-postgres, como `NeonTransaction`,
-neon-serverless), no una heurística contra la base: un `SELECT
+use — un hueco. La detección es `is(tx, PgTransaction)` (de `drizzle-orm`,
+no `tx instanceof PgTransaction`: `is()` compara por `entityKind` en vez de
+la identidad del constructor, así que no falla si terminan instalándose dos
+copias de `drizzle-orm` — un caso real en monorepos con hoisting parcial).
+`PgTransaction` es la clase abstracta de `drizzle-orm/pg-core` de la que
+heredan tanto `NodePgTransaction` (node-postgres) como `NeonTransaction`
+(neon-serverless). No es una heurística contra la base: un `SELECT
 current_setting('transaction_isolation')` no distingue una transacción
 propia de la implícita de una sola sentencia, y algo como `SELECT
 txid_current_if_assigned()` depende de qué conexión física del pool
 ejecuta esa consulta en particular, sin garantía de que sea la misma que
-después numera.
+después numera. **Lo que ninguna detección en tiempo de ejecución puede
+atrapar:** una `tx` guardada y reusada DESPUÉS de que termine el callback
+de `db.transaction(...)` — sigue "siendo" una `PgTransaction`, pero la
+conexión física ya volvió al pool. Nunca guardes ni reuses una `tx` fuera
+del callback que la recibió.
 
 **Atómico bajo concurrencia**: un único `INSERT ... ON CONFLICT (tenant,
 ambito, tipo) DO UPDATE SET proximo = proximo + 1 RETURNING proximo - 1`.
@@ -192,7 +253,20 @@ repetidos (`tests/drizzle/postgres.test.ts`). También probado con 50
 transacciones donde cada 3ra hace rollback: los números COMMITEADOS
 quedan contiguos desde 1 — el rollback de Postgres deshace el incremento
 entero, así que el número que había tomado esa transacción queda
-disponible para la próxima que confirme.
+disponible para la próxima que confirme. Y con un test que sostiene el
+lock de fila con `pg_sleep` (mezclando rollbacks) y mide el tiempo total,
+para probar que la serialización es CONTENCIÓN REAL sobre la fila, no una
+casualidad del test.
+
+**Pensada para `READ COMMITTED`**, el aislamiento default de Postgres: ahí
+dos transacciones que compiten por la misma fila nunca fallan entre sí, la
+segunda simplemente espera a que la primera termine. Bajo `REPEATABLE
+READ`/`SERIALIZABLE` es distinto — la que pierde la carrera puede ABORTAR
+con `40001`/`40P01` en vez de esperar (`esFallaDeSerializacion` los
+detecta), y hay que reintentar la transacción ENTERA con `conReintento`
+(ver su sección más arriba y el test con `SERIALIZABLE` en
+`tests/drizzle/postgres.test.ts`). **No tira `esChoqueDeUnico`**: el `ON
+CONFLICT DO UPDATE` absorbe ese choque adentro de la misma sentencia.
 
 ```ts
 import { siguienteNumero } from "@mafesoftware/numeradores/drizzle";
@@ -215,17 +289,36 @@ await siguienteNumero(db, numeradores, { tenantId, tipo: "recibo" }); // ❌
 Crea o reconfigura el numerador de `(tenantId, ambito, tipo)`: `prefijo`,
 `relleno` y, sobre todo, `proximo`. Pensado para dar de alta un talonario
 nuevo o para migrar un talonario que ya emitió números fuera del sistema
-(papel, otro sistema). **Nunca baja `proximo`**: hacerlo generaría números
-repetidos con los que ya se emitieron. Si el `proximo` pedido es MENOR al
-valor actual de la fila, tira `ErrorNumeradores("retroceso_no_permitido")`
-y no cambia nada — ni siquiera `prefijo`/`relleno` (todo-o-nada). El
-chequeo es atómico (un único `INSERT ... ON CONFLICT ... DO UPDATE ...
-WHERE <proximo actual> <= <proximo nuevo>`), no un `SELECT` seguido de un
-`UPDATE` condicional en la app: entre esas dos sentencias podría meterse
-un `siguienteNumero` concurrente que avanza `proximo`, y el `UPDATE` de la
-app lo pisaría sin que nadie se entere. No exige transacción (a diferencia
-de `siguienteNumero`): es una sola sentencia atómica, se puede llamar con
-`db` directo.
+(papel, otro sistema).
+
+**Es un merge parcial, no un reemplazo completo.** El campo que NO se pasa
+conserva lo que la fila YA TENÍA — solo si la fila es nueva, los campos
+omitidos toman el default de la columna (`""`/`0`/`1n`). Si fuera un
+reemplazo completo, migrar `proximo` de un talonario que ya tenía
+`prefijo: "R-"` configurado (sin volver a pasar `prefijo`) borraría el
+prefijo en silencio — es exactamente el bug que reportó la revisión de esta
+tarea. Es un único `INSERT ... ON CONFLICT DO UPDATE` con
+`coalesce(<valor nuevo o null si se omitió>, <valor por defecto o actual de
+la fila>)` en cada campo.
+
+**Nunca baja `proximo`**: hacerlo generaría números repetidos con los que
+ya se emitieron. Si `proximo` se pasa y es MENOR al valor actual de la
+fila, tira `ErrorNumeradores("retroceso_no_permitido")` y no cambia NADA —
+ni siquiera `prefijo`/`relleno` (todo-o-nada). Pasar el mismo valor que ya
+tiene (o no pasar `proximo`) no es un retroceso: se acepta (idempotente —
+re-correr el mismo seed dos veces no falla). El chequeo es atómico (el
+`WHERE` del `DO UPDATE` compara contra la fila actual dentro de la misma
+sentencia), no un `SELECT` seguido de un `UPDATE` condicional en la app:
+entre esas dos sentencias podría meterse un `siguienteNumero` concurrente
+que avanza `proximo`, y el `UPDATE` de la app lo pisaría sin que nadie se
+entere.
+
+**Valida antes de tocar la base**: `proximo` (si se pasa) tiene que ser
+`>= 1n` (`ErrorNumeradores("proximo_invalido")`); `relleno` (si se pasa)
+tiene que ser un entero `>= 0` (`ErrorNumeradores("relleno_invalido")`).
+
+No exige transacción (a diferencia de `siguienteNumero`): es una sola
+sentencia atómica, se puede llamar con `db` directo.
 
 ```ts
 import { configurarNumerador, ErrorNumeradores } from "@mafesoftware/numeradores/drizzle";
@@ -233,25 +326,46 @@ import { configurarNumerador, ErrorNumeradores } from "@mafesoftware/numeradores
 // Alta de un talonario nuevo, con prefijo y relleno.
 await configurarNumerador(db, numeradores, { tenantId, tipo: "recibo", prefijo: "R-", relleno: 4 });
 
-// Migrar un talonario que en papel ya llegó al 500: el próximo que entregue el sistema es 501.
+// Migrar ESE MISMO talonario: en papel ya llegó al 500, el próximo es 501.
+// prefijo/relleno NO se pasan de nuevo, así que se conservan ("R-"/4) — el
+// siguiente número sale "R-0501", no "0501".
 await configurarNumerador(db, numeradores, { tenantId, tipo: "recibo", proximo: 501n });
 
-// Intentar bajarlo (ya entregó hasta 501, piden volver a 10):
+// Reconfigurar SOLO el prefijo de un talonario ya en uso: proximo no se
+// toca (nunca es un retroceso, porque no se está tocando).
+await configurarNumerador(db, numeradores, { tenantId, tipo: "recibo", prefijo: "REC-" });
+
+// Re-correr el mismo seed (mismos valores) es idempotente: no falla.
+await configurarNumerador(db, numeradores, { tenantId, tipo: "recibo", proximo: 501n });
+
+// Intentar bajarlo (ya está en 501, piden volver a 10):
 try {
   await configurarNumerador(db, numeradores, { tenantId, tipo: "recibo", proximo: 10n });
 } catch (error) {
   if (error instanceof ErrorNumeradores) error.codigo; // "retroceso_no_permitido"
 }
+
+// proximo/relleno inválidos:
+await configurarNumerador(db, numeradores, { tenantId, tipo: "recibo", proximo: 0n }); // ErrorNumeradores("proximo_invalido")
+await configurarNumerador(db, numeradores, { tenantId, tipo: "recibo", relleno: -1 }); // ErrorNumeradores("relleno_invalido")
 ```
 
 ## Postgres para los tests de `/drizzle`
 
 `tests/drizzle/postgres.test.ts` prueba las garantías de concurrencia
-contra Postgres real — no hay mock que valga para el bloqueo de fila y el
-comportamiento de rollback que las sostienen. El DDL que ejecuta no está
-escrito a mano: sale del MISMO esquema de Drizzle que arma
+contra Postgres real — no hay mock que valga para el bloqueo de fila, el
+comportamiento de rollback y las fallas de serialización que las
+sostienen: 100 transacciones concurrentes bajo `READ COMMITTED` (gapless
+1..100), 50 con rollbacks mezclados (committed gapless), un `pg_sleep`
+sosteniendo el lock para probar contención real (no una casualidad de
+scheduling), 20 transacciones concurrentes bajo `SERIALIZABLE` con
+`conReintento` envolviendo la transacción entera, ámbitos/tenants
+independientes, la secuencia de migración documentada arriba (prefijo se
+conserva), y las validaciones de `configurarNumerador`. El DDL que ejecuta
+no está escrito a mano: sale del MISMO esquema de Drizzle que arma
 `tablaNumeradores` (`tests/drizzle/esquema.ts`), generado con
-`drizzle-kit/api` (`generateDrizzleJson` + `generateMigration`).
+`drizzle-kit/api` (`generateDrizzleJson` + `generateMigration`) — igual que
+`sql/ejemplo.sql`, la referencia para consumidores sin Drizzle.
 
 Levantalo con `docker compose up -d db_test` desde la raíz del monorepo
 antes de correr `bun run test` — si no está arriba, ese archivo FALLA con
