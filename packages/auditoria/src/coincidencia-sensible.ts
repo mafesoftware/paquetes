@@ -17,19 +17,28 @@
  */
 const SUFIJO_DE_COLISION = /(?: \(\d+\))+$/;
 
-/** Marcas combinantes Unicode (lo que queda de un acento después de `NFD`: `"ñ"` → `"n"` + `"\u0303"`). */
-const MARCAS_COMBINANTES = /\p{M}/gu;
+/**
+ * Lo que se borra después de `NFKD`: marcas combinantes (`\p{M}`, lo que
+ * queda de un acento: `"ñ"` → `"n"` + `"\u0303"`) y caracteres de formato
+ * (`\p{Cf}`: espacio de ancho cero `U+200B`, unidores `U+200C`/`U+200D`,
+ * guion blando `U+00AD`, BOM `U+FEFF`…), que no se ven y partirían una
+ * clave en dos (`"pass\u200Bword"`).
+ */
+const INVISIBLES = /[\p{M}\p{Cf}]/gu;
 
-/** Separadores que no cuentan: `_`, `-` y cualquier espacio en blanco. */
+/** Separadores que no cuentan: `_`, `-` y cualquier espacio en blanco. El punto NO: `"api.key"` no es `"apikey"` (ver `redactarCambios`). */
 const SEPARADORES = /[_\-\s]/g;
 
 /**
  * La forma normalizada de una clave (o de un término de la lista), en este
  * orden:
  *
- * 1. se saca el sufijo de colisión final (`"password (2)"` → `"password"`);
- * 2. Unicode `NFD` y se quitan las marcas combinantes (`"contraseña"` →
- *    `"contrasena"`, `"Código"` → `"Codigo"`);
+ * 1. Unicode `NFKD` y se quitan las marcas combinantes y los caracteres de
+ *    formato invisibles (`"contraseña"` → `"contrasena"`, `"ＰＡＳＳＷＯＲＤ"`
+ *    de ancho completo → `"PASSWORD"`, `"pass\u200Bword"` → `"password"`);
+ * 2. se saca el sufijo de colisión final (`"password (2)"` → `"password"`) —
+ *    después del paso 1, así un sufijo con dígitos de ancho completo o con
+ *    un carácter invisible pegado también se reconoce;
  * 3. minúsculas;
  * 4. se quitan `_`, `-` y los espacios (`"API-Key"`, `"api_key"`, `"api key"`
  *    y `"apiKey"` dan `"apikey"`).
@@ -40,12 +49,22 @@ const SEPARADORES = /[_\-\s]/g;
  * ```
  */
 export function normalizarClave(clave: string): string {
-  return clave.replace(SUFIJO_DE_COLISION, "").normalize("NFD").replace(MARCAS_COMBINANTES, "").toLowerCase().replace(SEPARADORES, "");
+  return clave.normalize("NFKD").replace(INVISIBLES, "").replace(SUFIJO_DE_COLISION, "").toLowerCase().replace(SEPARADORES, "");
 }
 
-/** `camposSensibles` normalizados con la MISMA `normalizarClave` (así un término propio con acentos, `"código"`, funciona), en un `Set` para lookup O(1). */
+/**
+ * `camposSensibles` normalizados con la MISMA `normalizarClave` (así un
+ * término propio con acentos, `"código"`, funciona), en un `Set` para lookup
+ * O(1). Un término que normaliza a `""` (`""`, `"_"`, `"-"`, `" (2)"`) se
+ * DESCARTA: con la regla "termina con", `""` matchearía TODAS las claves.
+ */
 export function normalizarTerminos(camposSensibles: readonly string[]): Set<string> {
-  return new Set(camposSensibles.map(normalizarClave));
+  const terminos = new Set<string>();
+  for (const campo of camposSensibles) {
+    const normalizado = normalizarClave(campo);
+    if (normalizado !== "") terminos.add(normalizado);
+  }
+  return terminos;
 }
 
 /**
@@ -54,8 +73,8 @@ export function normalizarTerminos(camposSensibles: readonly string[]): Set<stri
  * `redactarCambios`, así las copias guardadas y `cambios` nunca discrepan
  * (antes cada una tenía su propia variante y una clave `"password (2)"`
  * adentro de una hoja del diff se filtraba). Sensible si su forma
- * normalizada (`normalizarClave`: sin sufijo de colisión, sin acentos,
- * minúsculas, sin `_`/`-`/espacios) IGUALA a algún término de
+ * normalizada (`normalizarClave`: NFKD sin acentos ni invisibles, sin
+ * sufijo de colisión, minúsculas, sin `_`/`-`/espacios) IGUALA a algún término de
  * `terminosNormalizados` (que salen de `normalizarTerminos`), o TERMINA CON
  * alguno. La regla "termina con" (no "contiene") es a propósito: cubre
  * variantes compuestas típicas —

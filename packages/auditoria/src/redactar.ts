@@ -23,6 +23,8 @@ export const CAMPOS_SENSIBLES_POR_DEFECTO: readonly string[] = [
   "tokens",
   "secreto",
   "secreta",
+  "secretos",
+  "secretas",
   "secret",
   "secrets",
   "cbu",
@@ -170,13 +172,17 @@ function redactarValor(valor: unknown, sensibles: ReadonlySet<string>, pila: Set
  *
  * **Normalización** (la misma para claves de objeto, claves de `Map`,
  * segmentos de ruta de `redactarCambios` y los términos de la lista), en
- * orden: (1) se saca el sufijo de colisión final `" (N)"` (`"password (2)"`
- * → `"password"`); (2) se quitan los acentos, Unicode NFD sin marcas
- * combinantes (`"contraseña"` → `"contrasena"`); (3) minúsculas
- * (`"CONTRASEÑA"` → `"contrasena"`); (4) se quitan `_`, `-` y espacios
- * (`"clave_secreta"` → `"clavesecreta"`, que termina en `"secreta"`;
- * `"api key"` → `"apikey"`). Tapar de más es el costo aceptado: una clave
- * literal `"password (2)"` se tapa aunque no venga de un `Map`.
+ * orden: (1) Unicode NFKD y se quitan las marcas combinantes y los
+ * caracteres de formato invisibles `\p{Cf}` (`"contraseña"` →
+ * `"contrasena"`, `"ＰＡＳＳＷＯＲＤ"` → `"PASSWORD"`, `"pass\u200Bword"` →
+ * `"password"`); (2) se saca el sufijo de colisión final `" (N)"`
+ * (`"password (2)"` → `"password"`); (3) minúsculas; (4) se quitan `_`, `-`
+ * y espacios (`"clave_secreta"` → `"clavesecreta"`, que termina en
+ * `"secreta"`; `"api key"` → `"apikey"`). El punto NO se quita: `"api.key"`
+ * no matchea `"apikey"`, pero sí un término propio `"api.key"`. Un término
+ * que normaliza a `""` se descarta. Los términos son NOMBRES de clave, no
+ * rutas. Tapar de más es el costo aceptado: una clave literal
+ * `"password (2)"` se tapa aunque no venga de un `Map`.
  *
  * **La regla de matching es "igual O termina con", no "contiene".** Con
  * `"password"` en la lista:
@@ -206,8 +212,7 @@ function redactarValor(valor: unknown, sensibles: ReadonlySet<string>, pila: Set
  *   un sufijo DISTINTO. Por eso la lista default incluye explícitamente
  *   `"passwords"`, `"tokens"` y `"secrets"` (los plurales más comunes) como
  *   términos propios, no derivados automáticamente de sus singulares — un
- *   plural que no esté en la lista (`"secretos"` en inglés informal,
- *   `"apiKeys"`, ...) sigue sin matchear a menos que se agregue a mano en
+ *   plural que no esté en la lista (`"apiKeys"`, `"hashes"`, ...) sigue sin matchear a menos que se agregue a mano en
  *   `camposSensibles`.
  * - **La clave de un `Map` queda como TEXTO en el resultado, sin redactar
  *   por su CONTENIDO** (solo el nombre de la clave decide si el VALOR de
@@ -294,10 +299,18 @@ function redactarValor(valor: unknown, sensibles: ReadonlySet<string>, pila: Set
  * // { passwords: "[redactado]", tokens: "[redactado]", secrets: "[redactado]" } (plurales EXPLÍCITOS en la lista default)
  *
  * CAMPOS_SENSIBLES_POR_DEFECTO;
- * // ["contrasena", "password", "passwords", "hash", "token", "tokens", "secreto", "secreta", "secret", "secrets", "cbu", "cvu", "clave", "api_key", "apikey", "totp", "authorization"]
+ * // ["contrasena", "password", "passwords", "hash", "token", "tokens", "secreto", "secreta", "secretos", "secretas", "secret", "secrets", "cbu", "cvu", "clave", "api_key", "apikey", "totp", "authorization"]
  * ```
  */
 export function redactar<T>(obj: T, camposSensibles: readonly string[] = CAMPOS_SENSIBLES_POR_DEFECTO): T {
-  const sensibles = normalizarTerminos(camposSensibles);
-  return redactarValor(obj, sensibles, new Set()) as T;
+  return redactarConTerminos(obj, normalizarTerminos(camposSensibles));
+}
+
+/**
+ * `redactar` con los términos YA normalizados (`normalizarTerminos`). Interno
+ * (no se reexporta desde `index.ts`): lo usa `redactarCambios` para no
+ * volver a normalizar la lista en cada cambio.
+ */
+export function redactarConTerminos<T>(obj: T, terminosNormalizados: ReadonlySet<string>): T {
+  return redactarValor(obj, terminosNormalizados, new Set()) as T;
 }

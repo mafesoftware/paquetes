@@ -77,7 +77,7 @@ describe("redactar", () => {
     // parte de la lista default tampoco.
   });
 
-  it("CAMPOS_SENSIBLES_POR_DEFECTO tiene exactamente la lista de la spec (M-d: incluye los plurales passwords/tokens/secrets; P.10b: secreta)", () => {
+  it("CAMPOS_SENSIBLES_POR_DEFECTO tiene exactamente la lista de la spec (M-d: incluye los plurales passwords/tokens/secrets; P.10b: secreta, secretos, secretas)", () => {
     expect(CAMPOS_SENSIBLES_POR_DEFECTO).toEqual([
       "contrasena",
       "password",
@@ -87,6 +87,8 @@ describe("redactar", () => {
       "tokens",
       "secreto",
       "secreta",
+      "secretos",
+      "secretas",
       "secret",
       "secrets",
       "cbu",
@@ -456,5 +458,29 @@ describe("P.10b — normalización única de claves (esClaveSensible)", () => {
 
   it('la regla sigue siendo "igual o termina con": passwordHint y tokenizer siguen visibles', () => {
     expect(redactar({ "passwordHint (2)": "h", "tokenizer (3)": "t" })).toEqual({ "passwordHint (2)": "h", "tokenizer (3)": "t" });
+  });
+});
+
+describe("Fix round 1 (P.10b) — normalización NFKD, invisibles, términos vacíos y plurales", () => {
+  it("M1: NFKD (ancho completo) y \\p{Cf} (ancho cero, guion blando) se normalizan", async () => {
+    const { normalizarClave } = await import("../src/coincidencia-sensible.js");
+    expect(normalizarClave("ＰＡＳＳＷＯＲＤ")).toBe("password");
+    expect(normalizarClave("pass​word")).toBe("password");
+    expect(normalizarClave("pass­word")).toBe("password");
+    expect(normalizarClave("﻿token‍")).toBe("token");
+    expect(redactar({ "ＰＡＳＳＷＯＲＤ": "x", "pass​word": "y" })).toEqual({ "ＰＡＳＳＷＯＲＤ": "[redactado]", "pass​word": "[redactado]" });
+  });
+
+  it('M2: términos que normalizan a "" se descartan — [""] no tapa todo', async () => {
+    const { normalizarTerminos } = await import("../src/coincidencia-sensible.js");
+    expect([...normalizarTerminos(["", "_", "-", " (2)", "  ", "​", "token"])]).toEqual(["token"]);
+    expect(redactar({ nombre: "Ana", edad: 3 }, [""])).toEqual({ nombre: "Ana", edad: 3 });
+    expect(redactar({ nombre: "Ana", token: "t" }, ["", "token"])).toEqual({ nombre: "Ana", token: "[redactado]" });
+  });
+
+  it('M6: "secretas" y "secretos" están en la lista default y se tapan', () => {
+    expect(CAMPOS_SENSIBLES_POR_DEFECTO).toContain("secretas");
+    expect(CAMPOS_SENSIBLES_POR_DEFECTO).toContain("secretos");
+    expect(redactar({ secretos: ["a"], lasSecretas: "b" })).toEqual({ secretos: "[redactado]", lasSecretas: "[redactado]" });
   });
 });

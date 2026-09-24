@@ -1,6 +1,26 @@
-import { CAMPOS_SENSIBLES_POR_DEFECTO, redactar } from "./redactar.js";
+import { CAMPOS_SENSIBLES_POR_DEFECTO, redactarConTerminos } from "./redactar.js";
 import { esClaveSensible, normalizarTerminos } from "./coincidencia-sensible.js";
 import type { CambioAuditoria } from "./lo-que-cambio.js";
+
+/**
+ * ¿Algún TRAMO contiguo de la ruta es sensible? La ruta se arma uniendo
+ * claves con `"."`, pero una clave puede tener un punto adentro (`"api.key"`)
+ * y un término también (`camposSensibles: ["api.key"]`): mirar solo cada
+ * segmento suelto (`"api"`, `"key"`) no lo encontraría y el valor saldría en
+ * claro en `cambios` mientras la copia guardada (que ve la clave entera) lo
+ * tapa. Por eso se prueba cada unión `segmentos[i..j]` (con `j >= i`) — son
+ * O(n²) llamadas sobre rutas cortas. Con un término sin punto, un tramo
+ * largo nunca agrega nada que su último segmento no diera ya.
+ */
+function rutaSensible(campo: string, sensibles: ReadonlySet<string>): boolean {
+  const segmentos = campo.split(".");
+  for (let i = 0; i < segmentos.length; i++) {
+    for (let j = i; j < segmentos.length; j++) {
+      if (esClaveSensible(segmentos.slice(i, j + 1).join("."), sensibles)) return true;
+    }
+  }
+  return false;
+}
 
 /**
  * Redacta `cambios`, el resultado de `loQueCambio` sobre valores
@@ -21,7 +41,8 @@ import type { CambioAuditoria } from "./lo-que-cambio.js";
  * `{ campo: "token.access", antes: "abc", despues: "xyz" }`) — por eso
  * `redactar` sobre el arreglo tal cual no alcanza.
  *
- * - Si CUALQUIER segmento de la ruta es sensible (`"token.access"` lo es
+ * - Si CUALQUIER segmento de la ruta (o tramo contiguo de segmentos unidos
+ *   con `"."`, para claves y términos que tienen un punto adentro) es sensible (`"token.access"` lo es
  *   por `"token"`, aunque `"access"` no), cada lado DEFINIDO pasa a
  *   `"[redactado]"`: el valor nunca se ve, pero queda registrado QUE
  *   cambió. Un lado `undefined` (alta/baja) se deja `undefined`, para no
@@ -48,7 +69,7 @@ export function redactarCambios(
 ): CambioAuditoria[] {
   const sensibles = normalizarTerminos(camposSensibles);
   return cambios.map((cambio) => {
-    const tieneSegmentoSensible = cambio.campo.split(".").some((segmento) => esClaveSensible(segmento, sensibles));
+    const tieneSegmentoSensible = rutaSensible(cambio.campo, sensibles);
     if (tieneSegmentoSensible) {
       return {
         campo: cambio.campo,
@@ -58,8 +79,8 @@ export function redactarCambios(
     }
     return {
       campo: cambio.campo,
-      antes: redactar(cambio.antes, camposSensibles),
-      despues: redactar(cambio.despues, camposSensibles),
+      antes: redactarConTerminos(cambio.antes, sensibles),
+      despues: redactarConTerminos(cambio.despues, sensibles),
     };
   });
 }

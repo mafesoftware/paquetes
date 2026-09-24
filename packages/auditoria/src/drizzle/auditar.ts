@@ -4,6 +4,7 @@ import { CAMPOS_SENSIBLES_POR_DEFECTO, redactar } from "../redactar.js";
 import { normalizarParaDiff } from "../normalizar-para-diff.js";
 import { serializarParaAuditoria } from "../serializar.js";
 import { redactarCambios } from "../redactar-cambios.js";
+import { intentar } from "../tipos-especiales.js";
 import type { DbCliente } from "./cliente.js";
 import type { ActorTipo, TablaAuditoria } from "./tabla.js";
 
@@ -347,6 +348,20 @@ export async function auditar(
   const entidadId = leerCampo(entrada, "entidadId");
   const accion = leerCampo(entrada, "accion");
   const contexto = `entidad=${entidad.texto}, entidadId=${entidadId.texto}, accion=${accion.texto}`;
+  // M4 (P.10b, ronda de fix 1): lo demás que viaja en el INSERT también se
+  // lee UNA vez acá, con la misma garantía. Un getter que tira en
+  // `tenantId`/`actor`/`actor.tipo`/`actor.id`/`ip`/`userAgent` hace fallar la
+  // PREPARACIÓN (no se toca la base), nunca rechaza.
+  const resto = intentar(() => {
+    const actor = entrada.actor;
+    return {
+      tenantId: entrada.tenantId,
+      actorTipo: actor.tipo,
+      actorId: actor.id ?? null,
+      ip: entrada.ip ?? null,
+      userAgent: entrada.userAgent ?? null,
+    };
+  });
 
   let antesParametro: string | null;
   let despuesParametro: string | null;
@@ -363,11 +378,13 @@ export async function auditar(
   let colIp: ReturnType<typeof sql.identifier>;
   let colUserAgent: ReturnType<typeof sql.identifier>;
   let colId: ReturnType<typeof sql.identifier>;
+  let campos: { tenantId: string; actorTipo: ActorTipo; actorId: string | null; ip: string | null; userAgent: string | null };
 
   try {
-    if (!entidad.ok || !entidadId.ok || !accion.ok) {
-      throw new Error("auditar: no se pudo leer entidad/entidadId/accion");
+    if (!entidad.ok || !entidadId.ok || !accion.ok || !resto.ok) {
+      throw new Error("auditar: no se pudo leer la entrada");
     }
+    campos = resto.valor;
     const camposSensibles = entrada.camposSensibles ?? CAMPOS_SENSIBLES_POR_DEFECTO;
 
     // N1 (ronda 2) + regresión de N1 (ronda 4): el diff se calcula sobre
@@ -466,8 +483,8 @@ export async function auditar(
       const consulta = sql`
         insert into ${tabla} (${colTenant}, ${colEntidad}, ${colEntidadId}, ${colAccion}, ${colActorTipo}, ${colActorId}, ${colAntes}, ${colDespues}, ${colCambios}, ${colIp}, ${colUserAgent})
         values (
-          ${entrada.tenantId}, ${entidad.valor}, ${entidadId.valor}, ${accion.valor}, ${entrada.actor.tipo}, ${entrada.actor.id ?? null},
-          ${antesParametro}, ${despuesParametro}, ${cambiosParametro}, ${entrada.ip ?? null}, ${entrada.userAgent ?? null}
+          ${campos.tenantId}, ${entidad.valor}, ${entidadId.valor}, ${accion.valor}, ${campos.actorTipo}, ${campos.actorId},
+          ${antesParametro}, ${despuesParametro}, ${cambiosParametro}, ${campos.ip}, ${campos.userAgent}
         )
         returning ${colId} as id
       `;

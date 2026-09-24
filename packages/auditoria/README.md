@@ -131,23 +131,20 @@ arreglos, `Map`s, `Set`s e instancias de clases propias incluido.
 los segmentos de ruta de `cambios` (`redactarCambios`) y los TÉRMINOS de la
 lista (así un término propio con acentos, `"código"`, funciona). En orden:
 
-1. se saca el sufijo de colisión final `" (N)"` (puede repetirse):
+1. Unicode NFKD, y se quitan las marcas combinantes (acentos) y los
+   caracteres de formato invisibles (`\p{Cf}`: espacio de ancho cero, guion
+   blando, BOM…): `"contraseña"` → `"contrasena"`, `"ＰＡＳＳＷＯＲＤ"` (ancho
+   completo) → `"PASSWORD"`, `"pass\u200Bword"` → `"password"`;
+2. se saca el sufijo de colisión final `" (N)"` (puede repetirse):
    `"password (2)"` → `"password"`, `"password (2) (3)"` → `"password"`;
-2. se quitan los acentos (Unicode NFD sin marcas combinantes):
-   `"contraseña"` → `"contrasena"`, `"Código"` → `"Codigo"`;
 3. minúsculas: `"CONTRASEÑA"` → `"contrasena"`;
 4. se quitan `_`, `-` y los espacios: `"clave_secreta"` → `"clavesecreta"`,
-   `"x-api key"` → `"xapikey"`.
+   `"x-api key"` → `"xapikey"`. **El punto NO es un separador** (ver abajo).
 
 Recién ahí se aplica la regla: sensible si la forma normalizada es igual a
-un término normalizado o termina con él.
-
-| Clave | ¿Se redacta? | Por qué |
-|---|---|---|
-| `contraseña` / `Contraseña` / `CONTRASEÑA` | Sí | normalizan a `"contrasena"` (sin segunda entrada en la lista) |
-| `clave_secreta` | Sí | normaliza a `"clavesecreta"`, termina en `"secreta"` |
-| `password (2)` (clave literal, o la segunda de dos claves de `Map` que dan `"password"`) | Sí | sin el sufijo es `"password"` |
-| `Access Token` / `api key` | Sí | los espacios no cuentan: `"accesstoken"`, `"apikey"` |
+un término normalizado o termina con él. Un término que normaliza a `""`
+(`""`, `"_"`, `"-"`, `" (2)"`) **se descarta** — con "termina con" taparía
+todas las claves.
 
 | Clave | ¿Se redacta? | Por qué |
 |---|---|---|
@@ -155,8 +152,26 @@ un término normalizado o termina con él.
 | `accessToken` / `refresh_token` | Sí | termina en `"token"` |
 | `clientSecret` | Sí | termina en `"secret"` |
 | `x-api-key` | Sí | normaliza a `"xapikey"`, termina en `"apikey"` |
+| `Access Token` / `api key` | Sí | los espacios no cuentan: `"accesstoken"`, `"apikey"` |
+| `contraseña` / `Contraseña` / `CONTRASEÑA` | Sí | normalizan a `"contrasena"` (sin segunda entrada en la lista) |
+| `ＰＡＳＳＷＯＲＤ` / `pass\u200Bword` | Sí | NFKD y sin invisibles: `"password"` |
+| `clave_secreta` | Sí | normaliza a `"clavesecreta"`, termina en `"secreta"` |
+| `password (2)` (clave literal, o la segunda de dos claves de `Map` que dan `"password"`) | Sí | sin el sufijo es `"password"` |
 | `passwordHint` | **No** | `"password"` es un PREFIJO ahí, no un sufijo |
 | `tokenizer` | **No** | no termina en `"token"` (queda al principio) |
+| `api.key` (con la lista default) | **No** | el punto no es separador: `"api.key"` no es `"apikey"` — ni en las copias ni en `cambios` |
+
+**Claves y términos con punto.** El punto se conserva porque es el
+separador de las rutas de `cambios`. Un término propio con punto matchea
+una clave que tenga ese punto adentro: con `camposSensibles: ["api.key"]`,
+`{ "api.key": ... }` se tapa en las copias y en `cambios` (`redactarCambios`
+prueba cada tramo contiguo de la ruta, no solo cada segmento suelto).
+**Los términos son NOMBRES DE CLAVE, no rutas**: `["cuenta.numero"]` no tapa
+`{ cuenta: { numero } }` en las copias guardadas (ninguna clave se llama
+`"cuenta.numero"`); en `cambios` esa entrada sí queda tapada, porque la
+ruta `"cuenta.numero"` coincide con el texto del término — tapa de más
+ahí, pero la copia guardada lo tiene en claro. Para tapar un campo anidado
+usá su nombre de clave (`"numero"`, o un término que termine igual).
 
 Un `"contiene"` en vez de `"termina con"` hubiera tapado por error
 `passwordHint`/`tokenizer`.
@@ -179,8 +194,8 @@ detecta**. `redactar` nunca mira el contenido de un string.
   termina en `"password"` — termina en `"passwords"` (con la "s"), un
   sufijo DISTINTO. Por eso la lista default incluye `"passwords"`,
   `"tokens"` y `"secrets"` como términos PROPIOS (no derivados
-  automáticamente); un plural que no esté en la lista (`"apiKeys"`,
-  `"secretos"` en inglés informal, ...) sigue sin matchear a menos que se
+  automáticamente), igual que `"secretos"`/`"secretas"`; un plural que no
+  esté en la lista (`"apiKeys"`, `"hashes"`, ...) sigue sin matchear a menos que se
   agregue a mano en `camposSensibles`.
 - **La clave de un `Map` queda como TEXTO en el resultado, sin mirar su
   CONTENIDO**: solo el NOMBRE de la clave decide si el valor de esa entrada
@@ -270,7 +285,7 @@ La lista default de nombres de campo que tapa `redactar`/`auditar`:
 import { CAMPOS_SENSIBLES_POR_DEFECTO } from "@mafesoftware/auditoria";
 
 CAMPOS_SENSIBLES_POR_DEFECTO;
-// ["contrasena", "password", "passwords", "hash", "token", "tokens", "secreto", "secreta", "secret", "secrets", "cbu", "cvu", "clave", "api_key", "apikey", "totp", "authorization"]
+// ["contrasena", "password", "passwords", "hash", "token", "tokens", "secreto", "secreta", "secretos", "secretas", "secret", "secrets", "cbu", "cvu", "clave", "api_key", "apikey", "totp", "authorization"]
 ```
 
 #### `serializarParaAuditoria(v: unknown): unknown`
@@ -396,9 +411,10 @@ sensible es el VALOR de `campo` (`{ campo: "token.access", ... }`), no una
 clave. `redactarCambios` mira **cada segmento** de la ruta: si alguno es
 sensible (`"token"` en `"token.access"`), cada lado DEFINIDO pasa a
 `"[redactado]"` — el valor nunca se ve, pero queda registrado QUE cambió —
-y un lado `undefined` (alta/baja) queda `undefined`. Cada segmento pasa
-por la MISMA normalización que `redactar` (sufijo de colisión, acentos,
-mayúsculas, separadores): `"password (2)"` y `"Contraseña"` son sensibles. Si ningún segmento es sensible, cada lado pasa por `redactar` (un
+y un lado `undefined` (alta/baja) queda `undefined`. Cada segmento, y cada
+tramo contiguo de segmentos unidos con `"."` (para claves y términos con un
+punto adentro, `"api.key"`), pasa por la MISMA normalización que `redactar`:
+`"password (2)"` y `"Contraseña"` son sensibles. Si ningún tramo es sensible, cada lado pasa por `redactar` (un
 arreglo cambiado entero puede tener una clave sensible adentro).
 
 ```ts
@@ -582,11 +598,11 @@ que en realidad es un bug de esta función o de cómo se armó `tabla`. Este
 paso previo no debería fallar en uso normal (`redactar`/`serializarParaAuditoria`/
 `normalizarParaDiff` están diseñados para nunca tirar), pero una `tabla`
 malformada (una columna `undefined`) sí puede hacerlo fallar antes de tocar
-`dbOTx`. `entidad`, `entidadId` y `accion` se leen UNA sola vez, al
-principio, y esas copias se usan en el `INSERT` y en el log: si alguna
-lectura tira (un getter roto), `auditar` igual resuelve con ese mismo
+`dbOTx`. `entidad`, `entidadId`, `accion`, `tenantId`, `actor` (con `tipo` e
+`id`), `ip` y `userAgent` se leen UNA sola vez, al principio, y esas copias
+se usan en el `INSERT` y en el log: si alguna lectura tira (un getter roto), `auditar` igual resuelve con ese mismo
 `"error preparando la auditoría"` y el log muestra `[desconocido]` en ese
-campo — nunca rechaza.
+campo (para `entidad`/`entidadId`/`accion`) — nunca rechaza.
 
 El trade-off de "nunca tira" adentro de una transacción: un `INSERT` que
 falla deja esa transacción ABORTADA en Postgres — un simple `try/catch` NO
@@ -735,8 +751,10 @@ prueba que una clave de `Map` que colisiona (`"password (2)"`) no filtra
 cuando el `Map` queda adentro de una hoja del diff (un arreglo, un `Set`,
 un cambio de tipo, una raíz que pasa de `null` a un arreglo), que las
 claves con acentos/mayúsculas/espacios y una literal `"password (2)"` se
-tapan igual en las copias y en `cambios`, y que un getter roto en
-`entidad`/`entidadId`/`accion` no hace rechazar a `auditar`.
+tapan igual en las copias y en `cambios`, que los términos/claves con punto (`"api.key"`), los caracteres de
+ancho completo o invisibles, los términos vacíos y los plurales
+`secretos`/`secretas` se comportan como dice arriba, y que un getter roto
+en cualquier campo de la entrada no hace rechazar a `auditar`.
 `tests/drizzle/postgres-inmutabilidad.test.ts`
 prueba que el trigger de `sqlInmutabilidad` rechaza
 `UPDATE`/`DELETE`/`TRUNCATE`. No hay mock que valga para lo que sí

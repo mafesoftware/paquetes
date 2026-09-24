@@ -216,3 +216,18 @@ de punta a punta:
 - Todo probado con el `auditar` real y un `dbOTx` falso que captura los
   parámetros: ningún secreto aparece en ellos y `cambios` coincide con las
   copias guardadas.
+- Ronda de fix 1 de P.10b:
+  - Un término o una clave con punto (`camposSensibles: ["api.key"]`,
+    clave `"api.key"`) ya no filtra en `cambios`: `redactarCambios` prueba
+    cada tramo contiguo de la ruta (`segmentos[i..j]` unidos con `"."`),
+    no solo cada segmento. El punto sigue sin ser separador (`"api.key"` no
+    matchea `"apikey"`, ni en las copias ni en `cambios`). Los términos son
+    nombres de clave, no rutas (documentado).
+  - La normalización usa NFKD (ancho completo: `"ＰＡＳＳＷＯＲＤ"`) y quita
+    los caracteres de formato invisibles `\p{Cf}` (`"pass\u200Bword"`).
+  - Un término que normaliza a `""` (`""`, `"_"`, `" (2)"`) se descarta: ya
+    no tapa todas las claves.
+  - La lista default agrega `"secretos"` y `"secretas"`.
+  - `auditar` también lee `tenantId`, `actor`, `ip` y `userAgent` una sola
+    vez al principio; un getter que tira da `"error preparando la
+    auditoría"`.

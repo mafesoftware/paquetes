@@ -55,15 +55,19 @@ async function auditarCapturando(parcial: Partial<EntradaAuditoria>): Promise<Ca
   return capturas[0]!;
 }
 
-/** El valor en `ruta` (con puntos; `"(raiz)"` es el valor entero) de una copia guardada. */
+/** El valor en `ruta` (con puntos; `"(raiz)"` es el valor entero) de una copia guardada. Una clave puede tener un punto adentro (`"api.key"`): se prueba cada prefijo de segmentos como clave. */
 function enRuta(copia: unknown, campo: string): unknown {
   if (campo === "(raiz)") return copia;
-  let actual = copia;
-  for (const segmento of campo.split(".")) {
+  const resolver = (actual: unknown, segmentos: string[]): unknown => {
+    if (segmentos.length === 0) return actual;
     if (actual === null || typeof actual !== "object") return undefined;
-    actual = (actual as Record<string, unknown>)[segmento];
-  }
-  return actual;
+    for (let k = segmentos.length; k >= 1; k--) {
+      const clave = segmentos.slice(0, k).join(".");
+      if (Object.hasOwn(actual, clave)) return resolver((actual as Record<string, unknown>)[clave], segmentos.slice(k));
+    }
+    return undefined;
+  };
+  return resolver(copia, campo.split("."));
 }
 
 /** Ningún secreto en NINGÚN parámetro, y cada lado definido de `cambios` coincide con la copia guardada en esa ruta. */
@@ -261,5 +265,116 @@ describe("N2 (P.10b) — getters rotos en entidad/entidadId/accion nunca hacen r
     } finally {
       spyError.mockRestore();
     }
+  });
+});
+
+describe("Fix round 1 (P.10b) — I1: términos y claves con punto en cambios", () => {
+  it('un término propio "api.key" con una clave "api.key": cambios queda [redactado]/[redactado], igual que las copias', async () => {
+    const c = await auditarCapturando({ camposSensibles: ["api.key"], antes: { "api.key": "DOT1", x: 1 }, despues: { "api.key": "DOT2", x: 1 } });
+    expect(c.cambios).toEqual([{ campo: "api.key", antes: "[redactado]", despues: "[redactado]" }]);
+    expect(c.antes).toEqual({ "api.key": "[redactado]", x: 1 });
+    expect(c.despues).toEqual({ "api.key": "[redactado]", x: 1 });
+    verificar(c, ["DOT1", "DOT2"]);
+  });
+
+  it('un término con punto también matchea una clave anidada adentro de una hoja y como sufijo de una ruta más larga', async () => {
+    const c = await auditarCapturando({
+      camposSensibles: ["api.key"],
+      antes: { l: [{ "api.key": "DOT3" }], cfg: { "mi.api.key": "DOT4" } },
+      despues: { l: [{ "api.key": "DOT5" }], cfg: { "mi.api.key": "DOT6" } },
+    });
+    expect(c.despues).toEqual({ l: [{ "api.key": "[redactado]" }], cfg: { "mi.api.key": "[redactado]" } });
+    verificar(c, ["DOT3", "DOT4", "DOT5", "DOT6"]);
+  });
+
+  it('el término default "apikey" con una clave "api.key": el punto NO es separador, así que NINGUNO de los dos lados la tapa (y coinciden)', async () => {
+    const c = await auditarCapturando({ antes: { "api.key": "VIS1" }, despues: { "api.key": "VIS2" } });
+    expect(c.antes).toEqual({ "api.key": "VIS1" });
+    expect(c.despues).toEqual({ "api.key": "VIS2" });
+    expect(c.cambios).toEqual([{ campo: "api.key", antes: "VIS1", despues: "VIS2" }]);
+  });
+
+  it('stripe: { secret } con el término "stripe.secret" sumado a los default: se tapa por "secret" (un término es un NOMBRE de clave)', async () => {
+    const c = await auditarCapturando({
+      camposSensibles: ["password", "secret", "stripe.secret"],
+      antes: { stripe: { secret: "ST1" } },
+      despues: { stripe: { secret: "ST2" } },
+    });
+    expect(c.cambios).toEqual([{ campo: "stripe.secret", antes: "[redactado]", despues: "[redactado]" }]);
+    expect(c.despues).toEqual({ stripe: { secret: "[redactado]" } });
+    verificar(c, ["ST1", "ST2"]);
+  });
+
+  it('un término con forma de ruta sobre una hoja NO default ("cuenta.numero"): no es una ruta — las copias NO tapan cuenta.numero; cambios sí (la ruta coincide con el texto del término)', async () => {
+    const c = await auditarCapturando({ camposSensibles: ["cuenta.numero"], antes: { cuenta: { numero: "NUM1" } }, despues: { cuenta: { numero: "NUM2" } } });
+    // Documentado: los términos son NOMBRES de clave. `redactar` mira cada clave por separado ("cuenta", "numero"), ninguna es "cuenta.numero".
+    expect(c.antes).toEqual({ cuenta: { numero: "NUM1" } });
+    expect(c.despues).toEqual({ cuenta: { numero: "NUM2" } });
+    // cambios prueba cada tramo contiguo de la ruta, y "cuenta.numero" iguala al término: queda tapado (de más, nunca de menos).
+    expect(c.cambios).toEqual([{ campo: "cuenta.numero", antes: "[redactado]", despues: "[redactado]" }]);
+  });
+});
+
+describe("Fix round 1 (P.10b) — M1/M2/M6 por auditar", () => {
+  it('M1: "ＰＡＳＳＷＯＲＤ" (ancho completo) y "pass\\u200Bword"/"pass\\u00ADword" (invisibles) se tapan', async () => {
+    const c = await auditarCapturando({
+      antes: { "ＰＡＳＳＷＯＲＤ": "FW1", "pass​word": "ZW1", "pass­word": "SH1" },
+      despues: { "ＰＡＳＳＷＯＲＤ": "FW2", "pass​word": "ZW2", "pass­word": "SH2" },
+    });
+    expect(c.despues).toEqual({ "ＰＡＳＳＷＯＲＤ": "[redactado]", "pass​word": "[redactado]", "pass­word": "[redactado]" });
+    verificar(c, ["FW1", "FW2", "ZW1", "ZW2", "SH1", "SH2"]);
+  });
+
+  it('M2: camposSensibles [""] (y "_", "-", " (2)") no tapa todo', async () => {
+    const c = await auditarCapturando({ camposSensibles: ["", "_", "-", " (2)"], antes: { nombre: "Ana" }, despues: { nombre: "Beto" } });
+    expect(c.despues).toEqual({ nombre: "Beto" });
+    expect(c.cambios).toEqual([{ campo: "nombre", antes: "Ana", despues: "Beto" }]);
+  });
+
+  it('M6: "secretas" y "secretos" (plurales) se tapan', async () => {
+    const c = await auditarCapturando({ antes: { secretas: ["PL1"], misSecretos: "PL2" }, despues: { secretas: ["PL3"], misSecretos: "PL4" } });
+    expect(c.despues).toEqual({ secretas: "[redactado]", misSecretos: "[redactado]" });
+    verificar(c, ["PL1", "PL2", "PL3", "PL4"]);
+  });
+});
+
+describe("Fix round 1 (P.10b) — M4: getters rotos en tenantId/actor/ip/userAgent", () => {
+  const trampa = (): never => {
+    throw new Error("getter roto SECRETO-M4");
+  };
+  const casos: [string, (e: Record<string, unknown>) => void][] = [
+    ["tenantId", (e) => Object.defineProperty(e, "tenantId", { get: trampa, enumerable: true })],
+    ["actor", (e) => Object.defineProperty(e, "actor", { get: trampa, enumerable: true })],
+    ["actor.tipo", (e) => { e.actor = Object.defineProperty({}, "tipo", { get: trampa, enumerable: true }); }],
+    ["actor.id", (e) => { e.actor = Object.defineProperty({ tipo: "usuario" }, "id", { get: trampa, enumerable: true }); }],
+    ["ip", (e) => Object.defineProperty(e, "ip", { get: trampa, enumerable: true })],
+    ["userAgent", (e) => Object.defineProperty(e, "userAgent", { get: trampa, enumerable: true })],
+  ];
+  for (const [nombre, romper] of casos) {
+    it(`un getter de ${nombre} que tira: { ok: false } "error preparando la auditoría", sin tocar la base`, async () => {
+      const spyError = vi.spyOn(console, "error").mockImplementation(() => {});
+      const transaction = vi.fn(async () => {
+        throw new Error("no debería llamarse");
+      });
+      try {
+        const entrada: Record<string, unknown> = { tenantId: TENANT, entidad: "test", entidadId: "1", accion: "crear", actor: { tipo: "sistema" } };
+        romper(entrada);
+        const resultado = await auditar({ transaction } as unknown as DbCliente, tabla, entrada as unknown as EntradaAuditoria);
+        expect(resultado).toEqual({ ok: false, error: { codigo: null, mensaje: "error preparando la auditoría" } });
+        expect(transaction).not.toHaveBeenCalled();
+        expect(spyError.mock.calls.flat().join(" ")).not.toContain("SECRETO-M4");
+      } finally {
+        spyError.mockRestore();
+      }
+    });
+  }
+
+  it("los valores capturados son los que viajan en el INSERT (tenant, actor, ip, userAgent)", async () => {
+    const c = await auditarCapturando({ actor: { tipo: "usuario", id: "u-1" }, ip: "10.0.0.1", userAgent: "UA/1", despues: { a: 1 } });
+    expect(c.params[0]).toBe(TENANT);
+    expect(c.params[4]).toBe("usuario");
+    expect(c.params[5]).toBe("u-1");
+    expect(c.params[9]).toBe("10.0.0.1");
+    expect(c.params[10]).toBe("UA/1");
   });
 });
