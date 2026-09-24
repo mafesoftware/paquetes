@@ -36,5 +36,11 @@ export const CONDICIONES_IVA: readonly CondicionIva[] = [
   { codigo: "monotributo", nombre: "Monotributo", idArca: 6 },
   { codigo: "exento", nombre: "Exento", idArca: 4 },
   { codigo: "consumidor_final", nombre: "Consumidor Final", idArca: 5 },
-  { codigo: "no_alcanzado", nombre: "No Alcanzado" },
+  // idArca: 15 confirmado contra la tabla `FEParamGetCondicionIvaReceptor`
+  // del web service WSFEv1 de ARCA (factura electrónica): 1 Responsable
+  // Inscripto, 4 Exento, 5 Consumidor Final, 6 Monotributo, 15 No
+  // Alcanzado. A diferencia de los cuatro de arriba, no lo tenía verificado
+  // al escribir este archivo por primera vez, así que había quedado sin
+  // `idArca` — se agrega ahora que se confirmó contra esa tabla.
+  { codigo: "no_alcanzado", nombre: "No Alcanzado", idArca: 15 },
 ] as const;

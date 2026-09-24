@@ -19,7 +19,9 @@ teléfonos argentinos. Puro, sin dependencias.
   (banco+sucursal+DV1, dígitos 1-8; cuenta+DV2, dígitos 9-22), cada uno con
   su propio dígito verificador módulo 10. `validarCbu` rechaza los que
   empiecen con "000" (son CVU) y `validarCvu` rechaza los que no, cada uno
-  con un motivo que apunta a la función correcta.
+  con un motivo que apunta a la función correcta. Probado también contra un
+  CBU real (no solo fixtures sintéticas): el que la Universidad Católica de
+  Córdoba publica para donaciones, https://ucc.edu.ar/desarrollo/desarrollo-dona/.
 - `validarAlias(valor)`: 6 a 20 caracteres `[a-z0-9.-]`, sin distinguir
   mayúsculas de minúsculas.
 - `enmascarar(valor, visibles = 4)`: deja visibles los últimos `visibles`
@@ -31,8 +33,11 @@ teléfonos argentinos. Puro, sin dependencias.
   sin tabla de códigos) en vez de una lista hardcodeada. `null` cuando no se
   puede determinar.
 - `CONDICIONES_IVA`: las condiciones frente al IVA más comunes, con el
-  `idArca` (RG 4540, "Condición IVA Receptor") solo donde se pudo verificar
-  con certeza — el resto queda sin id en vez de con un valor adivinado.
+  `idArca` de la tabla `FEParamGetCondicionIvaReceptor` del web service
+  WSFEv1 de ARCA (1 Responsable Inscripto, 4 Exento, 5 Consumidor Final, 6
+  Monotributo, 15 No Alcanzado). El campo queda opcional en el tipo a
+  propósito: una condición futura cuyo id no se pueda verificar con certeza
+  queda sin `idArca` en vez de con un valor adivinado.
 - Ninguna función tira: todas las de validación devuelven `{ ok, ... }`.
 - Property-based tests (fast-check): un CUIT armado con el DV calculado
   siempre valida y alterar cualquiera de sus 11 dígitos siempre lo

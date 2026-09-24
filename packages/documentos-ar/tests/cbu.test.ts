@@ -90,6 +90,51 @@ describe("validarCbu", () => {
   });
 });
 
+/**
+ * Un CBU REAL, no sintético: el que la Universidad Católica de Córdoba
+ * publica en su sitio para recibir donaciones (cuenta en pesos, alias
+ * "UCC-DONACIONES-BECAS"), citado en la Fundación UCC / Desarrollo,
+ * consultado el 2026-09-24:
+ * https://ucc.edu.ar/desarrollo/desarrollo-dona/
+ *
+ * Es el mismo valor que aparece como ejemplo en el README, para que ese
+ * ejemplo esté efectivamente probado y no sea solo prosa. Los dos dígitos
+ * verificadores dan correctos con el algoritmo de este paquete (banco 072 =
+ * Banco Santander Argentina): no es una coincidencia — es evidencia de que
+ * la implementación calcula lo mismo que calculó el banco al emitirlo.
+ */
+describe("validarCbu (CBU real, publicado por la UCC para donaciones)", () => {
+  const CBU_UCC = "0720374720000000284190";
+
+  it("valida el CBU tal cual está publicado", () => {
+    expect(validarCbu(CBU_UCC)).toEqual({ ok: true, normalizado: CBU_UCC, banco: "072" });
+  });
+
+  it("rechaza el mismo CBU con un dígito del banco/sucursal alterado", () => {
+    const r = validarCbu(alterar(CBU_UCC, 2));
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.codigo).toBe("digito_verificador_invalido");
+  });
+
+  it("rechaza el mismo CBU con el DV1 alterado", () => {
+    const r = validarCbu(alterar(CBU_UCC, 7));
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.codigo).toBe("digito_verificador_invalido");
+  });
+
+  it("rechaza el mismo CBU con un dígito de la cuenta alterado", () => {
+    const r = validarCbu(alterar(CBU_UCC, 16));
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.codigo).toBe("digito_verificador_invalido");
+  });
+
+  it("rechaza el mismo CBU con el DV2 (último dígito) alterado", () => {
+    const r = validarCbu(alterar(CBU_UCC, 21));
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.codigo).toBe("digito_verificador_invalido");
+  });
+});
+
 describe("validarCvu", () => {
   const cvu = armarCbu("000", "0031", "0000000012345");
 

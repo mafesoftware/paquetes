@@ -72,11 +72,17 @@ validarDni("01234567"); // { ok: false, motivo: "Un DNI no empieza con 0.", codi
 Valida un CBU: 22 dígitos en dos bloques (banco+sucursal+DV1, cuenta+DV2).
 Rechaza los que empiecen con "000" — esos son CVU (`validarCvu`).
 
+El ejemplo de abajo es un CBU **real**, no inventado: el que la Universidad
+Católica de Córdoba publica para recibir donaciones (cuenta en pesos, alias
+"UCC-DONACIONES-BECAS"), consultado el 2026-09-24 en
+https://ucc.edu.ar/desarrollo/desarrollo-dona/. Es el mismo valor que prueba
+`tests/cbu.test.ts`, así que este ejemplo no es solo prosa.
+
 ```ts
 import { validarCbu } from "@mafesoftware/documentos-ar";
 
-validarCbu("0070445200000031000947");
-// { ok: true, normalizado: "0070445200000031000947", banco: "007" }
+validarCbu("0720374720000000284190");
+// { ok: true, normalizado: "0720374720000000284190", banco: "072" }
 
 validarCbu("0000445200000031000947");
 // { ok: false, motivo: 'Empieza con "000": es un CVU, no un CBU. Probá con validarCvu.', codigo: "es_cvu" }
@@ -122,6 +128,13 @@ Normaliza un celular argentino a E.164 (`"+549"` + área + abonado). Entiende
 "+54", "9", "0" y "15" en cualquier combinación de espacios, guiones o
 paréntesis. `null` si no se puede determinar.
 
+**`telefonoAE164`/`aWhatsApp` asumen que el número es un celular.** El "9" de
+E.164 argentino es el marcador de línea móvil, y esta función lo agrega
+siempre — aunque el número de entrada no tenga "9" ni "15" (por ejemplo, un
+fijo escrito como `"011 4444-5555"`), sale igual como `+549...`. Quien llama
+tiene que saber de antemano que el número es un celular; el paquete no
+detecta fijos ni los rechaza.
+
 ```ts
 import { telefonoAE164 } from "@mafesoftware/documentos-ar";
 
@@ -142,10 +155,13 @@ aWhatsApp("011 15-4444-5555"); // "5491144445555"
 
 ### `CONDICIONES_IVA`
 
-Las condiciones frente al IVA más comunes, con su `idArca` (el id numérico
-que usa ARCA en la factura electrónica) cuando se conoce con certeza. Las
-que no se pudieron verificar quedan sin `idArca` en vez de con un valor
-adivinado.
+Las condiciones frente al IVA más comunes, con su `idArca`: el id numérico de
+la tabla `FEParamGetCondicionIvaReceptor` del web service de factura
+electrónica de ARCA (WSFEv1) — 1 Responsable Inscripto, 4 Exento, 5
+Consumidor Final, 6 Monotributo, 15 No Alcanzado. El campo es opcional en el
+tipo (`idArca?: number`) a propósito: si en el futuro se agrega una
+condición cuyo id no se pueda verificar con certeza, queda sin `idArca` en
+vez de con un valor adivinado.
 
 ```ts
 import { CONDICIONES_IVA } from "@mafesoftware/documentos-ar";

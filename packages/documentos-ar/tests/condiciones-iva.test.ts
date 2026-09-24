@@ -20,11 +20,19 @@ describe("CONDICIONES_IVA", () => {
     }
   });
 
-  it("solo trae idArca donde está verificado con certeza; no_alcanzado no lo trae", () => {
-    const noAlcanzado = CONDICIONES_IVA.find((c) => c.codigo === "no_alcanzado");
-    expect(noAlcanzado?.idArca).toBeUndefined();
-
-    const inscripto = CONDICIONES_IVA.find((c) => c.codigo === "responsable_inscripto");
-    expect(inscripto?.idArca).toBe(1);
+  it("los cinco idArca coinciden con la tabla FEParamGetCondicionIvaReceptor de WSFEv1", () => {
+    // 1 Responsable Inscripto, 4 Exento, 5 Consumidor Final, 6 Monotributo,
+    // 15 No Alcanzado — tabla del web service de factura electrónica de
+    // ARCA (WSFEv1, método FEParamGetCondicionIvaReceptor).
+    const idsPorCodigo: Record<string, number> = {
+      responsable_inscripto: 1,
+      exento: 4,
+      consumidor_final: 5,
+      monotributo: 6,
+      no_alcanzado: 15,
+    };
+    for (const c of CONDICIONES_IVA) {
+      expect(c.idArca, `idArca de ${c.codigo}`).toBe(idsPorCodigo[c.codigo]);
+    }
   });
 });
