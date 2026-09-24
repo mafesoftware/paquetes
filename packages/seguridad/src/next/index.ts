@@ -11,7 +11,7 @@
  * - `ip.ts`: `ipDe`.
  */
 export { politicaCsp, generarNonce, type ExtrasCsp } from "./csp.js";
-export { cabecerasSeguridad } from "./cabeceras.js";
+export { cabecerasSeguridad, type OpcionesCabecerasSeguridad } from "./cabeceras.js";
 export { autorizarCron } from "./cron.js";
 export { guard, ErrorNegocio, type ResultadoGuard } from "./guard.js";
 export { ipDe } from "./ip.js";

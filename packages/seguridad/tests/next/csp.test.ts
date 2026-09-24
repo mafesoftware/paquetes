@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { generarNonce, politicaCsp } from "../../src/next/csp.js";
+import { ErrorSeguridad } from "../../src/errores.js";
 
 describe("politicaCsp", () => {
   it("arma las directivas base, con el nonce en script-src", () => {
@@ -43,6 +44,51 @@ describe("politicaCsp", () => {
     const csp = politicaCsp("n", { "default-src": ["'self'", "https://api.example.com"] });
     const directiva = csp.split("; ").find((d) => d.startsWith("default-src"));
     expect(directiva).toBe("default-src 'self' https://api.example.com");
+  });
+
+  describe("fix round 1 (I5): inyección de CSP", () => {
+    it("un nonce con ';' tira ErrorSeguridad csp_invalida, no arma una CSP corrupta", () => {
+      // Con la implementación vieja, esto cerraba script-src e inyectaba una
+      // directiva nueva: politicaCsp("x'; script-src *; foo='") producía
+      // "...script-src 'self' 'nonce-x'; script-src *; foo=''...".
+      expect(() => politicaCsp("x'; script-src *; foo='")).toThrow(ErrorSeguridad);
+      try {
+        politicaCsp("x'; script-src *; foo='");
+      } catch (error) {
+        expect((error as ErrorSeguridad).codigo).toBe("csp_invalida");
+      }
+    });
+
+    it("un nonce con espacios, comas o saltos de línea también se rechaza", () => {
+      expect(() => politicaCsp("a b")).toThrow(ErrorSeguridad);
+      expect(() => politicaCsp("a,b")).toThrow(ErrorSeguridad);
+      expect(() => politicaCsp("a\nb")).toThrow(ErrorSeguridad);
+      expect(() => politicaCsp("")).toThrow(ErrorSeguridad);
+    });
+
+    it("un nonce que SÍ es base64/base64url válido (con o sin relleno) no tira", () => {
+      expect(() => politicaCsp(generarNonce())).not.toThrow();
+      expect(() => politicaCsp("abc-DEF_123")).not.toThrow();
+      expect(() => politicaCsp("YWJj")).not.toThrow();
+    });
+
+    it("un nombre de directiva en extras con ';' tira ErrorSeguridad, no inyecta una directiva nueva", () => {
+      expect(() => politicaCsp("n", { "script-src'; foo": ["'self'"] })).toThrow(ErrorSeguridad);
+    });
+
+    it("una fuente con ';' en extras tira ErrorSeguridad, no cierra la directiva actual", () => {
+      expect(() => politicaCsp("n", { "style-src": ["https://x.com; script-src *"] })).toThrow(ErrorSeguridad);
+    });
+
+    it("una fuente con ',' o con espacio en extras tira ErrorSeguridad", () => {
+      expect(() => politicaCsp("n", { "style-src": ["https://x.com,https://y.com"] })).toThrow(ErrorSeguridad);
+      expect(() => politicaCsp("n", { "style-src": ["https://x.com https://y.com"] })).toThrow(ErrorSeguridad);
+    });
+
+    it("una directiva en mayúsculas o con caracteres fuera de [a-z-] se rechaza", () => {
+      expect(() => politicaCsp("n", { "Script-Src": ["'self'"] })).toThrow(ErrorSeguridad);
+      expect(() => politicaCsp("n", { "script_src": ["'self'"] })).toThrow(ErrorSeguridad);
+    });
   });
 });
 

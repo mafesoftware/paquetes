@@ -75,6 +75,84 @@ describe("guard", () => {
     const resultado = await accion(2, 3);
     expect(resultado).toEqual({ ok: true, suma: 5 });
   });
+
+  describe("fix round 1 (M6): ok:true no se puede pisar, y valores no-objeto se envuelven", () => {
+    it("un resultado que trae su propia clave 'ok' NO puede pisar el ok:true real", async () => {
+      const accion = guard(async () => ({ ok: false, id: "1" }) as { ok: boolean; id: string });
+      const resultado = await accion();
+      expect(resultado.ok).toBe(true);
+      expect((resultado as { id: string }).id).toBe("1");
+    });
+
+    it("un array se envuelve como { ok: true, valor: [...] }, no se spreadea", async () => {
+      const accion = guard(async () => [1, 2, 3]);
+      const resultado = await accion();
+      expect(resultado).toEqual({ ok: true, valor: [1, 2, 3] });
+    });
+
+    it("un string se envuelve como { ok: true, valor: '...' }", async () => {
+      const accion = guard(async () => "hola");
+      const resultado = await accion();
+      expect(resultado).toEqual({ ok: true, valor: "hola" });
+    });
+
+    it("un number (incluido 0) se envuelve como { ok: true, valor }", async () => {
+      const accion = guard(async () => 0);
+      const resultado = await accion();
+      expect(resultado).toEqual({ ok: true, valor: 0 });
+    });
+
+    it("un boolean false se envuelve como { ok: true, valor: false }, no se confunde con 'sin resultado'", async () => {
+      const accion = guard(async () => false);
+      const resultado = await accion();
+      expect(resultado).toEqual({ ok: true, valor: false });
+    });
+
+    it("null se envuelve como { ok: true, valor: null } (distinto de undefined/void)", async () => {
+      const accion = guard(async () => null);
+      const resultado = await accion();
+      expect(resultado).toEqual({ ok: true, valor: null });
+    });
+  });
+
+  describe("fix round 1 (M6): ErrorNegocio se detecta también entre copias distintas del paquete", () => {
+    it("un objeto con name:'ErrorNegocio' pero SIN la marca no se trata como ErrorNegocio (se re-tira)", async () => {
+      class ErrorNegocioFalso extends Error {
+        mensaje = "no soy de verdad";
+        constructor() {
+          super("no soy de verdad");
+          this.name = "ErrorNegocio";
+        }
+      }
+      const accion = guard(async () => {
+        throw new ErrorNegocioFalso();
+      });
+      await expect(accion()).rejects.toThrow(ErrorNegocioFalso);
+    });
+
+    it("un ErrorNegocio 'de otra copia del paquete' (misma forma, distinta clase) SÍ se detecta, vía Symbol.for", async () => {
+      // Simula lo que pasa con dos instalaciones de @mafesoftware/seguridad
+      // en el mismo árbol de node_modules: la clase es OTRA (no
+      // `instanceof` la importada acá), pero misma marca global.
+      const MARCA = Symbol.for("@mafesoftware/seguridad:ErrorNegocio");
+      class ErrorNegocioDeOtraCopia extends Error {
+        readonly mensaje: string;
+        readonly campo?: string;
+        constructor(mensaje: string, campo?: string) {
+          super(mensaje);
+          this.name = "ErrorNegocio";
+          this.mensaje = mensaje;
+          this.campo = campo;
+          (this as unknown as Record<symbol, unknown>)[MARCA] = true;
+        }
+      }
+      const accion = guard(async () => {
+        throw new ErrorNegocioDeOtraCopia("de otra copia", "campo-y");
+      });
+      const resultado = await accion();
+      expect(resultado).toEqual({ ok: false, error: "de otra copia", campo: "campo-y" });
+    });
+  });
 });
 
 describe("ErrorNegocio", () => {

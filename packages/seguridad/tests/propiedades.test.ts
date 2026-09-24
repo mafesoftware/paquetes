@@ -4,18 +4,33 @@ import fc from "fast-check";
 import { compararEnTiempoConstante } from "../src/comparar.js";
 import { cifrar, descifrar } from "../src/cifrado.js";
 
+/**
+ * Genera strings a partir de code units UTF-16 arbitrarios (0x0000-0xFFFF),
+ * INCLUYENDO surrogates sueltos (medio par) — a diferencia de `fc.string()`,
+ * cuyas unidades por defecto ("grapheme"/"binary") evitan justamente los
+ * surrogates sueltos. Es lo que hace falta para el fix round 1 (I3): probar
+ * que `compararEnTiempoConstante` no colisiona con code units inválidos por
+ * sí solos.
+ */
+const stringUtf16Arbitrario = fc
+  .array(fc.integer({ min: 0, max: 0xffff }), { minLength: 0, maxLength: 24 })
+  .map((unidades) => String.fromCharCode(...unidades));
+
 describe("propiedades: compararEnTiempoConstante", () => {
-  it("compararEnTiempoConstante(a, b) === (a === b), para cualquier par de strings (incl. largos distintos)", () => {
+  it("compararEnTiempoConstante(a, b) === (a === b && a.length > 0), para cualquier par de strings (incl. largos distintos y surrogates sueltos)", () => {
+    // La excepción `&& a.length > 0` es a propósito (fix round 1, I3): un
+    // secreto vacío nunca "coincide", ni siquiera contra otro vacío — ver
+    // el comentario en src/comparar.ts.
     fc.assert(
-      fc.property(fc.string(), fc.string(), (a, b) => {
-        expect(compararEnTiempoConstante(a, b)).toBe(a === b);
+      fc.property(stringUtf16Arbitrario, stringUtf16Arbitrario, (a, b) => {
+        expect(compararEnTiempoConstante(a, b)).toBe(a === b && a.length > 0);
       }),
     );
   });
 
-  it("compararEnTiempoConstante(a, a) siempre da true", () => {
+  it("compararEnTiempoConstante(a, a) da true para cualquier string NO vacío (incl. surrogates sueltos)", () => {
     fc.assert(
-      fc.property(fc.string(), (a) => {
+      fc.property(stringUtf16Arbitrario.filter((a) => a.length > 0), (a) => {
         expect(compararEnTiempoConstante(a, a)).toBe(true);
       }),
     );

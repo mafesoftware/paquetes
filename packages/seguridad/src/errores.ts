@@ -10,12 +10,18 @@
  * llama, no algo que la app tenga que mostrarle a nadie.
  */
 export type CodigoErrorSeguridad =
-  /** La clave no tiene 32 bytes (AES-256), o no es un string base64 ni un `Uint8Array`. */
+  /** La clave no tiene 32 bytes (AES-256), o no es un string en base64 estándar canónico ni un `Uint8Array`. */
   | "clave_invalida"
-  /** El texto cifrado no tiene el formato `v1:<iv>:<tag>:<datos>`, o algún segmento no es base64 válido. */
+  /** El texto cifrado no tiene el formato `v1:<iv>:<tag>:<datos>`, algún segmento no es base64 estándar canónico, o el IV/tag no tienen el largo exacto (12/16 bytes). */
   | "formato_invalido"
   /** La clave no es la que cifró esto, o los datos fueron alterados: el tag de GCM no autentica. */
-  | "autenticacion_fallida";
+  | "autenticacion_fallida"
+  /** El secreto de firma de un pase (`crearPase`) no es un string de al menos 32 caracteres. */
+  | "secreto_invalido"
+  /** `venceEn` (o, en general, los datos de un pase a crear) no es una fecha/epoch válida. */
+  | "pase_invalido"
+  /** El nonce, una directiva o una fuente de `politicaCsp` tienen caracteres que permitirían inyectar una directiva CSP nueva. */
+  | "csp_invalida";
 
 export class ErrorSeguridad extends Error {
   readonly codigo: CodigoErrorSeguridad;

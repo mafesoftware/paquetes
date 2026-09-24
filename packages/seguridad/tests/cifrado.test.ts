@@ -5,6 +5,12 @@ import { ErrorSeguridad } from "../src/errores.js";
 
 const CLAVE = randomBytes(32).toString("base64");
 
+/** Descompone "v1:<iv>:<tag>:<datos>" en sus 4 segmentos, para adulterar uno a la vez en los tests. */
+function partesDe(guardado: string) {
+  const [version, iv, tag, datos] = guardado.split(":");
+  return { version: version!, iv: iv!, tag: tag!, datos: datos! };
+}
+
 describe("cifrar / descifrar", () => {
   it("ida y vuelta: descifrar(cifrar(x)) === x", () => {
     const original = "un secreto cualquiera, con ñ y emoji 🔐";
@@ -104,5 +110,118 @@ describe("cifrar / descifrar", () => {
     // (4 caracteres base64 ≈ 3 bytes), así que también cae en clave_invalida.
     const claveRara = "x".repeat(32);
     expect(() => cifrar("x", claveRara)).toThrow(ErrorSeguridad);
+  });
+
+  describe("fix round 1 (C1): tag/IV con largo exacto, sin warning DEP0182", () => {
+    it("un tag truncado (15/12/8/4 bytes) NO se acepta: formato_invalido, no descifra", () => {
+      const guardado = cifrar("dato sensible", CLAVE);
+      const { version, iv, tag, datos } = partesDe(guardado);
+      const tagBytes = Buffer.from(tag, "base64");
+      for (const largo of [15, 12, 8, 4]) {
+        const tagTruncado = tagBytes.subarray(0, largo).toString("base64");
+        const adulterado = [version, iv, tagTruncado, datos].join(":");
+        expect(() => descifrar(adulterado, CLAVE)).toThrow(ErrorSeguridad);
+        try {
+          descifrar(adulterado, CLAVE);
+        } catch (error) {
+          expect((error as ErrorSeguridad).codigo).toBe("formato_invalido");
+        }
+      }
+    });
+
+    it("un IV de largo incorrecto (1 o 64 bytes) NO se acepta: formato_invalido", () => {
+      const guardado = cifrar("dato sensible", CLAVE);
+      const { version, tag, datos } = partesDe(guardado);
+      for (const largoIv of [1, 64]) {
+        const ivRaro = randomBytes(largoIv).toString("base64");
+        const adulterado = [version, ivRaro, tag, datos].join(":");
+        expect(() => descifrar(adulterado, CLAVE)).toThrow(ErrorSeguridad);
+        try {
+          descifrar(adulterado, CLAVE);
+        } catch (error) {
+          expect((error as ErrorSeguridad).codigo).toBe("formato_invalido");
+        }
+      }
+    });
+
+    it("no emite el warning DEP0182 de Node (tag truncado, cifrar/descifrar normal)", () => {
+      const warnings: string[] = [];
+      const onWarning = (w: Error & { code?: string }) => {
+        if (w.code) warnings.push(w.code);
+      };
+      process.on("warning", onWarning);
+      try {
+        const guardado = cifrar("texto", CLAVE);
+        descifrar(guardado, CLAVE);
+        const { version, iv, tag, datos } = partesDe(guardado);
+        const tagTruncado = Buffer.from(tag, "base64").subarray(0, 4).toString("base64");
+        try {
+          descifrar([version, iv, tagTruncado, datos].join(":"), CLAVE);
+        } catch {
+          // se espera que tire ErrorSeguridad — lo que se está midiendo es el warning, no esto.
+        }
+      } finally {
+        process.off("warning", onWarning);
+      }
+      expect(warnings).not.toContain("DEP0182");
+    });
+  });
+
+  describe("fix round 1 (M8): base64 estricto para la clave y para iv/tag/datos", () => {
+    it("una clave en base64url (con '-'/'_') se rechaza: clave_invalida", () => {
+      const claveEstandar = randomBytes(32).toString("base64");
+      // Si la clave tuviera "+"/"/" para poder convertir a base64url; si no
+      // (raro pero posible), el test igual prueba el camino con guiones/underscores
+      // agregados a mano, que nunca son base64 estándar válido.
+      const claveUrlSafe = `${claveEstandar.replace(/=+$/, "")}--__`;
+      expect(() => cifrar("x", claveUrlSafe)).toThrow(ErrorSeguridad);
+    });
+
+    it("una clave con basura (espacios, símbolos) se rechaza: clave_invalida", () => {
+      expect(() => cifrar("x", "no es base64 en absoluto!!")).toThrow(ErrorSeguridad);
+    });
+
+    it("una clave con relleno '=' en una posición no válida se rechaza", () => {
+      // 32 'A' + "=" en el medio: charset ok pero estructura de relleno inválida.
+      const claveConPaddingRoto = `${"A".repeat(16)}=${"A".repeat(15)}`;
+      expect(() => cifrar("x", claveConPaddingRoto)).toThrow(ErrorSeguridad);
+    });
+
+    it("una clave con bits de relleno NO nulos se rechaza (mismo charset y estructura, no re-codifica igual)", () => {
+      // "/x==" tiene el charset y la estructura de un base64 válido de 1
+      // byte con relleno, y Node lo decodifica igual que "/w==" (mismo byte,
+      // 0xFF) — pero los 2 bits de relleno de la "x" no son cero, así que
+      // re-codificar el byte decodificado da "/w==", no "/x==". Eso es
+      // exactamente lo que NO es "canónico": dos strings de entrada
+      // distintos decodificando al mismo valor.
+      expect(Buffer.from("/x==", "base64").equals(Buffer.from("/w==", "base64"))).toBe(true);
+      expect(() => cifrar("x", "/x==")).toThrow(ErrorSeguridad);
+      try {
+        cifrar("x", "/x==");
+      } catch (error) {
+        expect((error as ErrorSeguridad).codigo).toBe("clave_invalida");
+      }
+    });
+
+    it("un segmento iv/tag/datos con caracteres base64url se rechaza: formato_invalido", () => {
+      const guardado = cifrar("dato", CLAVE);
+      const { version, iv, tag, datos } = partesDe(guardado);
+      // "-" y "_" no son base64 estándar.
+      const ivUrlSafe = `${iv.replace(/=+$/, "").slice(0, -1)}-`;
+      const adulterado = [version, ivUrlSafe, tag, datos].join(":");
+      expect(() => descifrar(adulterado, CLAVE)).toThrow(ErrorSeguridad);
+      try {
+        descifrar(adulterado, CLAVE);
+      } catch (error) {
+        expect((error as ErrorSeguridad).codigo).toBe("formato_invalido");
+      }
+    });
+
+    it("un segmento con basura tipo '!!' pegada se rechaza: formato_invalido (caso del reviewer)", () => {
+      const guardado = cifrar("dato", CLAVE);
+      const { version, iv, tag, datos } = partesDe(guardado);
+      const adulterado = [version, `${iv}!!`, tag, datos].join(":");
+      expect(() => descifrar(adulterado, CLAVE)).toThrow(ErrorSeguridad);
+    });
   });
 });
