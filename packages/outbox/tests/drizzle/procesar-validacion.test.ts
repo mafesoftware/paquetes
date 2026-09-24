@@ -32,29 +32,49 @@ describe("procesarOutbox: valida las opciones antes de tocar db/tabla", () => {
     ).rejects.toMatchObject({ codigo: "opciones_invalidas" });
   });
 
+  it('"leaseMs" < 5000 tira ErrorOutbox("opciones_invalidas") — I1/I2: un lease muy corto no deja margen razonable para timeoutMs + el margen de 1s', async () => {
+    await expect(
+      procesarOutbox({ db: undefined as never, tabla: undefined as never, transportes: {}, leaseMs: 4999 }),
+    ).rejects.toMatchObject({ codigo: "opciones_invalidas" });
+    await expect(
+      procesarOutbox({ db: undefined as never, tabla: undefined as never, transportes: {}, leaseMs: 1000 }),
+    ).rejects.toMatchObject({ codigo: "opciones_invalidas" });
+  });
+
+  it('"leaseMs" === 5000 (el mínimo válido) NO tira por esta validación', async () => {
+    const resumen = await procesarOutbox({ db: undefined as never, tabla: undefined as never, transportes: {}, leaseMs: 5000 });
+    expect(resumen.errores).toBe(1); // sigue fallando, pero por la base (db undefined), no por opciones_invalidas
+  });
+
   it('"timeoutMs" <= 0 tira ErrorOutbox("opciones_invalidas")', async () => {
     await expect(
-      procesarOutbox({ db: undefined as never, tabla: undefined as never, transportes: {}, leaseMs: 1000, timeoutMs: 0 }),
+      procesarOutbox({ db: undefined as never, tabla: undefined as never, transportes: {}, leaseMs: 10_000, timeoutMs: 0 }),
     ).rejects.toMatchObject({ codigo: "opciones_invalidas" });
   });
 
-  it('"timeoutMs" >= "leaseMs" tira ErrorOutbox("opciones_invalidas")', async () => {
+  it('"timeoutMs" > "leaseMs / 2" tira ErrorOutbox("opciones_invalidas") — I1: antes solo se exigía < leaseMs', async () => {
     await expect(
-      procesarOutbox({ db: undefined as never, tabla: undefined as never, transportes: {}, leaseMs: 1000, timeoutMs: 1000 }),
+      procesarOutbox({ db: undefined as never, tabla: undefined as never, transportes: {}, leaseMs: 10_000, timeoutMs: 5001 }),
     ).rejects.toMatchObject({ codigo: "opciones_invalidas" });
     await expect(
-      procesarOutbox({ db: undefined as never, tabla: undefined as never, transportes: {}, leaseMs: 1000, timeoutMs: 1500 }),
+      procesarOutbox({ db: undefined as never, tabla: undefined as never, transportes: {}, leaseMs: 10_000, timeoutMs: 9000 }),
     ).rejects.toMatchObject({ codigo: "opciones_invalidas" });
   });
 
-  it('"timeoutMs" por defecto (Math.floor(leaseMs/2)) no tira por validación', async () => {
-    // leaseMs impar: Math.floor(1001/2) = 500, que es < 1001 — la
-    // validación de "timeoutMs" lo deja pasar (el resumen igual refleja el
-    // fallo de la base en "errores", ya que db es undefined — lo que
-    // importa acá es que la promesa NO haya rechazado con
-    // "opciones_invalidas").
-    const resumen = await procesarOutbox({ db: undefined as never, tabla: undefined as never, transportes: {}, leaseMs: 1001 });
+  it('"timeoutMs" === "leaseMs / 2" (el máximo válido) NO tira por esta validación', async () => {
+    const resumen = await procesarOutbox({ db: undefined as never, tabla: undefined as never, transportes: {}, leaseMs: 10_000, timeoutMs: 5000 });
     expect(resumen.errores).toBe(1);
+  });
+
+  it('la configuración exacta que reprodujo el hueco de la revisión (leaseMs: 60_000, timeoutMs: 59_980) ahora se RECHAZA', async () => {
+    await expect(
+      procesarOutbox({ db: undefined as never, tabla: undefined as never, transportes: {}, leaseMs: 60_000, timeoutMs: 59_980 }),
+    ).rejects.toMatchObject({ name: "ErrorOutbox", codigo: "opciones_invalidas" });
+  });
+
+  it('"timeoutMs" por defecto (Math.floor(leaseMs/2)) siempre es válido (nunca excede leaseMs/2 al redondear para abajo)', async () => {
+    const resumen = await procesarOutbox({ db: undefined as never, tabla: undefined as never, transportes: {}, leaseMs: 10_001 });
+    expect(resumen.errores).toBe(1); // no tiró por opciones_invalidas
   });
 
   it('"concurrencia" no entero o < 1 tira ErrorOutbox("opciones_invalidas")', async () => {
@@ -88,5 +108,48 @@ describe("procesarOutbox: valida las opciones antes de tocar db/tabla", () => {
     const resumen = await procesarOutbox({ db: undefined as never, tabla: undefined as never, transportes: { correo: vi.fn() } });
     expect(resumen.reclamados).toBe(0);
     expect(resumen.errores).toBe(1);
+  });
+
+  it('el resumen (aunque sea el "vacío" de un error atrapado) siempre trae "advertencias" (arreglo, aunque esté vacío)', async () => {
+    const resumen = await procesarOutbox({ db: undefined as never, tabla: undefined as never, transportes: {} });
+    expect(Array.isArray(resumen.advertencias)).toBe(true);
+  });
+
+  it('"leaseMs" chico frente a "timeoutMs * ceil(lote/concurrencia)" NO tira — solo agrega una advertencia al resumen, sin loguear nada', async () => {
+    const espia = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const espiaError = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      // leaseMs: 10_000, timeoutMs: 5000 (el máximo permitido), lote: 10, concurrencia: 1
+      // -> timeoutMs * ceil(lote/concurrencia) = 5000 * 10 = 50_000 > leaseMs (10_000).
+      const resumen = await procesarOutbox({
+        db: undefined as never,
+        tabla: undefined as never,
+        transportes: {},
+        leaseMs: 10_000,
+        timeoutMs: 5000,
+        lote: 10,
+        concurrencia: 1,
+      });
+      expect(resumen.advertencias.length).toBeGreaterThan(0);
+      expect(resumen.advertencias[0]).toMatch(/leaseMs|lote|concurrencia/i);
+      expect(espia).not.toHaveBeenCalled();
+      expect(espiaError).not.toHaveBeenCalled();
+    } finally {
+      espia.mockRestore();
+      espiaError.mockRestore();
+    }
+  });
+
+  it('con "leaseMs" holgado frente a "timeoutMs * ceil(lote/concurrencia)", no hay advertencias', async () => {
+    const resumen = await procesarOutbox({
+      db: undefined as never,
+      tabla: undefined as never,
+      transportes: {},
+      leaseMs: 10_000,
+      timeoutMs: 100,
+      lote: 2,
+      concurrencia: 2,
+    });
+    expect(resumen.advertencias).toEqual([]);
   });
 });

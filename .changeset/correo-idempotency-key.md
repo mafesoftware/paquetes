@@ -17,10 +17,20 @@ de siempre), cada llamada sigue siendo un envío nuevo para Resend.
 
 Además:
 
-- Nueva categoría de error `"conflicto_idempotencia"` (HTTP 409 de Resend):
-  la MISMA `claveIdempotencia` se usó con un cuerpo de request DISTINTO —
-  distinto de un duplicado exacto (que Resend resuelve solo). Reintentar
-  puede arreglarlo.
+- Nueva categoría de error `"conflicto_idempotencia"` (HTTP 409 de Resend) —
+  agrega un miembro a la unión `CategoriaErrorCorreo`, así que un `switch`
+  exhaustivo sobre esa unión en código que ya usa este paquete deja de
+  compilar hasta que se lo cubra. **Cambio de comportamiento**: ANTES, un
+  409 caía en `"rechazado"` (permanente — `clasificarResultado` no
+  reintentaba). AHORA cae en `"conflicto_idempotencia"` (transitorio — SÍ
+  se reintenta, con un backoff propio de al menos 60 s en
+  `@mafesoftware/outbox`, ver su changeset). El motivo del cambio: un 409
+  de Resend en este endpoint significa "la MISMA `claveIdempotencia` se
+  usó con un cuerpo de request DISTINTO" — distinto de un duplicado exacto
+  (que Resend resuelve solo, sin error) — y reintentar (con la MISMA
+  clave, mismo cuerpo) puede arreglarlo si el conflicto fue transitorio
+  del lado de Resend; tratarlo como permanente descartaría mensajes que en
+  realidad podían salir.
 - `enviarCorreo` acepta una opción `señal` (`AbortSignal`) opcional, pasada
   tal cual al `fetch` — pensada para que un caller con su propio timeout
   (`@mafesoftware/outbox`) pueda cortar el pedido. Cancelar la señal no

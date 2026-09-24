@@ -87,8 +87,10 @@ negocio.
     a fuerza de leases vencidos sucesivos, en cuyo caso se cierra directo a
     `"fallido"` (`codigo: "lease_agotado"`) sin llamar a ningún `Transporte`.
     Devuelve `{ reclamados, enviados, reintentar, fallidos, descartados,
-    perdidos, errores, ultimoError? }`. **Entrega al menos una vez, no
-    exactamente una vez** — `MensajeParaEnviar.claveIdempotencia`
+    perdidos, liberados, errores, advertencias, ultimoError? }` (`liberados`
+    y `advertencias`: ver "Ronda de fix 2"/"Ronda de fix 3" más abajo).
+    **Entrega al menos una vez, no exactamente una vez** —
+    `MensajeParaEnviar.claveIdempotencia`
     (`${tenantId}:${claveIdempotencia}`) existe para que el proveedor
     deduplique; `transporteCorreo` la reenvía como header `Idempotency-Key`
     de Resend (nuevo en `@mafesoftware/correo`, changeset aparte).
@@ -207,3 +209,82 @@ Postgres real antes de esta tarea considerarse cerrada):
   "no afectó nada" (todo reportado como `perdidos`, en silencio). Probado
   con un `db` de test que envuelve `execute()` y le saca `rowCount` a
   propósito.
+
+**Ronda de fix 3** (re-revisión de la ronda 2: todo lo de esa ronda quedó
+bien atado, pero el propio fix abrió dos huecos de configuración, y el test
+de L1 pasaba por el motivo equivocado):
+
+- **Importante — `leaseMs`/`timeoutMs` podían configurarse de forma
+  insegura (I1+I2).** La validación de la ronda 2 solo exigía `timeoutMs <
+  leaseMs` — dejaba pasar, por ejemplo, `leaseMs: 60_000, timeoutMs:
+  59_980` (el ejemplo exacto de la revisión): con eso, "Cola del pool y
+  lease" (ver el JSDoc de `procesarOutbox`) casi no tiene margen real para
+  decidir si alcanza o no, y el timeout efectivo que le quedaba a un
+  intento podía terminar siendo de milisegundos — un timeout "espurio".
+  Ahora:
+  - `timeoutMs` tiene que ser `<= leaseMs / 2` (antes, alcanzaba con `<
+    leaseMs`) y `leaseMs` tiene que ser `>= 5000` — las dos, nuevas
+    `ErrorOutbox("opciones_invalidas")`.
+  - El margen para intentar (en vez de liberar) ahora es `timeoutMs + 1000`
+    (antes, `timeoutMs` a secas): con esto, cuando SÍ se intenta, el
+    timeout efectivo (`min(timeoutMs, restante - 1000)`) da SIEMPRE
+    `timeoutMs` exacto — nunca un resto corto — y el propio clamp tiene un
+    piso de `1000 ms` (antes, `1 ms`) como defensa adicional.
+  - Nuevo campo `advertencias: string[]` en el resumen (siempre presente,
+    `[]` si no hay ninguna, JAMÁS logueado por el paquete): si `leaseMs <
+    timeoutMs * ceil(lote / concurrencia)` (el peor caso de cuánto puede
+    tardar la ÚLTIMA fila del lote en llegar a su turno con la
+    `concurrencia` configurada), no se tira — se avisa. Con los valores
+    por defecto (`lote: 20`, `concurrencia: 5`, `timeoutMs:
+    leaseMs / 2`) esta advertencia SIEMPRE aparece (`olas = 4`,
+    `timeoutMs * 4 = leaseMs * 2 > leaseMs`); quien use `procesarOutbox`
+    con lotes grandes y baja concurrencia probablemente la va a ver seguido
+    — es información, no un error, y el resumen la trae para que cada
+    caller decida (loguearla, ignorarla, ajustar sus opciones).
+- **M1 — `bloqueadoHasta` inválido ya no se intenta enviar.** La
+  normalización string->Date de `reclamarLote` (ronda 2) no puede tirar
+  ante un valor que no puede parsear — da un "Invalid Date"
+  (`.getTime()` es `NaN`, nunca una excepción). Sin guarda, `NaN` colado en
+  la cuenta de margen de lease (`NaN < minimoRestante` es siempre `false`)
+  hacía que se intentara igual el Transporte con un timeout también `NaN`.
+  Ahora se chequea antes: si no es un `Date` válido, la fila se cuenta
+  `perdidos` sin tocar ningún Transporte.
+- **L1, test reescrito.** El test de la ronda 2 usaba timing de pared real
+  (lease 1000 ms, un `setTimeout` de 1100 ms para arrancar el segundo
+  worker) — con la nueva validación (`leaseMs >= 5000`) esos valores ya ni
+  siquiera pasan la validación, y aparte el test pasaba por un motivo más
+  débil del que hacía falta. Reescrito con un reloj (`ahora`) inyectado y
+  DETERMINÍSTICO en los dos workers (nada de tiempo real de pared): un
+  worker A (lote 4, concurrencia 1, lease 6000 ms, timeout 2000 ms)
+  intenta las primeras 2 filas de su cola y LIBERA las otras 2 (ya no les
+  queda margen de lease para cuando les toca el turno); un worker B,
+  arrancando justo en ese instante simulado, reclama EXACTAMENTE esas 2
+  filas liberadas. El test verifica, explícitamente: `resumenA.liberados >
+  0`; que el conjunto de filas invocadas por A y por B no se solapa; y que
+  A invocó el Transporte SOLO para las 2 filas que sí tenían margen, B SOLO
+  para las 2 liberadas (nunca al revés). **Prueba de mutación** (hecha a
+  mano para esta ronda, documentada en el reporte): se reemplazó
+  temporalmente la liberación de `liberarFila` por una llamada directa al
+  Transporte — el test FALLÓ como se esperaba — y se restauró el código
+  correcto, confirmando que vuelve a pasar. Nuevo test más chico en el
+  mismo `describe`, con un reloj inyectado, que corrobora que un
+  `timeoutEfectivoMs` con una configuración válida nunca es "sub-segundo
+  espurio" — mide con la señal `AbortSignal` real cuánto tardó de verdad en
+  abortarse.
+- **M2 — el test de paridad (`decidir()` vs. la consulta SQL real, ronda
+  2) ya no repite a mano el observable esperado de cada fixture.** Antes,
+  cada fixture traía `decisionEsperada` Y `observableEsperado` escritos por
+  separado — dos fuentes de verdad que podían divergir sin que nada lo
+  marcara. Ahora `observableEsperado` se DERIVA de `decisionEsperada` con
+  una única función (`observableEsperadoDe`), que también necesita el
+  `estado` ORIGINAL de la fixture porque `"descartar"` es ambiguo: significa
+  cosas distintas para una fila YA terminal (no tocada, ni la ve la
+  consulta de reclamo) que para una fila ACTIVA con los intentos agotados
+  (la propia consulta la cierra a `"fallido"` ahí mismo, sin Transporte).
+  Se agregaron 3 fixtures nuevas de borde INCLUSIVO — `bloqueadoHasta ==
+  AHORA`, `programadoPara == AHORA`, `proximoIntentoEn == AHORA` — los tres
+  puntos donde tanto `decidir()` como la consulta SQL usan `<=`, nunca `<`.
+- **M3 — ver el changeset de `@mafesoftware/correo`** (`.changeset/correo-idempotency-key.md`):
+  ahora deja explícito que un 409 de Resend ANTES mapeaba a `"rechazado"`
+  (permanente) y AHORA mapea a `"conflicto_idempotencia"` (transitorio), y
+  que ese cambio agrega un miembro a la unión `CategoriaErrorCorreo`.

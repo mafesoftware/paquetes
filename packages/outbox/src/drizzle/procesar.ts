@@ -25,16 +25,18 @@ export interface OpcionesProcesarOutbox {
   lote?: number;
   /** De dónde sale "ahora" — inyectable para tests deterministas. `() => new Date()` por defecto. */
   ahora?: () => Date;
-  /** Cuánto dura el lease de una fila reclamada antes de considerarse "colgada" y quedar disponible para que otro worker la reclame de nuevo. `600_000` (10 min) por defecto. `> 0`. */
+  /** Cuánto dura el lease de una fila reclamada antes de considerarse "colgada" y quedar disponible para que otro worker la reclame de nuevo. `600_000` (10 min) por defecto. Tiene que ser `>= 5000` — con un lease más corto no queda margen razonable para `timeoutMs` más el colchón de 1 s de "Cola del pool y lease" (más abajo). */
   leaseMs?: number;
   /**
    * Cuánto esperar la respuesta de un `Transporte` antes de darla por
    * perdida y tratarla como `"transitorio"` (`codigo: "timeout"`).
-   * `Math.floor(leaseMs / 2)` por defecto. Tiene que ser `> 0` y `<
-   * leaseMs` — si un intento pudiera durar más que el lease, otro worker lo
-   * reclamaría de nuevo (`"destrabar"`) ANTES de que este termine, y los
-   * dos mandarían el mismo mensaje a la vez. También es el `margen` que usa
-   * el chequeo de "cola del pool" — ver "Cola del pool y lease" más abajo.
+   * `Math.floor(leaseMs / 2)` por defecto. Tiene que ser `> 0` y `<=
+   * leaseMs / 2` — no solo `< leaseMs` (la validación de antes): con un
+   * `timeoutMs` cercano a `leaseMs` casi cualquier fila termina con
+   * `restante < timeoutMs` para cuando le toca su turno en el pool (ver
+   * "Cola del pool y lease" más abajo) y se LIBERA en vez de intentarse —
+   * `leaseMs / 2` deja margen real para que el chequeo de esa sección
+   * tenga sentido en tamaños de lease normales, no solo en el caso límite.
    */
   timeoutMs?: number;
   /**
@@ -92,6 +94,15 @@ export interface ResumenProcesarOutbox {
   errores: number;
   /** El código de Postgres (ej. `"57P01"`) del ÚLTIMO error de base atrapado en esta corrida — NUNCA el mensaje ni los parámetros (pueden traer datos del destinatario). `undefined` si `errores` es `0`, o si no se pudo determinar un código. */
   ultimoError?: { codigo: string | null };
+  /**
+   * Avisos sobre la CONFIGURACIÓN de esta corrida (nunca sobre datos de
+   * ninguna fila) — `[]` si no hay ninguno. Nunca se loguean solos (ni con
+   * `console.warn` ni de ninguna otra forma): viajan en el resumen para que
+   * quien llama decida qué hacer (loguearlos, mandarlos a un panel,
+   * ignorarlos). Hoy el único aviso posible: `leaseMs` corto frente a
+   * `timeoutMs * ceil(lote / concurrencia)` — ver el JSDoc de la función.
+   */
+  advertencias: string[];
 }
 
 /** Una fila ya reclamada, tal como la devuelve `reclamarLote`. */
@@ -115,16 +126,20 @@ interface FilaReclamada {
 /** Lo que devuelve la consulta de reclamo TAL CUAL (antes de normalizar `bloqueadoHasta` a `Date` — ver `reclamarLote`). */
 type FilaReclamadaCruda = Omit<FilaReclamada, "bloqueadoHasta"> & { bloqueadoHasta: string | null };
 
-const RESUMEN_VACIO: ResumenProcesarOutbox = {
-  reclamados: 0,
-  enviados: 0,
-  reintentar: 0,
-  fallidos: 0,
-  descartados: 0,
-  perdidos: 0,
-  liberados: 0,
-  errores: 0,
-};
+/** El resumen "en cero" — `advertencias` se arma aparte (depende de las opciones validadas de CADA corrida), así que se pasa siempre explícito, nunca se comparte una instancia fija. */
+function resumenVacio(advertencias: string[]): ResumenProcesarOutbox {
+  return {
+    reclamados: 0,
+    enviados: 0,
+    reintentar: 0,
+    fallidos: 0,
+    descartados: 0,
+    perdidos: 0,
+    liberados: 0,
+    errores: 0,
+    advertencias,
+  };
+}
 
 /**
  * Procesa hasta `lote` mensajes debidos de la cola: los reclama de forma
@@ -250,7 +265,7 @@ const RESUMEN_VACIO: ResumenProcesarOutbox = {
  * resultado.
  *
  * Devuelve `{ reclamados, enviados, reintentar, fallidos, descartados,
- * perdidos, liberados, errores, ultimoError? }`.
+ * perdidos, liberados, errores, advertencias, ultimoError? }`.
  *
  * ```ts
  * import { procesarOutbox, transporteCorreo, transporteWhatsApp } from "@mafesoftware/outbox/drizzle";
@@ -264,8 +279,9 @@ const RESUMEN_VACIO: ResumenProcesarOutbox = {
  *   },
  *   lote: 50,
  *   concurrencia: 10,
+ *   timeoutMs: 100_000, // explícito acá para que ESTE ejemplo no dispare la advertencia de abajo (ver su JSDoc)
  * });
- * // { reclamados: 12, enviados: 10, reintentar: 1, fallidos: 0, descartados: 1, perdidos: 0, liberados: 0, errores: 0 }
+ * // { reclamados: 12, enviados: 10, reintentar: 1, fallidos: 0, descartados: 1, perdidos: 0, liberados: 0, errores: 0, advertencias: [] }
  * ```
  */
 export async function procesarOutbox(opciones: OpcionesProcesarOutbox): Promise<ResumenProcesarOutbox> {
@@ -277,14 +293,26 @@ export async function procesarOutbox(opciones: OpcionesProcesarOutbox): Promise<
   if (!(leaseMs > 0)) {
     throw new ErrorOutbox("opciones_invalidas", `procesarOutbox: "leaseMs" tiene que ser > 0 (fue ${leaseMs}).`);
   }
+  // I2: piso de 5 s — con un lease más corto no queda margen razonable para
+  // "timeoutMs" más el colchón de 1 s de "Cola del pool y lease" (JSDoc de
+  // arriba); casi cualquier `timeoutMs` válido terminaría liberando TODO,
+  // sin que la validación de abajo (que sí exige `timeoutMs <= leaseMs / 2`)
+  // alcance a evitarlo del todo en el extremo.
+  if (!(leaseMs >= 5000)) {
+    throw new ErrorOutbox("opciones_invalidas", `procesarOutbox: "leaseMs" tiene que ser >= 5000 (fue ${leaseMs}).`);
+  }
   const timeoutMs = opciones.timeoutMs ?? Math.floor(leaseMs / 2);
   if (!(timeoutMs > 0)) {
     throw new ErrorOutbox("opciones_invalidas", `procesarOutbox: "timeoutMs" tiene que ser > 0 (fue ${timeoutMs}).`);
   }
-  if (!(timeoutMs < leaseMs)) {
+  // I1: `<= leaseMs / 2`, no solo `< leaseMs` (la validación de la ronda
+  // anterior) — ver el JSDoc de la opción para el porqué (un `timeoutMs`
+  // cercano a `leaseMs` deja "Cola del pool y lease" sin margen real para
+  // distinguir "alcanza" de "no alcanza").
+  if (!(timeoutMs <= leaseMs / 2)) {
     throw new ErrorOutbox(
       "opciones_invalidas",
-      `procesarOutbox: "timeoutMs" tiene que ser < "leaseMs" (timeoutMs=${timeoutMs}, leaseMs=${leaseMs}) — si un intento pudiera durar más que el lease, otro worker lo reclamaría de nuevo antes de que termine.`,
+      `procesarOutbox: "timeoutMs" tiene que ser <= "leaseMs / 2" (timeoutMs=${timeoutMs}, leaseMs=${leaseMs}, leaseMs/2=${leaseMs / 2}).`,
     );
   }
   const concurrencia = opciones.concurrencia ?? 5;
@@ -299,6 +327,21 @@ export async function procesarOutbox(opciones: OpcionesProcesarOutbox): Promise<
   }
   const ahora = opciones.ahora ?? (() => new Date());
 
+  // Aviso (nunca un error): con `concurrencia` acotada y un `lote` grande,
+  // el PEOR caso (todas las filas del lote necesitan la cola entera del
+  // pool, cada una tardando hasta `timeoutMs`) puede superar `leaseMs` —
+  // no es inseguro (el chequeo de "Cola del pool y lease" libera lo que no
+  // llega a tiempo en vez de arriesgarse), pero sí es un desperdicio real:
+  // muchas filas van a terminar en `liberados` en vez de intentarse. Se
+  // avisa en el RESUMEN, nunca con un log — quien llama decide qué hacer.
+  const advertencias: string[] = [];
+  const olasDelPool = Math.ceil(lote / concurrencia);
+  if (leaseMs < timeoutMs * olasDelPool) {
+    advertencias.push(
+      `leaseMs (${leaseMs}) es menor que timeoutMs * ceil(lote / concurrencia) (${timeoutMs} * ${olasDelPool} = ${timeoutMs * olasDelPool}) — con "concurrencia" baja y un "lote" grande, muchas filas pueden llegar a su turno sin margen de lease y liberarse en vez de intentarse (ver "liberados" en el resumen). Subí "leaseMs", subí "concurrencia", o bajá "lote".`,
+    );
+  }
+
   const momento = ahora();
   let reclamados: FilaReclamada[];
   try {
@@ -309,12 +352,12 @@ export async function procesarOutbox(opciones: OpcionesProcesarOutbox): Promise<
     // error puede haber pasado en cualquier punto de la transacción, que
     // hizo rollback entera), así que `reclamados` queda en 0 — ninguna fila
     // real quedó "procesando" sin cerrar.
-    return { ...RESUMEN_VACIO, errores: 1, ultimoError: { codigo: codigoPgDeError(error) } };
+    return { ...resumenVacio(advertencias), errores: 1, ultimoError: { codigo: codigoPgDeError(error) } };
   }
 
-  if (reclamados.length === 0) return RESUMEN_VACIO;
+  if (reclamados.length === 0) return resumenVacio(advertencias);
 
-  const resumen: ResumenProcesarOutbox = { ...RESUMEN_VACIO, reclamados: reclamados.length };
+  const resumen: ResumenProcesarOutbox = { ...resumenVacio(advertencias), reclamados: reclamados.length };
 
   const resultados = await procesarConLimite(reclamados, concurrencia, async (fila) => {
     if (fila.estadoResultante === "fallido") {
@@ -323,16 +366,38 @@ export async function procesarOutbox(opciones: OpcionesProcesarOutbox): Promise<
       return "fallidos" as const;
     }
 
+    // M1: `reclamarLote` normaliza `bloqueadoHasta` de vuelta a `Date` (ver
+    // su JSDoc), pero viene de un `RETURNING` de SQL crudo — si esa
+    // normalización fallara o el dato viniera corrupto, `.getTime()` de un
+    // no-`Date`/`Invalid Date` da `NaN`, no tira. Con `NaN` la comparación
+    // de abajo (`restanteMs < minimoRestante`) es SIEMPRE falsa (`NaN < x`
+    // es `false`), así que sin esta guarda se intentaría igual el
+    // Transporte con un `timeoutEfectivoMs` también `NaN` — mejor perder la
+    // fila explícitamente (sin tocar ningún Transporte) que arriesgar un
+    // envío con un lease que no se puede verificar.
+    if (!(fila.bloqueadoHasta instanceof Date) || Number.isNaN(fila.bloqueadoHasta.getTime())) {
+      return "perdidos" as const;
+    }
+
     // "Cola del pool y lease" (ver el JSDoc de arriba): se recalcula con el
     // reloj de ESTE momento, no el del reclamo — puede haber pasado tiempo
     // real esperando su turno en el pool.
     const momentoDelTurno = ahora();
-    const restanteMs = (fila.bloqueadoHasta as Date).getTime() - momentoDelTurno.getTime();
-    if (restanteMs <= timeoutMs) {
+    const restanteMs = fila.bloqueadoHasta.getTime() - momentoDelTurno.getTime();
+    // I1/I2: se libera si no queda margen para un intento con sentido —
+    // "margen para un intento con sentido" es `timeoutMs` (el tiempo que de
+    // verdad se le va a dar al Transporte) más el colchón fijo de 1 s con
+    // el que se calcula `timeoutEfectivoMs` más abajo. Con esto, cuando SÍ
+    // se intenta (`restanteMs >= minimoRestante`), `restanteMs - 1000` es
+    // siempre `>= timeoutMs`, así que el clamp de abajo da exactamente
+    // `timeoutMs` — nunca un timeout efectivo más chico y "raro" que el
+    // configurado.
+    const minimoRestante = timeoutMs + 1000;
+    if (restanteMs < minimoRestante) {
       return liberarFila(opciones.db, opciones.tabla, fila, momentoDelTurno);
     }
 
-    const timeoutEfectivoMs = Math.max(1, Math.min(timeoutMs, restanteMs - 1000));
+    const timeoutEfectivoMs = Math.max(1000, Math.min(timeoutMs, restanteMs - 1000));
     const resultado = await intentarTransporte(opciones.transportes, fila, timeoutEfectivoMs);
     return registrarResultado(opciones.db, opciones.tabla, fila, resultado, ahora());
   });
