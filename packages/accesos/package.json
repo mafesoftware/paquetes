@@ -1,0 +1,39 @@
+{
+  "name": "@mafesoftware/accesos",
+  "version": "0.1.0",
+  "description": "Reglas de control de acceso y cola offline idempotente. Puro.",
+  "license": "MIT",
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "publishConfig": {
+    "main": "./dist/index.js",
+    "types": "./dist/index.d.ts",
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      }
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@mafesoftware/fechas-ar": "workspace:*"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
