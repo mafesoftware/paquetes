@@ -423,7 +423,19 @@ export async function auditar(
 
     const antesListo = antesRedactado === undefined ? null : serializarParaAuditoria(antesRedactado);
     const despuesListo = despuesRedactado === undefined ? null : serializarParaAuditoria(despuesRedactado);
-    const cambiosListos = serializarParaAuditoria(cambiosParaGuardar);
+    // Cada lado de cada cambio se serializa POR SEPARADO (no el arreglo
+    // entero): así el tope de profundidad (`PROFUNDIDAD_MAXIMA`) cuenta
+    // desde el valor de la hoja, que ya viene cortado en el mismo lugar
+    // absoluto que las copias `antes`/`despues` — serializar el arreglo
+    // entero lo metería dos niveles más abajo y cortaría antes que las copias.
+    const cambiosListos = cambiosParaGuardar.map((cambio) => {
+      const listo: Record<string, unknown> = { campo: cambio.campo };
+      const a = serializarParaAuditoria(cambio.antes);
+      const d = serializarParaAuditoria(cambio.despues);
+      if (a !== undefined) listo.antes = a;
+      if (d !== undefined) listo.despues = d;
+      return listo;
+    });
 
     // Los tres valores para las columnas `jsonb` se pasan como TEXTO
     // (`JSON.stringify`), nunca como el objeto/arreglo JS crudo. Dos

@@ -246,3 +246,22 @@ de punta a punta:
   - `auditar` lee `antes`, `despues` y `camposSensibles` una sola vez con
     el resto de la entrada: el diff y las copias usan los mismos valores, y
     un getter que tira da `"error preparando la auditoría"`.
+- Ronda de fix 3 de P.10b:
+  - **`PROFUNDIDAD_MAXIMA` (500), exportada.** `redactar`,
+    `serializarParaAuditoria`, `normalizarParaDiff` y `loQueCambio` cortan
+    en el mismo lugar: un contenedor más hondo queda `"[profundidad]"` (un
+    primitivo se conserva). Antes un dato de ~1650–2600 niveles reventaba el
+    stack (`RangeError`) de funciones que "nunca tiran". `loQueCambio`
+    compara lo cortado como `"[profundidad]"` (dos estructuras que solo
+    difieren más abajo del tope no generan cambio, igual que sus copias) y
+    devuelve una copia cortada de una hoja que lo pasa. `auditar` serializa
+    cada lado de cada cambio por separado, para cortar en el mismo lugar que
+    las copias.
+  - La raíz verdadera de `loQueCambio` lleva una marca interna no
+    enumerable: una clave real `"(raiz)"` ya no se saltea la redacción por
+    ruta (`["(raiz)"]`, `["(raiz).numero"]`).
+  - Cada segmento de una ruta se normaliza por separado: un ancestro con
+    sufijo de colisión (`"cuenta (2)"`) ya no esquiva `["cuenta.numero"]`.
+  - Un `Proxy` revocado queda `"[error]"` en `redactar`/`serializar`/
+    `normalizar` (antes `Array.isArray` tiraba).
+

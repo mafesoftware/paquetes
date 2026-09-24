@@ -1,5 +1,5 @@
-import { colaSensible, normalizarTerminos, puntosMaximos } from "./coincidencia-sensible.js";
-import { clasificar, clavesPropias, definirPropiedad, elementosDeSet, entradasDeMap, intentar, llamarToJSON } from "./tipos-especiales.js";
+import { colaSensible, normalizarClave, normalizarTerminos, puntosMaximos } from "./coincidencia-sensible.js";
+import { clasificar, clavesPropias, definirPropiedad, elementosDeSet, entradasDeMap, esArreglo, excedeProfundidad, intentar, llamarToJSON, TEXTO_PROFUNDIDAD } from "./tipos-especiales.js";
 
 /**
  * Los nombres de campo que `redactar` tapa por defecto, en cualquier
@@ -53,7 +53,9 @@ function leerPropiedad(objeto: Record<string, unknown>, clave: string): { ok: tr
 /**
  * Lo que `redactarValor` arrastra en la recursión: los términos YA
  * normalizados, su `puntosMaximos` (calculado una vez) y la RUTA de claves
- * desde la raíz hasta el nodo actual. Los arreglos, `Set`s y `toJSON` no
+ * desde la raíz hasta el nodo actual, cada una YA NORMALIZADA
+ * (`normalizarClave`, que saca el sufijo de colisión de CADA segmento: un
+ * ancestro `"cuenta (2)"` de un `Map` cuenta como `"cuenta"`). Los arreglos, `Set`s y `toJSON` no
  * suman segmento (igual que en las rutas de `loQueCambio`, donde un arreglo
  * es una hoja); las claves de objeto y de `Map` sí.
  */
@@ -70,23 +72,29 @@ interface Contexto {
  * `maxPuntos + 1` segmentos): así `"cuenta.numero"` tapa `{ cuenta: {
  * numero } }` igual que la clave literal `"cuenta.numero"`.
  */
-function redactarEntrada(clave: string, valor: unknown, ctx: Contexto, pila: Set<object>): unknown {
-  ctx.ruta.push(clave);
+function redactarEntrada(clave: string, valor: unknown, ctx: Contexto, pila: Set<object>, profundidad: number): unknown {
+  ctx.ruta.push(normalizarClave(clave));
   try {
-    return colaSensible(ctx.ruta, ctx.ruta.length - 1, ctx.sensibles, ctx.maxPuntos) ? "[redactado]" : redactarValor(valor, ctx, pila);
+    return colaSensible(ctx.ruta, ctx.ruta.length - 1, ctx.sensibles, ctx.maxPuntos) ? "[redactado]" : redactarValor(valor, ctx, pila, profundidad);
   } finally {
     ctx.ruta.pop();
   }
 }
 
-function redactarValor(valor: unknown, ctx: Contexto, pila: Set<object>): unknown {
-  if (Array.isArray(valor)) {
-    if (pila.has(valor)) return "[ciclo]";
-    pila.add(valor);
+function redactarValor(valor: unknown, ctx: Contexto, pila: Set<object>, profundidad: number): unknown {
+  // P1 (P.10b, ronda de fix 3): tope de profundidad — ver PROFUNDIDAD_MAXIMA.
+  if (excedeProfundidad(valor, profundidad)) return TEXTO_PROFUNDIDAD;
+  // P5: `Array.isArray` tira con un Proxy revocado.
+  const arreglo = esArreglo(valor);
+  if (arreglo === "error") return "[error]";
+  if (arreglo) {
+    const lista = valor as unknown[];
+    if (pila.has(lista)) return "[ciclo]";
+    pila.add(lista);
     try {
-      return valor.map((v) => redactarValor(v, ctx, pila));
+      return lista.map((v) => redactarValor(v, ctx, pila, profundidad + 1));
     } finally {
-      pila.delete(valor);
+      pila.delete(lista);
     }
   }
   if (typeof valor !== "object" || valor === null) {
@@ -119,7 +127,7 @@ function redactarValor(valor: unknown, ctx: Contexto, pila: Set<object>): unknow
       // arreglo). `pila` sigue agregado por si el toJSON devuelve `this`
       // (patológico, pero posible): la próxima vuelta lo detecta como
       // ancestro y corta con "[ciclo]" en vez de loopear para siempre.
-      return redactarValor(llamado.valor, ctx, pila);
+      return redactarValor(llamado.valor, ctx, pila, profundidad + 1);
     } finally {
       pila.delete(valor);
     }
@@ -140,7 +148,7 @@ function redactarValor(valor: unknown, ctx: Contexto, pila: Set<object>): unknow
       if (!leidas.ok) return "[error]";
       const resultado: Record<string, unknown> = {};
       for (const { clave, valor: v } of leidas.entradas) {
-        definirPropiedad(resultado, clave, redactarEntrada(clave, v, ctx, pila));
+        definirPropiedad(resultado, clave, redactarEntrada(clave, v, ctx, pila, profundidad + 1));
       }
       return resultado;
     } finally {
@@ -154,7 +162,7 @@ function redactarValor(valor: unknown, ctx: Contexto, pila: Set<object>): unknow
     try {
       const leidos = elementosDeSet(valor as Set<unknown>);
       if (!leidos.ok) return "[error]";
-      return leidos.elementos.map((v) => redactarValor(v, ctx, pila));
+      return leidos.elementos.map((v) => redactarValor(v, ctx, pila, profundidad + 1));
     } finally {
       pila.delete(valor);
     }
@@ -182,7 +190,7 @@ function redactarValor(valor: unknown, ctx: Contexto, pila: Set<object>): unknow
         definirPropiedad(resultado, clave, "[error]");
         continue;
       }
-      definirPropiedad(resultado, clave, redactarEntrada(clave, leido.valor, ctx, pila));
+      definirPropiedad(resultado, clave, redactarEntrada(clave, leido.valor, ctx, pila, profundidad + 1));
     }
     return resultado;
   } finally {
@@ -284,6 +292,11 @@ function redactarValor(valor: unknown, ctx: Contexto, pila: Set<object>): unknow
  *   (un `Proxy` sobre un `Map`, una subclase con un `entries()` roto)
  *   queda `"[error]"`.
  *
+ * **Profundidad máxima**: un contenedor más hondo que `PROFUNDIDAD_MAXIMA`
+ * (500; la raíz es 0) queda `"[profundidad]"` sin recorrerse (un primitivo
+ * se conserva) — sin tope, un dato muy anidado reventaba el stack. Un
+ * `Proxy` revocado queda `"[error]"`.
+ *
  * Nunca tira: una referencia circular queda como `"[ciclo]"`, una clave
  * cuyo `get` tira queda como `"[error]"`, una clave de `Map` cuyo
  * `toString` tira (o un objeto sin prototipo como clave) queda como
@@ -347,6 +360,9 @@ export function redactar<T>(obj: T, camposSensibles: readonly string[] = CAMPOS_
  * punto se evalúe igual que en las copias guardadas.
  */
 export function redactarConTerminos<T>(obj: T, terminosNormalizados: ReadonlySet<string>, rutaInicial: readonly string[] = []): T {
-  const ctx: Contexto = { sensibles: terminosNormalizados, maxPuntos: puntosMaximos(terminosNormalizados), ruta: [...rutaInicial] };
-  return redactarValor(obj, ctx, new Set()) as T;
+  const ctx: Contexto = { sensibles: terminosNormalizados, maxPuntos: puntosMaximos(terminosNormalizados), ruta: rutaInicial.map(normalizarClave) };
+  // La profundidad arranca en 0 aunque haya `rutaInicial`: en `redactarCambios`
+  // la hoja de un cambio viene de `loQueCambio` sobre valores YA cortados por
+  // `normalizarParaDiff`, así que no hace falta sumar la ruta.
+  return redactarValor(obj, ctx, new Set(), 0) as T;
 }

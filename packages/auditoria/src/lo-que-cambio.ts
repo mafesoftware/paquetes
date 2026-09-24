@@ -1,4 +1,4 @@
-import { intentar } from "./tipos-especiales.js";
+import { definirPropiedad, esArreglo, excedeProfundidad, intentar, PROFUNDIDAD_MAXIMA, TEXTO_PROFUNDIDAD } from "./tipos-especiales.js";
 
 /** Un campo que cambió entre `antes` y `despues`. */
 export interface CambioAuditoria {
@@ -71,20 +71,98 @@ function oError(v: unknown): unknown {
  * tira o un getter que tira, en cualquier punto de la comparación, dan
  * `false` ("no son iguales") — el cambio se reporta, nunca se esconde.
  */
-function sonIguales(a: unknown, b: unknown): boolean {
-  const r = intentar(() => sonIgualesSinGuardia(a, b, new Set()));
+/**
+ * Marca (no enumerable, así no cambia la forma visible del cambio ni lo que
+ * se serializa) del cambio de la RAÍZ verdadera. Antes `redactarCambios`
+ * reconocía la raíz por el texto `campo === "(raiz)"`, que también da una
+ * clave REAL llamada `"(raiz)"` — y esa clave se salteaba la redacción por
+ * ruta. Un `Symbol` no lo puede producir ninguna clave.
+ */
+const RAIZ: unique symbol = Symbol("raiz");
+
+/** ¿`cambio` es el de la raíz verdadera (no una clave llamada `"(raiz)"`)? Interno: lo usa `redactarCambios`. */
+export function esCambioDeRaiz(cambio: CambioAuditoria): boolean {
+  return (cambio as { [RAIZ]?: boolean })[RAIZ] === true;
+}
+
+/** Un contenedor más hondo que `PROFUNDIDAD_MAXIMA` se compara (y se reporta) como `"[profundidad]"`. */
+function cortar(v: unknown, profundidad: number): unknown {
+  return excedeProfundidad(v, profundidad) ? TEXTO_PROFUNDIDAD : v;
+}
+
+/** ¿Hay, adentro de `v` (arreglos y objetos planos), un contenedor más hondo que el tope? Recursión acotada por el tope. */
+function excede(v: unknown, profundidad: number, pila: Set<object>): boolean {
+  if (typeof v !== "object" || v === null) return false;
+  if (profundidad > PROFUNDIDAD_MAXIMA) return true;
+  if (pila.has(v)) return false;
+  const arreglo = esArreglo(v);
+  if (arreglo === "error") return false;
+  if (!arreglo && !esObjetoPlano(v)) return false;
+  const claves = clavesOIndefinido(v);
+  if (claves === undefined) return false;
+  pila.add(v);
+  try {
+    return claves.some((clave) => excede(leerOError(v as Record<string, unknown>, clave), profundidad + 1, pila));
+  } finally {
+    pila.delete(v);
+  }
+}
+
+/** Copia de `v` con los contenedores más hondos que el tope reemplazados por `"[profundidad]"` (solo arreglos y objetos planos; lo demás es una hoja y va tal cual). */
+function copiarCortado(v: unknown, profundidad: number, pila: Set<object>): unknown {
+  if (typeof v !== "object" || v === null) return v;
+  if (profundidad > PROFUNDIDAD_MAXIMA) return TEXTO_PROFUNDIDAD;
+  if (pila.has(v)) return "[ciclo]";
+  const arreglo = esArreglo(v);
+  if (arreglo === "error" || (!arreglo && !esObjetoPlano(v))) return v;
+  const claves = clavesOIndefinido(v);
+  if (claves === undefined) return v;
+  pila.add(v);
+  try {
+    if (arreglo) return claves.map((clave) => copiarCortado(leerOError(v as Record<string, unknown>, clave), profundidad + 1, pila));
+    const copia: Record<string, unknown> = {};
+    for (const clave of claves) definirPropiedad(copia, clave, copiarCortado(leerOError(v as Record<string, unknown>, clave), profundidad + 1, pila));
+    return copia;
+  } finally {
+    pila.delete(v);
+  }
+}
+
+/**
+ * El valor de un lado de un cambio, como se devuelve: el MISMO valor si
+ * nada adentro pasa el tope (lo normal — se conservan las referencias), o
+ * una copia cortada si algo lo pasa (así un secreto más hondo que el tope no
+ * sale de `loQueCambio`).
+ */
+function acotar(v: unknown, profundidad: number): unknown {
+  // `excede` y `copiarCortado` no tiran: toda inspección pasa por
+  // `esArreglo`/`esObjetoPlano`/`clavesOIndefinido`/`leerOError`, ya guardadas.
+  return excede(v, profundidad, new Set()) ? copiarCortado(v, profundidad, new Set()) : v;
+}
+
+/** Agrega un cambio, con los valores acotados y la marca de raíz si corresponde. */
+function registrar(cambios: CambioAuditoria[], ruta: string, profundidad: number, antes: unknown, despues: unknown): void {
+  const cambio: CambioAuditoria = { campo: ruta || "(raiz)", antes: acotar(antes, profundidad), despues: acotar(despues, profundidad) };
+  if (profundidad === 0) Object.defineProperty(cambio, RAIZ, { value: true, enumerable: false });
+  cambios.push(cambio);
+}
+
+function sonIguales(a: unknown, b: unknown, profundidad: number): boolean {
+  const r = intentar(() => sonIgualesSinGuardia(a, b, new Set(), profundidad));
   return r.ok && r.valor;
 }
 
-function sonIgualesSinGuardia(a: unknown, b: unknown, pila: Set<object>): boolean {
+function sonIgualesSinGuardia(a: unknown, b: unknown, pila: Set<object>, profundidad: number): boolean {
   if (a === b) return true;
+  // P1: más abajo del tope, un contenedor es "[profundidad]" de los dos lados (igual, como en las copias guardadas).
+  if (profundidad > PROFUNDIDAD_MAXIMA) return cortar(a, profundidad) === cortar(b, profundidad);
   if (a instanceof Date && b instanceof Date) return a.getTime() === b.getTime();
   if (Array.isArray(a) && Array.isArray(b)) {
     if (pila.has(a)) return pila.has(b);
     if (a.length !== b.length) return false;
     pila.add(a);
     try {
-      return a.every((v, i) => sonIgualesSinGuardia(v, b[i], pila));
+      return a.every((v, i) => sonIgualesSinGuardia(v, b[i], pila, profundidad + 1));
     } finally {
       pila.delete(a);
     }
@@ -96,7 +174,7 @@ function sonIgualesSinGuardia(a: unknown, b: unknown, pila: Set<object>): boolea
     if (clavesA.length !== clavesB.length) return false;
     pila.add(a);
     try {
-      return clavesA.every((clave) => clave in b && sonIgualesSinGuardia(a[clave], b[clave], pila));
+      return clavesA.every((clave) => clave in b && sonIgualesSinGuardia(a[clave], b[clave], pila, profundidad + 1));
     } finally {
       pila.delete(a);
     }
@@ -123,6 +201,7 @@ function diff(
   cambios: CambioAuditoria[],
   pilaAntes: Set<object>,
   pilaDespues: Set<object>,
+  profundidad: number,
 ): void {
   // Misma REFERENCIA (o mismo primitivo) de los dos lados: no hay nada que
   // reportar. Además de ser el caso obvio (`loQueCambio(x, x)` con `x` lo
@@ -137,11 +216,21 @@ function diff(
   // corta el caso en el que literalmente no hay diferencia posible.
   if (antesEntrada === despuesEntrada) return;
 
+  // P1 (ronda de fix 3): más abajo del tope no se recorre; un contenedor se
+  // compara como "[profundidad]". Se chequea con `typeof` nada más, antes de
+  // cualquier inspección.
+  if (profundidad > PROFUNDIDAD_MAXIMA) {
+    const a = cortar(antesEntrada, profundidad);
+    const d = cortar(despuesEntrada, profundidad);
+    if (a !== d) registrar(cambios, ruta, profundidad, a, d);
+    return;
+  }
+
   // Ronda 5 (M3): un nodo que no se puede inspeccionar (un `Proxy` revocado,
   // uno con `getPrototypeOf` roto) se reemplaza por `"[error]"` antes de
   // cualquier otra cosa — así nada de lo que sigue puede tirar por él.
   if (!inspeccionable(antesEntrada) || !inspeccionable(despuesEntrada)) {
-    diff(oError(antesEntrada), oError(despuesEntrada), ruta, cambios, pilaAntes, pilaDespues);
+    diff(oError(antesEntrada), oError(despuesEntrada), ruta, cambios, pilaAntes, pilaDespues, profundidad);
     return;
   }
 
@@ -180,7 +269,7 @@ function diff(
   // frenar). Se reporta el campo como "[ciclo]" y se corta acá: seguir
   // bajando por esta rama nunca termina.
   if ((antesEsObjeto && pilaAntes.has(antes as object)) || (despuesEsObjeto && pilaDespues.has(despues as object))) {
-    cambios.push({ campo: ruta || "(raiz)", antes: "[ciclo]", despues: "[ciclo]" });
+    registrar(cambios, ruta, profundidad, "[ciclo]", "[ciclo]");
     return;
   }
 
@@ -192,7 +281,7 @@ function diff(
     if (clavesAntes === undefined || clavesDespues === undefined) {
       const a = clavesAntes === undefined ? "[error]" : antes;
       const d = clavesDespues === undefined ? "[error]" : despues;
-      if (!sonIguales(a, d)) cambios.push({ campo: ruta || "(raiz)", antes: a, despues: d });
+      if (!sonIguales(a, d, profundidad)) registrar(cambios, ruta, profundidad, a, d);
       return;
     }
     pilaAntes.add(antes);
@@ -206,7 +295,7 @@ function diff(
         // una clave agregada o quitada entre `antes`/`despues` se ve acá
         // igual que un valor que pasó a/desde `undefined`. Un getter que
         // tira da `"[error]"` (M3).
-        diff(leerOError(antes, clave), leerOError(despues, clave), subRuta, cambios, pilaAntes, pilaDespues);
+        diff(leerOError(antes, clave), leerOError(despues, clave), subRuta, cambios, pilaAntes, pilaDespues, profundidad + 1);
       }
     } finally {
       pilaAntes.delete(antes);
@@ -215,8 +304,8 @@ function diff(
     return;
   }
 
-  if (!sonIguales(antes, despues)) {
-    cambios.push({ campo: ruta || "(raiz)", antes, despues });
+  if (!sonIguales(antes, despues, profundidad)) {
+    registrar(cambios, ruta, profundidad, antes, despues);
   }
 }
 
@@ -259,6 +348,16 @@ function diff(
  * comparación de dos hojas (arreglos, por ejemplo) tira en algún punto,
  * se consideran DISTINTAS y el cambio se reporta con los valores tal cual
  * — nunca se esconde un cambio por no poder compararlo.
+ *
+ * **Profundidad máxima** (`PROFUNDIDAD_MAXIMA`, 500): más abajo del tope no
+ * se recorre. Un contenedor ahí se compara como `"[profundidad]"` de los dos
+ * lados — dos estructuras que solo difieren más abajo del tope NO generan
+ * cambio, igual que sus copias guardadas (cortadas en el mismo lugar) — y un
+ * primitivo por su valor. Un valor de hoja con algo más hondo que el tope se
+ * devuelve como copia cortada; si no, el mismo valor. El cambio de la raíz
+ * verdadera lleva una marca interna no enumerable (`esCambioDeRaiz`), para
+ * que `redactarCambios` no confunda la raíz con una clave llamada
+ * `"(raiz)"`.
  *
  * **Nunca tira por un ciclo, y `loQueCambio(x, x)` con `x` autoreferencial
  * da `[]`, no `"[ciclo]"`.** Los dos lados EXACTAMENTE el mismo valor
@@ -323,7 +422,7 @@ function diff(
  */
 export function loQueCambio(antes: unknown, despues: unknown): CambioAuditoria[] {
   const cambios: CambioAuditoria[] = [];
-  diff(antes, despues, "", cambios, new Set(), new Set());
+  diff(antes, despues, "", cambios, new Set(), new Set(), 0);
   cambios.sort((a, b) => (a.campo < b.campo ? -1 : a.campo > b.campo ? 1 : 0));
   return cambios;
 }

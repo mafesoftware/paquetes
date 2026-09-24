@@ -1,9 +1,10 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { PgDialect } from "drizzle-orm/pg-core";
 import type { SQL } from "drizzle-orm";
 import { auditar, type EntradaAuditoria } from "../../src/drizzle/auditar.js";
 import { tablaAuditoria } from "../../src/drizzle/tabla.js";
 import type { DbCliente } from "../../src/drizzle/cliente.js";
+import { contarComparaciones, reiniciarContador } from "../../src/coincidencia-sensible.js";
 
 /**
  * Tarea P.10b — hotfix de redacción. Todo corre por el `auditar` REAL con un
@@ -57,7 +58,8 @@ async function auditarCapturando(parcial: Partial<EntradaAuditoria>): Promise<Ca
 
 /** El valor en `ruta` (con puntos; `"(raiz)"` es el valor entero) de una copia guardada. Una clave puede tener un punto adentro (`"api.key"`): se prueba cada prefijo de segmentos como clave. */
 function enRuta(copia: unknown, campo: string): unknown {
-  if (campo === "(raiz)") return copia;
+  // "(raiz)" es la raíz, salvo que la copia tenga una clave REAL "(raiz)" (P2).
+  if (campo === "(raiz)" && !(copia !== null && typeof copia === "object" && Object.hasOwn(copia, "(raiz)"))) return copia;
   const resolver = (actual: unknown, segmentos: string[]): unknown => {
     if (segmentos.length === 0) return actual;
     if (actual === null || typeof actual !== "object") return undefined;
@@ -387,32 +389,41 @@ describe("Fix round 1 (P.10b) — M4: getters rotos en tenantId/actor/ip/userAge
 });
 
 describe("Fix round 2 (P.10b) — D1: rutas con muchos puntos no bloquean", () => {
-  const TOPE_MS = 200;
+  // Ronda de fix 3 (P4): la cota se verifica CONTANDO comparaciones contra
+  // los términos (determinista); el reloj queda solo como chequeo grueso.
+  const TOPE_MS = 2000;
+  beforeEach(() => reiniciarContador());
 
-  it("una clave de ~10k puntos (con términos default y con uno con punto) se audita en < 200 ms", async () => {
+  it("una clave de ~10k puntos (con términos default y con uno con punto) se audita con O(n) comparaciones (y < 2 s)", async () => {
     const sensible = `x${".".repeat(10_000)}password`;
     const inocente = `x${".".repeat(10_000)}y`;
     for (const camposSensibles of [undefined, ["api.key", "password"]]) {
       const inicio = performance.now();
       const c = await auditarCapturando({ camposSensibles, antes: { [sensible]: "DOS1", [inocente]: 1 }, despues: { [sensible]: "DOS2", [inocente]: 2 } });
       expect(performance.now() - inicio).toBeLessThan(TOPE_MS);
+      const k = (camposSensibles ? 1 : 0) + 1; // maxPuntos + 1
+      expect(contarComparaciones()).toBeLessThanOrEqual(2 * 10_001 * k + 100);
+      reiniciarContador();
       expect(c.cambios).toContainEqual({ campo: sensible, antes: "[redactado]", despues: "[redactado]" });
       expect(c.cambios).toContainEqual({ campo: inocente, antes: 1, despues: 2 });
       verificar(c, ["DOS1", "DOS2"]);
     }
   });
 
-  it("una ruta de 4000 segmentos (clave con puntos) se audita en < 200 ms, también con un término de 3 puntos", async () => {
+  it("una ruta de 4000 segmentos (clave con puntos) se audita con O(n) comparaciones (y < 2 s), también con un término de 3 puntos", async () => {
     const clave = Array.from({ length: 4000 }, (_, i) => `s${i}`).join(".");
     for (const camposSensibles of [undefined, ["a.b.c.d"]]) {
       const inicio = performance.now();
       const c = await auditarCapturando({ camposSensibles, antes: { [clave]: 1 }, despues: { [clave]: 2 } });
       expect(performance.now() - inicio).toBeLessThan(TOPE_MS);
+      const k = camposSensibles ? 4 : 1; // maxPuntos + 1
+      expect(contarComparaciones()).toBeLessThanOrEqual(4000 * k + 100);
+      reiniciarContador();
       expect(c.cambios).toEqual([{ campo: clave, antes: 1, despues: 2 }]);
     }
   });
 
-  it("un objeto anidado 300 niveles con un término con punto se audita en < 200 ms", async () => {
+  it("un objeto anidado 300 niveles con un término con punto se audita con comparaciones acotadas (y < 2 s)", async () => {
     const armar = (hoja: string) => {
       let v: Record<string, unknown> = { cuenta: { numero: hoja } };
       for (let i = 0; i < 300; i++) v = { n: v };
@@ -421,6 +432,8 @@ describe("Fix round 2 (P.10b) — D1: rutas con muchos puntos no bloquean", () =
     const inicio = performance.now();
     const c = await auditarCapturando({ camposSensibles: ["cuenta.numero"], antes: armar("PROF1"), despues: armar("PROF2") });
     expect(performance.now() - inicio).toBeLessThan(TOPE_MS);
+    // ~302 claves por copia (2 copias) + ~303 segmentos de la ruta del cambio, cada uno con a lo sumo 2 colas.
+    expect(contarComparaciones()).toBeLessThanOrEqual((2 * 302 + 303) * 2 + 100);
     verificar(c, ["PROF1", "PROF2"]);
   });
 });
@@ -522,5 +535,89 @@ describe("Fix round 2 (P.10b) — \\p{Cc} y lectura única de antes/despues/camp
     expect(c.antes).toEqual({ nombre: "Ana", pin: "[redactado]" });
     expect(c.despues).toEqual({ nombre: "Beto", pin: "[redactado]" });
     verificar(c, ["P1", "P2", "FUGA-A", "FUGA-D", "OTRO"]);
+  });
+});
+
+describe("Fix round 3 (P.10b) — P1: profundidad máxima en auditar", () => {
+  it("un objeto de 5000 niveles: { ok: true }, ningún secreto en los parámetros, las copias llevan [profundidad]", async () => {
+    const hondo = (secreto: string) => {
+      let v: Record<string, unknown> = { nota: secreto };
+      for (let i = 0; i < 5000; i++) v = { n: v };
+      return v;
+    };
+    const c = await auditarCapturando({ antes: hondo("HONDO-1"), despues: hondo("HONDO-2") });
+    const todo = JSON.stringify(c.params);
+    expect(todo).not.toContain("HONDO-1");
+    expect(todo).not.toContain("HONDO-2");
+    expect(JSON.stringify(c.antes)).toContain("[profundidad]");
+    // Los dos lados quedan cortados igual: no se inventa un cambio (documentado).
+    expect(c.cambios).toEqual([]);
+  });
+
+  it("un arreglo de 5000 niveles contra un escalar: el cambio se registra con [profundidad], sin el secreto", async () => {
+    let arr: unknown = ["ARR-SECRETO"];
+    for (let i = 0; i < 5000; i++) arr = [arr];
+    const c = await auditarCapturando({ antes: { l: arr }, despues: { l: 1 } });
+    expect(JSON.stringify(c.params)).not.toContain("ARR-SECRETO");
+    expect(JSON.stringify(c.cambios)).toContain("[profundidad]");
+    verificar(c, ["ARR-SECRETO"]);
+  });
+});
+
+describe("Fix round 3 (P.10b) — P2: una clave real \"(raiz)\" no es la raíz", () => {
+  it('término propio ["(raiz)"] con una clave "(raiz)": tapada en las copias y en cambios', async () => {
+    const c = await auditarCapturando({ camposSensibles: ["(raiz)"], antes: { "(raiz)": "RZ1", x: 1 }, despues: { "(raiz)": "RZ2", x: 1 } });
+    expect(c.antes).toEqual({ "(raiz)": "[redactado]", x: 1 });
+    expect(c.cambios).toEqual([{ campo: "(raiz)", antes: "[redactado]", despues: "[redactado]" }]);
+    verificar(c, ["RZ1", "RZ2"]);
+  });
+
+  it('término "(raiz).numero" con { "(raiz)": { numero } } adentro de una hoja: tapado en los dos lugares', async () => {
+    const c = await auditarCapturando({ camposSensibles: ["(raiz).numero"], antes: { "(raiz)": [{ numero: "RN1" }] }, despues: { "(raiz)": [{ numero: "RN2" }] } });
+    expect(c.despues).toEqual({ "(raiz)": [{ numero: "[redactado]" }] });
+    expect(c.cambios).toEqual([{ campo: "(raiz)", antes: [{ numero: "[redactado]" }], despues: [{ numero: "[redactado]" }] }]);
+    verificar(c, ["RN1", "RN2"]);
+  });
+
+  it("la raíz VERDADERA (null → arreglo) sigue sin sumar un segmento \"(raiz)\"", async () => {
+    const c = await auditarCapturando({ camposSensibles: ["(raiz).numero", "password"], antes: null, despues: [{ numero: 7, password: "RV1" }] });
+    expect(c.cambios).toEqual([{ campo: "(raiz)", antes: null, despues: [{ numero: 7, password: "[redactado]" }] }]);
+    verificar(c, ["RV1"]);
+  });
+});
+
+describe("Fix round 3 (P.10b) — P3: un ancestro con sufijo de colisión no esquiva un término con punto", () => {
+  it('un Map con dos claves "cuenta": el numero de las DOS entradas queda tapado (copias y cambios)', async () => {
+    const otra = { toString: () => "cuenta" };
+    const m = (a: string, b: string) => new Map<unknown, unknown>([["cuenta", { numero: a }], [otra, { numero: b }]]);
+    const c = await auditarCapturando({ camposSensibles: ["cuenta.numero"], antes: { m: m("MC1", "MC2") }, despues: { m: m("MC3", "MC4") } });
+    expect(c.despues).toEqual({ m: { cuenta: { numero: "[redactado]" }, "cuenta (2)": { numero: "[redactado]" } } });
+    expect(c.cambios).toEqual([
+      { campo: "m.cuenta (2).numero", antes: "[redactado]", despues: "[redactado]" },
+      { campo: "m.cuenta.numero", antes: "[redactado]", despues: "[redactado]" },
+    ]);
+    verificar(c, ["MC1", "MC2", "MC3", "MC4"]);
+  });
+
+  it("también cuando el Map queda adentro de una hoja (arreglo)", async () => {
+    const otra = { toString: () => "cuenta" };
+    const m = (a: string, b: string) => [new Map<unknown, unknown>([["cuenta", { numero: a }], [otra, { numero: b }]])];
+    const c = await auditarCapturando({ camposSensibles: ["cuenta.numero"], antes: { l: m("MH1", "MH2") }, despues: { l: m("MH3", "MH4") } });
+    expect(c.despues).toEqual({ l: [{ cuenta: { numero: "[redactado]" }, "cuenta (2)": { numero: "[redactado]" } }] });
+    verificar(c, ["MH1", "MH2", "MH3", "MH4"]);
+  });
+});
+
+describe("Fix round 3 (P.10b) — P5: Proxy revocado / ownKeys roto / getter roto por auditar", () => {
+  it("el MISMO dato roto en antes y despues: { ok: true } sin rechazar, y nunca el mensaje del error", async () => {
+    const { proxy: revocado, revoke } = Proxy.revocable({}, {});
+    revoke();
+    const ownKeysRoto = new Proxy({}, { ownKeys: () => { throw new Error("P5-OWNKEYS"); } });
+    const getterRoto = { get x(): never { throw new Error("P5-GETTER"); } };
+    for (const roto of [revocado, ownKeysRoto, getterRoto]) {
+      const c = await auditarCapturando({ antes: { k: roto, a: [roto] }, despues: { k: roto, a: [roto, 1] } });
+      expect(JSON.stringify(c.params)).not.toContain("P5-");
+      expect(c.cambios.map((x) => x.campo)).toEqual(["a"]);
+    }
   });
 });

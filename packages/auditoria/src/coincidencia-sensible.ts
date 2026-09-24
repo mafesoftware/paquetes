@@ -105,7 +105,26 @@ export function normalizarTerminos(camposSensibles: readonly string[]): Set<stri
  * miran el contenido de los strings, ver el JSDoc de `redactar`.
  */
 export function esClaveSensible(clave: string, terminosNormalizados: ReadonlySet<string>): boolean {
-  const normalizada = normalizarClave(clave);
+  return coincideNormalizada(normalizarClave(clave), terminosNormalizados);
+}
+
+/**
+ * Cuántas veces se comparó un texto normalizado contra la lista de términos
+ * desde el último `reiniciarContador()`. Interno (no se reexporta desde
+ * `index.ts`): los tests lo usan para verificar la cota de `colaSensible`
+ * de forma determinista, sin depender del reloj.
+ */
+let comparaciones = 0;
+export function contarComparaciones(): number {
+  return comparaciones;
+}
+export function reiniciarContador(): void {
+  comparaciones = 0;
+}
+
+/** La regla "igual o termina con" sobre un texto YA normalizado. */
+function coincideNormalizada(normalizada: string, terminosNormalizados: ReadonlySet<string>): boolean {
+  comparaciones++;
   for (const termino of terminosNormalizados) {
     if (normalizada === termino || normalizada.endsWith(termino)) return true;
   }
@@ -132,19 +151,22 @@ export function puntosMaximos(terminosNormalizados: ReadonlySet<string>): number
 }
 
 /**
- * ¿Alguna cola de `segmentos` que TERMINA en `segmentos[fin]` es sensible?
- * Prueba `segmentos[fin]` solo y, si hay términos con punto
- * (`maxPuntos > 0`), las uniones con `"."` de los `k` segmentos que terminan
- * en `fin`, con `k` hasta `maxPuntos + 1`. Con `maxPuntos === 0` es una sola
- * llamada a `esClaveSensible`: los términos default no pagan nada extra.
- * Así el costo por segmento está acotado por el término más largo, no por
- * la longitud de la ruta (una clave de 10.000 puntos ya no es O(n³)).
+ * ¿Alguna cola de `segmentosNormalizados` que TERMINA en
+ * `segmentosNormalizados[fin]` es sensible? Cada segmento llega YA
+ * normalizado (`normalizarClave`, uno por uno): así el sufijo de colisión de
+ * un ancestro (`"cuenta (2)"` de un `Map`) se saca en CADA segmento, no solo
+ * al final de la cola, y `"cuenta (2).numero"` matchea `"cuenta.numero"`.
+ * Prueba el segmento solo y, si hay términos con punto (`maxPuntos > 0`),
+ * las uniones con `"."` de los `k` segmentos que terminan en `fin`, con `k`
+ * hasta `maxPuntos + 1`. Con `maxPuntos === 0` es una sola comparación: los
+ * términos default no pagan nada extra. El costo por segmento está acotado
+ * por el término más largo, no por la longitud de la ruta.
  */
-export function colaSensible(segmentos: readonly string[], fin: number, terminosNormalizados: ReadonlySet<string>, maxPuntos: number): boolean {
-  if (esClaveSensible(segmentos[fin]!, terminosNormalizados)) return true;
+export function colaSensible(segmentosNormalizados: readonly string[], fin: number, terminosNormalizados: ReadonlySet<string>, maxPuntos: number): boolean {
+  if (coincideNormalizada(segmentosNormalizados[fin]!, terminosNormalizados)) return true;
   const inicioMinimo = Math.max(0, fin - maxPuntos);
   for (let inicio = fin - 1; inicio >= inicioMinimo; inicio--) {
-    if (esClaveSensible(segmentos.slice(inicio, fin + 1).join("."), terminosNormalizados)) return true;
+    if (coincideNormalizada(segmentosNormalizados.slice(inicio, fin + 1).join("."), terminosNormalizados)) return true;
   }
   return false;
 }

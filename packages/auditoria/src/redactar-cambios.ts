@@ -1,6 +1,6 @@
 import { CAMPOS_SENSIBLES_POR_DEFECTO, redactarConTerminos } from "./redactar.js";
-import { colaSensible, normalizarTerminos, puntosMaximos } from "./coincidencia-sensible.js";
-import type { CambioAuditoria } from "./lo-que-cambio.js";
+import { colaSensible, normalizarClave, normalizarTerminos, puntosMaximos } from "./coincidencia-sensible.js";
+import { esCambioDeRaiz, type CambioAuditoria } from "./lo-que-cambio.js";
 
 /**
  * ¿Algún tramo contiguo de la ruta es sensible? La ruta se arma uniendo
@@ -11,9 +11,9 @@ import type { CambioAuditoria } from "./lo-que-cambio.js";
  * de a lo sumo `maxPuntos + 1` segmentos (`colaSensible`): lineal en la
  * longitud de la ruta, no cúbico.
  */
-function rutaSensible(segmentos: readonly string[], sensibles: ReadonlySet<string>, maxPuntos: number): boolean {
-  for (let fin = 0; fin < segmentos.length; fin++) {
-    if (colaSensible(segmentos, fin, sensibles, maxPuntos)) return true;
+function rutaSensible(normalizados: readonly string[], sensibles: ReadonlySet<string>, maxPuntos: number): boolean {
+  for (let fin = 0; fin < normalizados.length; fin++) {
+    if (colaSensible(normalizados, fin, sensibles, maxPuntos)) return true;
   }
   return false;
 }
@@ -66,9 +66,12 @@ export function redactarCambios(
   const sensibles = normalizarTerminos(camposSensibles);
   const maxPuntos = puntosMaximos(sensibles);
   return cambios.map((cambio) => {
-    // `"(raiz)"` es la etiqueta de `loQueCambio` para el valor entero: no es una clave.
-    const segmentos = cambio.campo === "(raiz)" ? [] : cambio.campo.split(".");
-    const tieneSegmentoSensible = rutaSensible(segmentos, sensibles, maxPuntos);
+    // P2 (ronda de fix 3): la raíz verdadera la marca `loQueCambio` aparte
+    // (`esCambioDeRaiz`), no el texto `"(raiz)"` — una clave REAL `"(raiz)"`
+    // es un segmento como cualquier otro.
+    const segmentos = esCambioDeRaiz(cambio) ? [] : cambio.campo.split(".");
+    const normalizados = segmentos.map(normalizarClave);
+    const tieneSegmentoSensible = rutaSensible(normalizados, sensibles, maxPuntos);
     if (tieneSegmentoSensible) {
       return {
         campo: cambio.campo,

@@ -1,4 +1,4 @@
-import { clasificar, clavesPropias, definirPropiedad, elementosDeSet, entradasDeMap, intentar, llamarToJSON } from "./tipos-especiales.js";
+import { clasificar, clavesPropias, definirPropiedad, elementosDeSet, entradasDeMap, esArreglo, excedeProfundidad, intentar, llamarToJSON, TEXTO_PROFUNDIDAD } from "./tipos-especiales.js";
 
 /**
  * Lee `objeto[clave]`, atrapando una excepción si `clave` es un getter que
@@ -12,23 +12,29 @@ function leerPropiedad(objeto: Record<string, unknown>, clave: string): { ok: tr
   }
 }
 
-function normalizar(valor: unknown, pila: Set<object>): unknown {
+function normalizar(valor: unknown, pila: Set<object>, profundidad: number): unknown {
   if (valor === undefined) return undefined;
   if (typeof valor === "bigint") return `${valor}n`;
   if (typeof valor === "function") return "[funcion]";
   if (typeof valor === "symbol") return valor.toString();
-  if (Array.isArray(valor)) {
-    if (pila.has(valor)) return "[ciclo]";
-    pila.add(valor);
+  // P1 (P.10b, ronda de fix 3): tope de profundidad — ver PROFUNDIDAD_MAXIMA.
+  if (excedeProfundidad(valor, profundidad)) return TEXTO_PROFUNDIDAD;
+  // P5: `Array.isArray` tira con un Proxy revocado.
+  const arreglo = esArreglo(valor);
+  if (arreglo === "error") return "[error]";
+  if (arreglo) {
+    const lista = valor as unknown[];
+    if (pila.has(lista)) return "[ciclo]";
+    pila.add(lista);
     try {
       // `undefined` adentro de un arreglo NO se saca — mismo motivo que
       // `serializarParaAuditoria`: sacarlo correría los índices de los
       // elementos siguientes. `loQueCambio` compara arreglos como valor
       // ENTERO (no por índice), así que ni siquiera importa demasiado acá,
       // pero se mantiene la misma convención por consistencia.
-      return valor.map((v) => normalizar(v, pila) ?? null);
+      return lista.map((v) => normalizar(v, pila, profundidad + 1) ?? null);
     } finally {
-      pila.delete(valor);
+      pila.delete(lista);
     }
   }
   if (typeof valor !== "object" || valor === null) {
@@ -56,7 +62,7 @@ function normalizar(valor: unknown, pila: Set<object>): unknown {
     try {
       const llamado = llamarToJSON(valor as { toJSON: () => unknown });
       if (!llamado.ok) return "[error]";
-      return normalizar(llamado.valor, pila);
+      return normalizar(llamado.valor, pila, profundidad + 1);
     } finally {
       pila.delete(valor);
     }
@@ -80,7 +86,7 @@ function normalizar(valor: unknown, pila: Set<object>): unknown {
       if (!leidas.ok) return "[error]";
       const resultado: Record<string, unknown> = {};
       for (const { clave, valor: v } of leidas.entradas) {
-        const normalizado = normalizar(v, pila);
+        const normalizado = normalizar(v, pila, profundidad + 1);
         if (normalizado !== undefined) definirPropiedad(resultado, clave, normalizado);
       }
       return resultado;
@@ -95,7 +101,7 @@ function normalizar(valor: unknown, pila: Set<object>): unknown {
     try {
       const leidos = elementosDeSet(valor as Set<unknown>);
       if (!leidos.ok) return "[error]";
-      return leidos.elementos.map((v) => normalizar(v, pila) ?? null);
+      return leidos.elementos.map((v) => normalizar(v, pila, profundidad + 1) ?? null);
     } finally {
       pila.delete(valor);
     }
@@ -120,7 +126,7 @@ function normalizar(valor: unknown, pila: Set<object>): unknown {
         definirPropiedad(resultado, clave, "[error]");
         continue;
       }
-      const normalizado = normalizar(leido.valor, pila);
+      const normalizado = normalizar(leido.valor, pila, profundidad + 1);
       if (normalizado !== undefined) definirPropiedad(resultado, clave, normalizado);
     }
     return resultado;
@@ -178,7 +184,10 @@ function normalizar(valor: unknown, pila: Set<object>): unknown {
  * token o un CBU salen tal cual. Es solo un paso intermedio para diffear;
  * lo que se guarda es `redactarCambios(loQueCambio(...))` y
  * `serializarParaAuditoria(redactar(...))` de las fotos originales.
+  *
+ * Corta en `PROFUNDIDAD_MAXIMA` (500) igual que `redactar`: un contenedor
+ * más hondo queda `"[profundidad]"`. Un `Proxy` revocado queda `"[error]"`.
  */
 export function normalizarParaDiff(v: unknown): unknown {
-  return normalizar(v, new Set());
+  return normalizar(v, new Set(), 0);
 }

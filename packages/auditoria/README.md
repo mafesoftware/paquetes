@@ -87,6 +87,16 @@ tira — queda como `"[error]"` en su lugar del diff. Si comparar dos hojas
 (dos arreglos, por ejemplo) tira en algún punto, se consideran distintas y
 el cambio se reporta: nunca se esconde.
 
+**Profundidad máxima (`PROFUNDIDAD_MAXIMA`, 500).** Más abajo del tope no
+se recorre: un contenedor ahí se compara como `"[profundidad]"` de los dos
+lados (así que dos estructuras que solo difieren más abajo del tope NO
+generan cambio — igual que sus copias guardadas, que también quedan
+cortadas) y un primitivo por su valor. Un valor devuelto en un cambio que
+tenga algo más hondo que el tope sale como COPIA cortada (sin lo de abajo);
+si no, sale el mismo valor. El cambio de la RAÍZ verdadera lleva una marca
+interna no enumerable (una clave real llamada `"(raiz)"` se trata como
+cualquier otra clave al redactar).
+
 **`loQueCambio(x, x)` da `[]`, nunca `"[ciclo]"`**, aunque `x` sea
 autoreferencial (`x.self = x`): los dos lados son literalmente el mismo
 valor, así que no hay ninguna diferencia que reportar. Dos objetos
@@ -163,7 +173,10 @@ todas las claves.
 | `pass\u0000word` | Sí | los caracteres de control (`\p{Cc}`) también se quitan |
 
 **Claves y términos con punto.** El punto se conserva porque es el
-separador de las rutas de `cambios`. Un término con punto (`"cuenta.numero"`)
+separador de las rutas de `cambios`. Cada segmento de la ruta se normaliza
+por separado antes de unirlos, así un ancestro con sufijo de colisión de un
+`Map` (`"cuenta (2)"`) cuenta como `"cuenta"`: `["cuenta.numero"]` tapa el
+`numero` de las DOS entradas de un `Map` con dos claves `"cuenta"`. Un término con punto (`"cuenta.numero"`)
 se evalúa contra la clave sola **y** contra las colas de la RUTA de claves que
 terminan en ella, en las copias guardadas y en `cambios` por igual:
 `camposSensibles: ["cuenta.numero"]` tapa `{ cuenta: { numero } }` y también
@@ -241,7 +254,9 @@ Nunca tira: una referencia circular queda como `"[ciclo]"`, una clave cuyo
 `get` tira queda como `"[error]"`, una clave de `Map` cuyo `toString` tira
 (o un objeto sin prototipo como clave) queda como `"[clave]"`, y un objeto
 cuyas claves no se pueden enumerar (un `Proxy` con una trampa `ownKeys` que
-tira) queda como `"[error]"` entero.
+tira) queda como `"[error]"` entero. Un `Proxy` revocado queda `"[error]"`.
+Un contenedor más hondo que `PROFUNDIDAD_MAXIMA` (500) queda
+`"[profundidad]"` (ver abajo).
 
 ```ts
 import { redactar, CAMPOS_SENSIBLES_POR_DEFECTO } from "@mafesoftware/auditoria";
@@ -290,6 +305,28 @@ import { CAMPOS_SENSIBLES_POR_DEFECTO } from "@mafesoftware/auditoria";
 
 CAMPOS_SENSIBLES_POR_DEFECTO;
 // ["contrasena", "password", "passwords", "hash", "token", "tokens", "secreto", "secreta", "secretos", "secretas", "secret", "secrets", "cbu", "cvu", "clave", "api_key", "apikey", "totp", "authorization"]
+```
+
+#### `PROFUNDIDAD_MAXIMA: number`
+
+El tope de profundidad (500) de `redactar`, `serializarParaAuditoria`,
+`normalizarParaDiff` y `loQueCambio`. La raíz está en la profundidad 0 y
+cada nivel de objeto, arreglo, `Map`, `Set` o `toJSON` suma 1. Un
+CONTENEDOR más hondo que el tope queda `"[profundidad]"` sin recorrerse (un
+primitivo se conserva); las cuatro funciones cortan en el mismo lugar, así
+las copias guardadas y `cambios` coinciden. Existe para que "nunca tira"
+valga también con datos muy anidados: sin tope, la recursión reventaba el
+stack de Node (`RangeError`) entre ~1650 y ~2600 niveles. También corta un
+`toJSON` que devuelve otro objeto con `toJSON` sin fin.
+
+```ts
+import { PROFUNDIDAD_MAXIMA, redactar } from "@mafesoftware/auditoria";
+
+PROFUNDIDAD_MAXIMA; // 500
+
+let hondo: unknown = { password: "x" };
+for (let i = 0; i < 5000; i++) hondo = { n: hondo };
+redactar(hondo); // { n: { n: … { n: "[profundidad]" } … } } — no tira, y "x" nunca aparece
 ```
 
 #### `serializarParaAuditoria(v: unknown): unknown`
@@ -353,7 +390,8 @@ clase se recorre por sus campos propios enumerables. `null`/`undefined` se
 preservan tal cual en cualquier posición (nunca se convierten a otra cosa),
 justamente para no romper el manejo de "lado ausente" de `loQueCambio`.
 **Nunca tira** — un dato roto (getter que tira, `Proxy` con trampas rotas,
-`toJSON` que tira) da `"[error]"` en ese nodo, nunca propaga la excepción.
+`toJSON` que tira, `Proxy` revocado) da `"[error]"` en ese nodo, nunca propaga la excepción.
+Corta en `PROFUNDIDAD_MAXIMA` igual que `redactar`.
 
 **Por qué existe.** `auditar` corría `loQueCambio` directo sobre los valores
 CRUDOS de `entrada.antes`/`entrada.despues`. Dos instancias EQUIVALENTES

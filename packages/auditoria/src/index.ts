@@ -26,6 +26,7 @@
  */
 export { loQueCambio, type CambioAuditoria } from "./lo-que-cambio.js";
 export { redactar, CAMPOS_SENSIBLES_POR_DEFECTO } from "./redactar.js";
+export { PROFUNDIDAD_MAXIMA } from "./tipos-especiales.js";
 export { serializarParaAuditoria } from "./serializar.js";
 export { normalizarParaDiff } from "./normalizar-para-diff.js";
 export { redactarCambios } from "./redactar-cambios.js";

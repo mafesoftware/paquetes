@@ -1,4 +1,4 @@
-import { clasificar, clavesPropias, definirPropiedad, elementosDeSet, entradasDeMap, intentar, llamarToJSON } from "./tipos-especiales.js";
+import { clasificar, clavesPropias, definirPropiedad, elementosDeSet, entradasDeMap, esArreglo, excedeProfundidad, intentar, llamarToJSON, TEXTO_PROFUNDIDAD } from "./tipos-especiales.js";
 
 /**
  * Lee `objeto[clave]`, atrapando una excepción si `clave` es un getter que
@@ -13,22 +13,28 @@ function leerPropiedad(objeto: Record<string, unknown>, clave: string): { ok: tr
   }
 }
 
-function serializar(valor: unknown, pila: Set<object>): unknown {
+function serializar(valor: unknown, pila: Set<object>, profundidad: number): unknown {
   if (valor === undefined) return undefined;
   if (typeof valor === "bigint") return `${valor}n`;
   if (typeof valor === "function") return "[funcion]";
   if (typeof valor === "symbol") return valor.toString();
-  if (Array.isArray(valor)) {
-    if (pila.has(valor)) return "[ciclo]";
-    pila.add(valor);
+  // P1 (P.10b, ronda de fix 3): tope de profundidad — ver PROFUNDIDAD_MAXIMA.
+  if (excedeProfundidad(valor, profundidad)) return TEXTO_PROFUNDIDAD;
+  // P5: `Array.isArray` tira con un Proxy revocado.
+  const arreglo = esArreglo(valor);
+  if (arreglo === "error") return "[error]";
+  if (arreglo) {
+    const lista = valor as unknown[];
+    if (pila.has(lista)) return "[ciclo]";
+    pila.add(lista);
     try {
       // `undefined` adentro de un arreglo NO se saca (a diferencia de una
       // clave de objeto): sacarlo correría los índices de los elementos
       // siguientes, que es peor que dejar un `null` — JSON.stringify hace
       // lo mismo (convierte el `undefined` de un arreglo en `null`).
-      return valor.map((v) => serializar(v, pila) ?? null);
+      return lista.map((v) => serializar(v, pila, profundidad + 1) ?? null);
     } finally {
-      pila.delete(valor);
+      pila.delete(lista);
     }
   }
   if (typeof valor !== "object" || valor === null) {
@@ -55,7 +61,7 @@ function serializar(valor: unknown, pila: Set<object>): unknown {
     try {
       const llamado = llamarToJSON(valor as { toJSON: () => unknown });
       if (!llamado.ok) return "[error]";
-      return serializar(llamado.valor, pila);
+      return serializar(llamado.valor, pila, profundidad + 1);
     } finally {
       pila.delete(valor);
     }
@@ -72,7 +78,7 @@ function serializar(valor: unknown, pila: Set<object>): unknown {
       if (!leidas.ok) return "[error]";
       const resultado: Record<string, unknown> = {};
       for (const { clave, valor: v } of leidas.entradas) {
-        const serializado = serializar(v, pila);
+        const serializado = serializar(v, pila, profundidad + 1);
         if (serializado !== undefined) definirPropiedad(resultado, clave, serializado);
       }
       return resultado;
@@ -87,7 +93,7 @@ function serializar(valor: unknown, pila: Set<object>): unknown {
     try {
       const leidos = elementosDeSet(valor as Set<unknown>);
       if (!leidos.ok) return "[error]";
-      return leidos.elementos.map((v) => serializar(v, pila) ?? null);
+      return leidos.elementos.map((v) => serializar(v, pila, profundidad + 1) ?? null);
     } finally {
       pila.delete(valor);
     }
@@ -114,7 +120,7 @@ function serializar(valor: unknown, pila: Set<object>): unknown {
         definirPropiedad(resultado, clave, "[error]");
         continue;
       }
-      const serializado = serializar(leido.valor, pila);
+      const serializado = serializar(leido.valor, pila, profundidad + 1);
       // Acá sí se saca la clave entera (no se deja en `null`): "undefined
       // se descarta" es la regla pedida, y en un objeto (a diferencia de
       // un arreglo) sacar una clave no mueve a ninguna otra.
@@ -199,7 +205,10 @@ function serializar(valor: unknown, pila: Set<object>): unknown {
  * serializarParaAuditoria(new Error("mensaje que puede tener datos"));
  * // { name: "Error" } (nunca .message)
  * ```
+  *
+ * Corta en `PROFUNDIDAD_MAXIMA` (500) igual que `redactar`: un contenedor
+ * más hondo queda `"[profundidad]"`. Un `Proxy` revocado queda `"[error]"`.
  */
 export function serializarParaAuditoria(v: unknown): unknown {
-  return serializar(v, new Set());
+  return serializar(v, new Set(), 0);
 }

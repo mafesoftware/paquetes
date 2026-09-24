@@ -229,3 +229,33 @@ export function elementosDeSet(set: Set<unknown>): { ok: true; elementos: unknow
     return { ok: false };
   }
 }
+
+/**
+ * La profundidad máxima que recorren `redactar`, `serializarParaAuditoria`,
+ * `normalizarParaDiff` y `loQueCambio`. La raíz está en la profundidad 0 y
+ * cada nivel de objeto, arreglo, `Map`, `Set` o `toJSON` suma 1. Un
+ * CONTENEDOR (cualquier objeto no `null`) más hondo que esto queda
+ * `"[profundidad]"`, sin recorrerlo; un primitivo se conserva. Existe para
+ * que "nunca tira" valga también con datos muy anidados: sin tope, la
+ * recursión revienta el stack de Node (`RangeError`) entre ~1650 y ~2600
+ * niveles. Todas las funciones cortan en el MISMO lugar, así las copias
+ * guardadas y `cambios` coinciden.
+ */
+export const PROFUNDIDAD_MAXIMA = 500;
+
+/** El texto que reemplaza a un contenedor más hondo que `PROFUNDIDAD_MAXIMA`. */
+export const TEXTO_PROFUNDIDAD = "[profundidad]";
+
+/** ¿`valor` es un contenedor que hay que cortar a esta `profundidad`? */
+export function excedeProfundidad(valor: unknown, profundidad: number): boolean {
+  return profundidad > PROFUNDIDAD_MAXIMA && typeof valor === "object" && valor !== null;
+}
+
+/** `Array.isArray(valor)` atrapando una excepción (un `Proxy` revocado hace tirar a `Array.isArray`): `"error"` en ese caso. */
+export function esArreglo(valor: unknown): boolean | "error" {
+  try {
+    return Array.isArray(valor);
+  } catch {
+    return "error";
+  }
+}
