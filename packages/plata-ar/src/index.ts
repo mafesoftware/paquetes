@@ -20,9 +20,35 @@
  *    corre el total lo suficiente como para que la liquidación no cierre.
  *
  * El paquete no tiene dependencias y no lee variables de entorno.
+ *
+ * ## 0.2: `bigint` y multimoneda
+ *
+ * La API de abajo (`Centavos = number`) se mantiene íntegra — gestionflow la
+ * sigue usando— pero queda `@deprecated`: un monto en `number` dejó de
+ * alcanzar en dos lugares que si pasan en este país: factores de ajuste con
+ * 8 decimales que no entran exactos en un float, y montos que necesitan
+ * moneda propia (USD, EUR) para no mezclarse por error. La API nueva
+ * (`Importe`, `aplicarFactor`, `repartirPorMayorResto`, `convertir`,
+ * `sumar`, `parsearImporte`) vive en `bigint.ts`, `factor.ts`, `reparto.ts`,
+ * `moneda.ts` y `parseo.ts`, re-exportada acá.
  */
 
-/** Un monto guardado en centavos. Se marca con el nombre, no con un tipo. */
+export * from "./errores.js";
+export * from "./bigint.js";
+export * from "./factor.js";
+export * from "./reparto.js";
+export * from "./moneda.js";
+export * from "./parseo.js";
+
+import type { Importe, Moneda } from "./moneda.js";
+
+/**
+ * Un monto guardado en centavos, como `number`.
+ *
+ * @deprecated Un `number` no alcanza para los factores de 8 decimales ni
+ * para montos con moneda propia. Usar `Importe` (`{ centavos: bigint;
+ * moneda: Moneda }`) de `moneda.ts`.
+ */
 export type Centavos = number;
 
 /**
@@ -75,22 +101,66 @@ export type FormatoPlata = {
   decimalesSiempre?: boolean;
 };
 
+/** Opciones de formato para un `Importe`/`bigint` (API 0.2). */
+export type FormatoImporte = {
+  /** Moneda a usar cuando `i` es un `bigint` a secas. Ignorada si `i` es un `Importe` (se usa `i.moneda`). `"ARS"` por defecto. */
+  moneda?: Moneda;
+  /** Locale para separadores y símbolo. `"es-AR"` por defecto. */
+  locale?: string;
+  /** Mostrar siempre los dos decimales. `true` por defecto: a diferencia de la 0.1, acá un monto multimoneda siempre lleva sus decimales. */
+  decimalesSiempre?: boolean;
+};
+
 /**
- * Un monto para mostrar.
+ * Un monto para mostrar, en centavos, como `number`.
  *
  * Sin decimales cuando el monto es redondo —que en este país es casi
  * siempre— y con dos cuando no. Mostrar "$ 44.000,00" en una lista de cuotas
  * es ruido; esconder los 14 centavos de un prorrateo es un error.
+ *
+ * @deprecated Usar `formatearPlata(importe: Importe | bigint, opciones?)`.
+ * @example
+ * formatearPlata(4_400_000); // "$ 44.000"
  */
-export function formatearPlata(centavos: Centavos, opciones: FormatoPlata = {}): string {
-  const { moneda = "ARS", locale = "es-AR", decimalesSiempre = false } = opciones;
-  const decimales = decimalesSiempre || centavos % 100 !== 0 ? 2 : 0;
+export function formatearPlata(centavos: Centavos, opciones?: FormatoPlata): string;
+/**
+ * Un `Importe` (o un monto en centavos `bigint`, sin moneda propia) para
+ * mostrar. A diferencia de la variante `Centavos` de la 0.1, siempre muestra
+ * los dos decimales por defecto: en un panel multimoneda "US$ 50" sin
+ * decimales es ambiguo con un monto ARS.
+ *
+ * @example
+ * formatearPlata({ centavos: -5_000n, moneda: "USD" }); // "-US$ 50,00"
+ * @example
+ * formatearPlata(4_400_000n); // "$ 44.000,00" (bigint a secas: moneda ARS por defecto)
+ */
+export function formatearPlata(importe: Importe | bigint, opciones?: FormatoImporte): string;
+export function formatearPlata(
+  i: Centavos | Importe | bigint,
+  opciones: { moneda?: string; locale?: string; decimalesSiempre?: boolean } = {},
+): string {
+  if (typeof i === "number") {
+    const { moneda = "ARS", locale = "es-AR", decimalesSiempre = false } = opciones;
+    const decimales = decimalesSiempre || i % 100 !== 0 ? 2 : 0;
+    return new Intl.NumberFormat(locale, {
+      style: "currency",
+      currency: moneda,
+      minimumFractionDigits: decimales,
+      maximumFractionDigits: decimales,
+    }).format(aPesos(i));
+  }
+
+  const esBigintASecas = typeof i === "bigint";
+  const centavosBig = esBigintASecas ? i : i.centavos;
+  const monedaResuelta: Moneda = (opciones.moneda as Moneda | undefined) ?? (esBigintASecas ? "ARS" : i.moneda);
+  const { locale = "es-AR", decimalesSiempre = true } = opciones;
+  const decimales = decimalesSiempre || centavosBig % 100n !== 0n ? 2 : 0;
   return new Intl.NumberFormat(locale, {
     style: "currency",
-    currency: moneda,
+    currency: monedaResuelta,
     minimumFractionDigits: decimales,
     maximumFractionDigits: decimales,
-  }).format(aPesos(centavos));
+  }).format(Number(centavosBig) / 100);
 }
 
 /** Atajo para el caso argentino, que es el 99% de las llamadas. */
@@ -123,6 +193,10 @@ export function plataARS(centavos: Centavos): string {
  * **OJO: devuelve CENTAVOS. Solo para PLATA.** Un porcentaje, una cantidad o
  * un día que pasen por acá salen multiplicados por cien. Para un porcentaje
  * está `parsearPorcentaje`; para una cantidad, `parsearCantidad`.
+ *
+ * @deprecated Usar `parsearImporte` (de `parseo.ts`): devuelve `bigint` y,
+ * en vez de `null`, un `{ ok: false, error }` legible. Se llama distinto
+ * (no `parsearPlata`) porque la forma del resultado cambió de raíz.
  */
 export function parsearPlata(texto: string): Centavos | null {
   const n = parsearNumeroAR(texto);
@@ -192,6 +266,11 @@ export function pesosParaPlanilla(centavos: Centavos): number | string {
  *
  * @param total Lo que hay que repartir.
  * @param pesos Cuánto pesa cada parte. Se usan como proporción, no como monto.
+ *
+ * @deprecated Usar `repartirPorMayorResto` (de `reparto.ts`): trabaja en
+ * `bigint`, acepta pesos como `bigint | number | string` sin límite de
+ * decimales, y tira `ErrorPlata` en vez de repartir en partes iguales cuando
+ * los pesos no sirven (acá, cuando `suma <= 0`).
  */
 export function repartirCentavos(total: Centavos, pesos: number[]): Centavos[] {
   if (pesos.length === 0) return [];
@@ -230,7 +309,13 @@ export function aplicarPorcentaje(centavos: Centavos, porcentaje: number): Centa
   return Math.round((centavos * porcentaje) / 100);
 }
 
-/** Suma una lista de montos. Existe para no repetir el `reduce` con el cero. */
+/**
+ * Suma una lista de montos. Existe para no repetir el `reduce` con el cero.
+ *
+ * @deprecated Usar `sumar(...importes: Importe[])` (de `moneda.ts`): además
+ * tira si se mezclan monedas distintas, que acá no puede detectarse porque
+ * `Centavos` no lleva moneda.
+ */
 export function sumarCentavos(montos: readonly Centavos[]): Centavos {
   return montos.reduce((n: Centavos, m) => n + m, 0);
 }
