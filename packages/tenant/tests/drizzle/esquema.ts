@@ -1,4 +1,5 @@
 import { pgSchema, text, uuid } from "drizzle-orm/pg-core";
+import { generateDrizzleJson, generateMigration } from "drizzle-kit/api";
 import { columnaTenant, fkTenant, unicoConTenant } from "../../src/drizzle/index.js";
 
 /**
@@ -41,33 +42,28 @@ export function crearEsquemaDePrueba(nombreEsquema: string) {
 }
 
 /**
- * DDL equivalente al que emitiría `drizzle-kit generate` para el esquema de
- * arriba (hand-written: no se invoca drizzle-kit en el test para no
- * depender de su CLI ni de escribir migraciones en disco — este paquete no
- * trae migraciones, spec 06 §3.2). La FK compuesta es la pieza que importa
- * probar contra Postgres de verdad: es la que un ORM sin este helper no
- * arma sola.
+ * El DDL que ejecuta el test de Postgres, generado del MISMO esquema de
+ * Drizzle que arman `columnaTenant`/`unicoConTenant`/`fkTenant`
+ * (`crearEsquemaDePrueba` arriba) — no una reimplementación a mano que
+ * podría desincronizarse y dejar de probar lo que este paquete realmente
+ * produce.
+ *
+ * Usa `drizzle-kit/api` (`generateDrizzleJson` + `generateMigration`, lo
+ * mismo que corre `drizzle-kit generate` por atrás) para pasar de "esquema
+ * vacío" a "el esquema de `crearEsquemaDePrueba`", sin invocar la CLI de
+ * drizzle-kit ni escribir migraciones en disco — este paquete no trae
+ * migraciones (spec 06 §3.2), esto es solo cómo se arma la base de UN test.
+ *
+ * `generateMigration` no emite el `create schema`: Postgres necesita que el
+ * esquema (`nombreEsquema`) ya exista antes de crear tablas adentro, así
+ * que esa única línea se antepone a mano.
  */
-export function ddlDeEsquemaDePrueba(nombreEsquema: string): string[] {
-  const e = `"${nombreEsquema}"`;
-  return [
-    `create schema ${e}`,
-    `create table ${e}."proyectos" (
-      "id" uuid not null,
-      "organizacion_id" uuid not null,
-      "nombre" text not null,
-      constraint "proyectos_pkey" primary key ("id"),
-      constraint "proyectos_organizacion_id_id_unique" unique ("organizacion_id","id")
-    )`,
-    `create table ${e}."unidades" (
-      "id" uuid not null,
-      "organizacion_id" uuid not null,
-      "proyecto_id" uuid not null,
-      "nombre" text not null,
-      constraint "unidades_pkey" primary key ("id"),
-      constraint "unidades_organizacion_id_proyecto_id_fk"
-        foreign key ("organizacion_id", "proyecto_id")
-        references ${e}."proyectos" ("organizacion_id", "id")
-    )`,
-  ];
+export async function ddlDeEsquemaDePrueba(nombreEsquema: string): Promise<string[]> {
+  const { proyectos, unidades } = crearEsquemaDePrueba(nombreEsquema);
+
+  const vacio = await generateDrizzleJson({});
+  const conTablas = await generateDrizzleJson({ proyectos, unidades });
+  const statements = await generateMigration(vacio, conTablas);
+
+  return [`create schema "${nombreEsquema}"`, ...statements];
 }

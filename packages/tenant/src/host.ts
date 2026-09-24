@@ -1,3 +1,4 @@
+import { ErrorTenant } from "./errores.js";
 import { RESERVADOS } from "./reservados.js";
 import { validarSlug } from "./validar-slug.js";
 
@@ -10,13 +11,44 @@ import { validarSlug } from "./validar-slug.js";
  * todo lo de acá adentro — si no, alguien que entra por `www` (algo que un
  * navegador agrega solo si el usuario lo tipea) ve una organización
  * distinta, o ninguna.
+ *
+ * IPv6 entre corchetes (`"[::1]:3000"`) se reconoce como un bloque: el
+ * puerto es lo que sigue al `"]"` de cierre, no lo que sigue al primer
+ * `":"` — partir por `":"` a ciegas cortaría la dirección en pedazos y
+ * devolvería solo `"["`.
  */
 export function normalizarHost(host: string): string {
   let h = host.trim().toLowerCase();
-  h = h.split(":")[0] ?? h; // saca el puerto ("demo.localhost:3300" -> "demo.localhost")
+
+  if (h.startsWith("[")) {
+    const cierre = h.indexOf("]");
+    h = cierre === -1 ? h : h.slice(0, cierre + 1); // "[::1]:3000" -> "[::1]" (deja el puerto afuera)
+  } else {
+    h = h.split(":")[0] ?? h; // saca el puerto ("demo.localhost:3300" -> "demo.localhost")
+  }
+
   h = h.replace(/\.$/, ""); // saca UN punto final ("demo.mafe.app." -> "demo.mafe.app")
   if (h.startsWith("www.")) h = h.slice(4);
   return h;
+}
+
+/**
+ * `dominioBase` normalizado igual que un host (mismas reglas de
+ * `normalizarHost` — en particular, un `dominioBase = "www.mafe.app"` y uno
+ * `= "mafe.app"` se tratan como el mismo dominio), y VALIDADO: un
+ * `dominioBase` vacío, en blanco, o que quede vacío después de normalizar
+ * (`""`, `"  "`, `"."`) es un error de PROGRAMACIÓN — la app que llama a
+ * `slugDeHost`/`resolverTenant` no configuró su dominio, no es un host que
+ * mandó alguien — así que tira `ErrorTenant` (`codigo:
+ * "dominio_base_invalido"`) en vez de devolver `null` como el resto de las
+ * validaciones de este archivo.
+ */
+export function validarDominioBase(dominioBase: string): string {
+  const base = normalizarHost(dominioBase);
+  if (!base) {
+    throw new ErrorTenant("dominio_base_invalido", `dominioBase vacío o inválido: ${JSON.stringify(dominioBase)}`);
+  }
+  return base;
 }
 
 /**
@@ -28,7 +60,8 @@ export function normalizarHost(host: string): string {
  *   apex no es de ninguna organización;
  * - un subdominio de más de un nivel (`"panel.demo.mafe.app"`): un slug es
  *   SIEMPRE una sola etiqueta;
- * - un slug reservado (`reservados`, por defecto `RESERVADOS`);
+ * - un slug reservado (`reservados`, por defecto `RESERVADOS`; una lista
+ *   propia con mayúsculas se normaliza sola — ver `validarSlug`);
  * - `*.vercel.app`: cada preview de Vercel trae su propio host único, y
  *   ninguno es una organización real;
  * - punycode (`xn--...`): un host así viene de un dominio internacionalizado
@@ -39,6 +72,10 @@ export function normalizarHost(host: string): string {
  *
  * Funciona con `dominioBase = "localhost"` (`"demo.localhost:3300"` →
  * `"demo"`), que es como se prueban los subdominios en E2E sin DNS.
+ *
+ * Tira `ErrorTenant` si `dominioBase` es inválido (ver
+ * `validarDominioBase`) — es la única situación en la que esta función
+ * tira en vez de devolver `null`.
  */
 export function slugDeHost(
   host: string,
@@ -48,7 +85,7 @@ export function slugDeHost(
   const h = normalizarHost(host);
   if (h.endsWith(".vercel.app")) return null;
 
-  const base = normalizarHost(dominioBase);
+  const base = validarDominioBase(dominioBase);
   const sufijo = `.${base}`;
   if (!h.endsWith(sufijo)) return null; // cubre la apex y cualquier host que no sea de esta base
 

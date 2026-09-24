@@ -97,4 +97,12 @@ describe("validarSlug: otros casos", () => {
     // "admin" no está en la lista propia, así que con reservados custom pasa:
     expect(validarSlug("admin", propios)).toEqual({ ok: true, slug: "admin" });
   });
+
+  it("una lista de reservados propia con mayúsculas se normaliza sola (case-insensitive igual)", () => {
+    const propiosConMayusculas = new Set(["Facturacion", "SOPORTE-TECNICO"]);
+    expect(validarSlug("facturacion", propiosConMayusculas)).toEqual({ ok: false, motivo: "reservado" });
+    expect(validarSlug("soporte-tecnico", propiosConMayusculas)).toEqual({ ok: false, motivo: "reservado" });
+    // algo que no está en la lista (con o sin mayúsculas) sigue pasando:
+    expect(validarSlug("otra-cosa", propiosConMayusculas)).toEqual({ ok: true, slug: "otra-cosa" });
+  });
 });

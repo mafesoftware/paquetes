@@ -36,11 +36,13 @@ export type ResultadoValidarSlug =
  * queda demasiado corto o sigue siendo un reservado.
  */
 export function validarSlug(s: string, reservados: ReadonlySet<string> = RESERVADOS): ResultadoValidarSlug {
-  if (reservados.has(s.toLowerCase())) {
+  const reservadosNorm = normalizarReservados(reservados);
+
+  if (reservadosNorm.has(s.toLowerCase())) {
     return { ok: false, motivo: "reservado" };
   }
 
-  const sugerencia = candidatoNormalizado(s, reservados);
+  const sugerencia = candidatoNormalizado(s, reservadosNorm);
   const invalido = (motivo: MotivoSlugInvalido): ResultadoValidarSlug =>
     sugerencia !== undefined ? { ok: false, motivo, sugerencia } : { ok: false, motivo };
 
@@ -51,6 +53,23 @@ export function validarSlug(s: string, reservados: ReadonlySet<string> = RESERVA
   if (s.includes("--")) return invalido("guion_doble");
 
   return { ok: true, slug: s };
+}
+
+/**
+ * `reservados` en minúsculas: la comparación de acá adentro siempre se hace
+ * con `s.toLowerCase()`, así que un `reservados` con entradas en mayúsculas
+ * (`new Set(["Admin"])`) nunca matchearía sin esto — `Set.has` compara
+ * exacto, no case-insensitive. `RESERVADOS` y cualquier lista propia que ya
+ * venga en minúsculas (el caso común) se devuelven tal cual, sin
+ * reconstruir el Set.
+ */
+function normalizarReservados(reservados: ReadonlySet<string>): ReadonlySet<string> {
+  for (const r of reservados) {
+    if (r !== r.toLowerCase()) {
+      return new Set([...reservados].map((r2) => r2.toLowerCase()));
+    }
+  }
+  return reservados;
 }
 
 /**

@@ -39,6 +39,24 @@ sin el `"www."` de adelante.
 import { normalizarHost } from "@mafesoftware/tenant";
 
 normalizarHost("WWW.Demo.MAFE.app:3300."); // "demo.mafe.app"
+normalizarHost("[::1]:3000"); // "[::1]" (IPv6 entre corchetes: el puerto es lo de después del "]")
+```
+
+#### `validarDominioBase(dominioBase: string): string`
+
+`dominioBase` normalizado igual que un host (mismas reglas de arriba — un
+`dominioBase = "www.mafe.app"` se trata igual que `"mafe.app"`). Tira
+`ErrorTenant` (`codigo: "dominio_base_invalido"`) si queda vacío después de
+normalizar: es un error de PROGRAMACIÓN (la app no configuró su dominio), no
+un host que mandó alguien. La usan `slugDeHost` y `resolverTenant`
+internamente; se expone por si una app quiere validar su configuración al
+arrancar.
+
+```ts
+import { validarDominioBase, ErrorTenant } from "@mafesoftware/tenant";
+
+validarDominioBase("mafe.app"); // "mafe.app"
+validarDominioBase(""); // tira ErrorTenant (codigo: "dominio_base_invalido")
 ```
 
 #### `slugDeHost(host: string, dominioBase: string, reservados?: ReadonlySet<string>): string | null`
@@ -47,12 +65,15 @@ El slug de organización que pide `host` bajo `dominioBase`, o `null` si no es
 un subdominio válido de una organización: la apex, un subdominio de más de
 un nivel, un slug reservado, `*.vercel.app`, punycode (`xn--...`), o
 cualquier etiqueta que no pase `validarSlug`. `reservados` es
-`RESERVADOS` por defecto; se puede pasar una lista propia (más larga).
+`RESERVADOS` por defecto; se puede pasar una lista propia (más larga, en
+cualquier combinación de mayúsculas/minúsculas — se normaliza sola). Tira
+`ErrorTenant` si `dominioBase` es inválido (ver `validarDominioBase`).
 
 ```ts
 import { slugDeHost } from "@mafesoftware/tenant";
 
 slugDeHost("demo.mafe.app", "mafe.app"); // "demo"
+slugDeHost("DEMO.MAFE.APP:443", "mafe.app"); // "demo" (mayúsculas y puerto no importan)
 slugDeHost("mafe.app", "mafe.app"); // null (apex, no es ninguna organización)
 slugDeHost("admin.mafe.app", "mafe.app"); // null (reservado)
 slugDeHost("panel.demo.mafe.app", "mafe.app"); // null (dos niveles)
@@ -103,9 +124,11 @@ validarSlug("Mi Constructora"); // { ok: false, motivo: "caracteres_invalidos", 
 
 #### `resolverTenant(opciones: OpcionesResolverTenant): Promise<string | null>`
 
-De qué organización es esta request, cruzando host y sesión. Las dos
-búsquedas (`buscarPorHost`, `buscarPorSesion`) las inyecta la app — este
-paquete no toca ninguna base.
+De qué organización es esta request, cruzando host y sesión. Recibe el host
+CRUDO (`opciones.host`) y `dominioBase`; adentro llama a `slugDeHost` para
+sacar el slug — nunca hace falta (ni conviene) normalizar el host a mano
+antes de llamar. Las dos búsquedas (`buscarPorSlug`, `buscarPorSesion`) las
+inyecta la app — este paquete no toca ninguna base.
 
 - Host y sesión resuelven al MISMO id → esa organización.
 - Resuelven a ids DISTINTOS → `null` (evita que la cookie de una
@@ -114,14 +137,23 @@ paquete no toca ninguna base.
 - Solo la sesión resuelve (host apex/desconocido/ausente) → `null`. **Nunca
   hay una organización por defecto.**
 - Ninguna resuelve → `null`.
+- `dominioBase` inválido (vacío/en blanco) → tira `ErrorTenant`, siempre,
+  incluso sin host (ver `validarDominioBase`).
+- Si `buscarPorSlug`/`buscarPorSesion` tiran (la base no responde, por
+  ejemplo), el error se propaga tal cual — **fail closed**, nunca se
+  convierte en `null`.
 
 ```ts
 import { resolverTenant } from "@mafesoftware/tenant";
 
 const tenantId = await resolverTenant({
-  host: request.headers.get("x-forwarded-host"),
+  // x-forwarded-host es el host real en Vercel/detrás de un proxy; host es
+  // el respaldo para desarrollo local. Nunca lo parsees vos: slugDeHost ya
+  // lo hace adentro.
+  host: request.headers.get("x-forwarded-host") ?? request.headers.get("host"),
+  dominioBase: "mafe.app",
   sesion: sesion?.user?.tenantId ?? null,
-  buscarPorHost: (host) => db.tenantIdDeHost(host),
+  buscarPorSlug: (slug) => db.tenantIdDeSlug(slug),
   buscarPorSesion: (id) => db.tenantIdSiExiste(id),
 });
 if (!tenantId) notFound();
@@ -150,6 +182,22 @@ El tenant del contexto actual, o `null` fuera de un `conTenant`. Nunca tira.
 import { tenantDelContexto } from "@mafesoftware/tenant";
 
 tenantDelContexto(); // null, o el id que puso el conTenant más cercano
+```
+
+#### `ErrorTenant`
+
+El único error que tira este paquete (`slugDeHost`, `validarDominioBase`,
+`resolverTenant` con un `dominioBase` inválido). `codigo` distingue el
+motivo sin parsear el mensaje: hoy solo `"dominio_base_invalido"`.
+
+```ts
+import { ErrorTenant } from "@mafesoftware/tenant";
+
+try {
+  slugDeHost("demo.mafe.app", "");
+} catch (error) {
+  if (error instanceof ErrorTenant) error.codigo; // "dominio_base_invalido"
+}
 ```
 
 ### `/drizzle` (`@mafesoftware/tenant/drizzle`)
@@ -206,7 +254,15 @@ Postgres RECHACE que una fila hija apunte al padre de OTRA organización
 (spec 06 §3.1, regla 2) — una FK simple sobre `padreId` deja pasar
 perfecto una fila con `tenant = B` que apunta a un padre de `tenant = A`.
 Va en el `extraConfig` de la tabla hija. `onDelete`/`onUpdate` son
-opcionales (`"no action"` por defecto, como Postgres).
+opcionales: `"no action"` por defecto (el mismo default de Postgres —
+borrar el padre falla si tiene hijos, no los arrastra); `onDelete:
+"cascade"` es un **opt-in** explícito para cuando sí querés que borrar el
+padre borre sus hijos. `nombre` también es opcional: si no se pasa, se
+arma uno corto y determinístico (`${tablaHija}_${columnaPadre}_tenant_fk`,
+truncado con hash si aun así supera los 63 caracteres que permite
+Postgres) — no el que arma drizzle solo, que concatena tabla + ambas
+columnas + tabla padre + ambas columnas padre y fácilmente pasa el
+límite.
 
 Ejemplo completo, padre `proyectos` + hija `unidades`:
 
@@ -236,7 +292,9 @@ export const unidades = pgTable(
     fkTenant({
       columnas: { tenant: t.organizacionId, padreId: t.proyectoId },
       columnasPadre: { tenant: proyectos.organizacionId, id: proyectos.id },
-      onDelete: "cascade",
+      // Sin onDelete: default "no action" — borrar un proyecto con
+      // unidades falla, no las arrastra. Para cascada explícita:
+      // onDelete: "cascade".
     }),
   ],
 );
@@ -248,9 +306,18 @@ export const unidades = pgTable(
 
 ## Postgres para los tests de `/drizzle`
 
-`tests/drizzle/` prueba la FK compuesta contra un Postgres real (no hay mock
-que valga para un `foreign_key_violation`). Levantalo con
-`docker compose up -d db_test` desde la raíz del monorepo antes de correr
-`bun run test` — si no está arriba, esos tests FALLAN con un mensaje que lo
-dice (no se saltean en silencio). `bun run test:sin-db` corre el resto de
-los tests sin necesitar Docker.
+`tests/drizzle/postgres.test.ts` prueba la FK compuesta contra un Postgres
+real (no hay mock que valga para un `foreign_key_violation`). El DDL que
+ejecuta no está escrito a mano: sale del MISMO esquema de Drizzle que arma
+`columnaTenant`/`unicoConTenant`/`fkTenant` (`tests/drizzle/esquema.ts`),
+generado con `drizzle-kit/api` (`generateDrizzleJson` + `generateMigration`)
+— así el test ejercita de verdad lo que este paquete produce, no una
+reimplementación paralela que podría desincronizarse.
+
+Levantalo con `docker compose up -d db_test` desde la raíz del monorepo
+antes de correr `bun run test` — si no está arriba, ese archivo FALLA con un
+mensaje que lo dice (no se saltea en silencio). `tests/drizzle/config.test.ts`
+(la verificación estructural con `getTableConfig`, sin tocar la base) corre
+siempre, con o sin Docker. `bun run test:sin-db` excluye solo
+`postgres.test.ts` — el resto de `/drizzle` y de los tests del paquete
+corren igual.
