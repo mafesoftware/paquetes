@@ -1,6 +1,6 @@
 {
   "name": "@mafesoftware/correo",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Envío de mails transaccionales por Resend para los productos de MAFE Software. Sin dependencias, sin framework: fetch inyectable, resultados en vez de excepciones y una plantilla HTML con la marca de cada producto.",
   "license": "MIT",
   "type": "module",

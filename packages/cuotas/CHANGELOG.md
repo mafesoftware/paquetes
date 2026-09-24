@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.1
+
+### Patch Changes
+
+- Updated dependencies [f05e1fc]
+- Updated dependencies [1050024]
+  - @mafesoftware/fechas-ar@0.2.0
+  - @mafesoftware/plata-ar@0.2.0
+
 ## 0.1.0
 
 Motor de cuotas: recargo por mora calculado sobre el saldo con tope

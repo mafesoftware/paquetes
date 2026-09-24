@@ -1,6 +1,6 @@
 {
   "name": "@mafesoftware/plata-ar",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Plata en centavos, parseo y formato argentino. Sin dependencias.",
   "license": "MIT",
   "type": "module",

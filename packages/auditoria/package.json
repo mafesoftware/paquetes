@@ -1,6 +1,6 @@
 {
   "name": "@mafesoftware/auditoria",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "Registro de auditoría inmutable y por tenant para los productos SaaS de MAFE Software: qué cambió (diff de antes/después), quién, cuándo, con campos sensibles redactados. loQueCambio/redactar/serializarParaAuditoria en el núcleo y, en /drizzle, tablaAuditoria + sqlInmutabilidad (trigger que bloquea UPDATE/DELETE/TRUNCATE) + auditar (nunca lanza) + listarAuditoria.",
   "type": "module",
   "license": "MIT",

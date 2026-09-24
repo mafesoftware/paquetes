@@ -1,6 +1,6 @@
 {
   "name": "@mafesoftware/reservas",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Motor de disponibilidad, turnos y lista de espera. Puro.",
   "license": "MIT",
   "type": "module",

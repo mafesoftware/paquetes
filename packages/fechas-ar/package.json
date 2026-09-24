@@ -1,6 +1,6 @@
 {
   "name": "@mafesoftware/fechas-ar",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Dias de calendario vs instantes, con zona horaria explicita. Sin dependencias.",
   "license": "MIT",
   "type": "module",
