@@ -316,7 +316,9 @@ reimplementación paralela que podría desincronizarse.
 
 Levantalo con `docker compose up -d db_test` desde la raíz del monorepo
 antes de correr `bun run test` — si no está arriba, ese archivo FALLA con un
-mensaje que lo dice (no se saltea en silencio). `tests/drizzle/config.test.ts`
+mensaje que lo dice (no se saltea en silencio; la conexión la arma
+`poolDePrueba()`, `tests/lib/postgres-de-prueba.ts` en la raíz, compartido
+con `packages/numeradores`). `tests/drizzle/config.test.ts`
 (la verificación estructural con `getTableConfig`, sin tocar la base) corre
 siempre, con o sin Docker. `bun run test:sin-db` excluye solo
 `postgres.test.ts` — el resto de `/drizzle` y de los tests del paquete

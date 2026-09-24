@@ -1,0 +1,66 @@
+{
+  "name": "@mafesoftware/numeradores",
+  "version": "0.0.0",
+  "description": "Numeración correlativa sin huecos (comprobantes, órdenes de pago, órdenes de compra) por tenant + ámbito + tipo, segura bajo concurrencia: formatearNumero (sin truncar), esChoqueDeUnico/conReintento en el núcleo y, en /drizzle, tablaNumeradores + siguienteNumero (atómico, exige transacción) + configurarNumerador.",
+  "type": "module",
+  "license": "MIT",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./drizzle": {
+      "types": "./dist/drizzle/index.d.ts",
+      "import": "./dist/drizzle/index.js"
+    }
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "README.md",
+    "CHANGELOG.md",
+    "sql"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mafesoftware/paquetes.git",
+    "directory": "packages/numeradores"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.build.json --noEmit"
+  },
+  "peerDependencies": {
+    "drizzle-orm": ">=0.45 <0.46"
+  },
+  "peerDependenciesMeta": {
+    "drizzle-orm": {
+      "optional": true
+    }
+  },
+  "dependencies": {
+    "@mafesoftware/tenant": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/pg": "^8.15.5",
+    "drizzle-kit": "~0.31",
+    "drizzle-orm": "~0.45.2",
+    "pg": "^8.23.0"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "keywords": [
+    "numeracion",
+    "correlativo",
+    "comprobantes",
+    "multi-tenant",
+    "drizzle"
+  ]
+}

@@ -1,0 +1,15 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "dist",
+    "rootDir": "src",
+    // Este paquete usa `setTimeout` (núcleo, `conReintento`) y
+    // `drizzle-orm/pg-core` (`src/drizzle/`); sin este "types" explícito, el
+    // TS de este repo no encuentra los tipos de Node aunque `@types/node`
+    // esté instalado (mismo motivo documentado en tenant/seguridad).
+    "types": ["node"]
+  },
+  "include": [
+    "src"
+  ]
+}

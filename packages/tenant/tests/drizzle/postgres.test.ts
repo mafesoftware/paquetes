@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { Pool } from "pg";
+import type { Pool } from "pg";
+import { poolDePrueba } from "../../../../tests/lib/postgres-de-prueba.js";
 import { ddlDeEsquemaDePrueba } from "./esquema.js";
 
 /**
@@ -16,14 +17,14 @@ import { ddlDeEsquemaDePrueba } from "./esquema.js";
  * generado con `drizzle-kit/api`), no de SQL escrito a mano — así este test
  * ejercita de verdad lo que `fkTenant` produce.
  *
- * `DATABASE_URL_TEST` (default: el `docker-compose.yml` de la raíz del
- * monorepo, servicio `db_test`, puerto 5475). Si Postgres no está
- * levantado, este archivo FALLA con un mensaje claro — nunca se salta en
- * silencio (ver `beforeAll` abajo).
+ * La conexión (`DATABASE_URL_TEST`, default: el `docker-compose.yml` de la
+ * raíz del monorepo, servicio `db_test`, puerto 5475) la arma
+ * `poolDePrueba()`, compartido con `packages/numeradores` — ver
+ * `tests/lib/postgres-de-prueba.ts` en la raíz para por qué ese helper vive
+ * ahí y no en un paquete. Si Postgres no está levantado, `poolDePrueba()`
+ * TIRA con un mensaje claro — nunca se salta en silencio (ver `beforeAll`
+ * abajo).
  */
-const DATABASE_URL_TEST =
-  process.env.DATABASE_URL_TEST ?? "postgres://postgres:postgres@localhost:5475/paquetes_test";
-
 const NOMBRE_ESQUEMA = `tenant_test_${randomUUID().replace(/-/g, "_")}`;
 const e = `"${NOMBRE_ESQUEMA}"`;
 
@@ -52,57 +53,13 @@ async function insertarUnidad(id: string, organizacionId: string, proyectoId: st
   ]);
 }
 
-/**
- * La URL de conexión, con la contraseña tapada — nunca se debe poner una
- * credencial en texto plano en la salida de un test (aunque acá sea la de
- * un Postgres descartable de test, el hábito es el que importa: el mismo
- * código de error corre con `DATABASE_URL_TEST` apuntando a cualquier lado).
- */
-function urlSinPassword(url: string): string {
-  try {
-    const u = new URL(url);
-    if (u.password) u.password = "***";
-    return u.toString();
-  } catch {
-    // Por si el parser de URL no entiende el esquema "postgres:" en algún
-    // runtime: mismo resultado con una regex sobre "usuario:password@".
-    return url.replace(/:\/\/([^:/@]+):([^@]+)@/, "://$1:***@");
-  }
-}
-
-/**
- * Una descripción legible del error de conexión: mensaje, `error.code`
- * (p. ej. `"ECONNREFUSED"`) si lo tiene, y — si es un `AggregateError` (Node
- * junta ahí varios intentos cuando un host resuelve a más de una dirección,
- * típico de "localhost" con IPv4 e IPv6 a la vez) — el detalle de CADA
- * intento interno, porque el mensaje de afuera solo dice "algo falló" y el
- * `code` útil suele estar en uno de los internos.
- */
-function describirError(error: unknown): string {
-  if (error instanceof AggregateError) {
-    const internos = error.errors.map((e2) => describirError(e2)).join(" | ");
-    return `${error.message} [${internos}]`;
-  }
-  if (error instanceof Error) {
-    const code = (error as NodeJS.ErrnoException).code;
-    return code ? `${error.message} (code: ${code})` : error.message;
-  }
-  return String(error);
-}
-
 beforeAll(async () => {
-  pool = new Pool({ connectionString: DATABASE_URL_TEST, connectionTimeoutMillis: 3000 });
-  try {
-    await pool.query("select 1");
-    conectado = true;
-  } catch (error) {
-    await pool.end().catch(() => {});
-    throw new Error(
-      `No se pudo conectar a Postgres de test en ${urlSinPassword(DATABASE_URL_TEST)}. ` +
-        `Correr "docker compose up -d db_test" desde la raíz del monorepo antes de testear ` +
-        `(o setear DATABASE_URL_TEST si Postgres corre en otro lado). Causa original: ${describirError(error)}`,
-    );
-  }
+  // poolDePrueba() (tests/lib/postgres-de-prueba.ts, raíz) arma el Pool
+  // contra DATABASE_URL_TEST y tira con mensaje claro (URL sin password,
+  // instrucción de "docker compose up -d db_test", causa original) si no
+  // hay conexión — nunca se saltea en silencio.
+  pool = await poolDePrueba();
+  conectado = true;
 
   for (const sentencia of await ddlDeEsquemaDePrueba(NOMBRE_ESQUEMA)) {
     await pool.query(sentencia);
@@ -117,9 +74,9 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  // Si la conexión falló arriba, el pool ya se cerró en el catch: no hay
-  // nada que limpiar, y reusarlo acá solo taparía el error real de conexión
-  // con un segundo error ("Cannot use a pool after calling end").
+  // Si la conexión falló arriba, poolDePrueba() ya cerró el pool antes de
+  // tirar: no hay nada que limpiar, y reusarlo acá solo taparía el error
+  // real de conexión con uno nuevo ("Cannot use a pool after calling end").
   if (!conectado) return;
   await pool.query(`drop schema if exists "${NOMBRE_ESQUEMA}" cascade`);
   await pool.end();
