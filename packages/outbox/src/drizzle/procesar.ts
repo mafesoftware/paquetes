@@ -30,13 +30,23 @@ export interface OpcionesProcesarOutbox {
   /**
    * Cuánto esperar la respuesta de un `Transporte` antes de darla por
    * perdida y tratarla como `"transitorio"` (`codigo: "timeout"`).
-   * `Math.floor(leaseMs / 2)` por defecto. Tiene que ser `> 0` y `<=
-   * leaseMs / 2` — no solo `< leaseMs` (la validación de antes): con un
-   * `timeoutMs` cercano a `leaseMs` casi cualquier fila termina con
+   * `60_000` (1 min) por defecto — antes (ronda de fix 3) era `Math.floor(leaseMs
+   * / 2)`, pero eso hacía que los valores por defecto del PROPIO paquete
+   * (`lote: 20`, `concurrencia: 5`, `leaseMs: 600_000`) dispararan su
+   * propia advertencia de "Cola del pool y lease" (más abajo): con
+   * `timeoutMs` igual a `leaseMs / 2`, `timeoutMs * ceil(lote /
+   * concurrencia)` da `leaseMs * (olas / 2)`, que para cualquier `olas >=
+   * 3` ya supera `leaseMs` — los defaults de este paquete tienen `olas =
+   * 4`. Con `60_000` fijo, `60_000 * 4 = 240_000 < 600_000`: los defaults
+   * no se avisan a sí mismos (ronda de fix 3b). Tiene que ser `> 0` y `<=
+   * leaseMs / 2` — no solo `< leaseMs` (la validación de la ronda 2): con
+   * un `timeoutMs` cercano a `leaseMs` casi cualquier fila termina con
    * `restante < timeoutMs` para cuando le toca su turno en el pool (ver
-   * "Cola del pool y lease" más abajo) y se LIBERA en vez de intentarse —
-   * `leaseMs / 2` deja margen real para que el chequeo de esa sección
-   * tenga sentido en tamaños de lease normales, no solo en el caso límite.
+   * "Cola del pool y lease" más abajo) y se LIBERA en vez de intentarse.
+   * **Si se customiza `leaseMs` por debajo de `120_000` sin pasar
+   * `timeoutMs` explícito, el default fijo (`60_000`) va a violar `<=
+   * leaseMs / 2` y `procesarOutbox` tira `ErrorOutbox("opciones_invalidas")`**
+   * — con un `leaseMs` chico, hay que pasar `timeoutMs` explícito.
    */
   timeoutMs?: number;
   /**
@@ -279,7 +289,6 @@ function resumenVacio(advertencias: string[]): ResumenProcesarOutbox {
  *   },
  *   lote: 50,
  *   concurrencia: 10,
- *   timeoutMs: 100_000, // explícito acá para que ESTE ejemplo no dispare la advertencia de abajo (ver su JSDoc)
  * });
  * // { reclamados: 12, enviados: 10, reintentar: 1, fallidos: 0, descartados: 1, perdidos: 0, liberados: 0, errores: 0, advertencias: [] }
  * ```
@@ -301,7 +310,10 @@ export async function procesarOutbox(opciones: OpcionesProcesarOutbox): Promise<
   if (!(leaseMs >= 5000)) {
     throw new ErrorOutbox("opciones_invalidas", `procesarOutbox: "leaseMs" tiene que ser >= 5000 (fue ${leaseMs}).`);
   }
-  const timeoutMs = opciones.timeoutMs ?? Math.floor(leaseMs / 2);
+  // Ronda de fix 3b: default FIJO (60_000), no más `Math.floor(leaseMs / 2)`
+  // — ver el JSDoc de la opción para el porqué (los defaults del propio
+  // paquete disparaban su propia advertencia con el default anterior).
+  const timeoutMs = opciones.timeoutMs ?? 60_000;
   if (!(timeoutMs > 0)) {
     throw new ErrorOutbox("opciones_invalidas", `procesarOutbox: "timeoutMs" tiene que ser > 0 (fue ${timeoutMs}).`);
   }

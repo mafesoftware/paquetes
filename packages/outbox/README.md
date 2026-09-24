@@ -292,23 +292,42 @@ await db.transaction(async (tx) => {
 Procesa hasta `lote` (`20` por defecto) mensajes debidos: los reclama de
 forma atómica (`FOR UPDATE SKIP LOCKED`), llama al `Transporte` de cada
 canal (con un tope de `concurrencia` simultáneos, `5` por defecto, y un
-`timeoutMs` por intento, `Math.floor(leaseMs / 2)` por defecto), y registra
-el resultado — CERROJADO por el lease con el que se reclamó (ver "Entrega
-al menos una vez" arriba): si otro worker ya reclamó la fila de nuevo, el
+`timeoutMs` por intento, `60_000` — 1 min — por defecto), y registra el
+resultado — CERROJADO por el lease con el que se reclamó (ver "Entrega al
+menos una vez" arriba): si otro worker ya reclamó la fila de nuevo, el
 registro se descarta sin pisar nada (`perdidos`), nunca vuelve la fila a un
 estado anterior.
+
+`leaseMs` (`600_000` — 10 min — por defecto) tiene que ser `>= 5000`;
+`timeoutMs` tiene que ser `<= leaseMs / 2` (si se customiza `leaseMs` por
+debajo de `120_000` sin pasar `timeoutMs` explícito, el default fijo de
+`60_000` viola esa cota y `procesarOutbox` tira
+`ErrorOutbox("opciones_invalidas")` — con un lease chico, hay que pasar
+`timeoutMs` a mano). Las dos validaciones existen para que "Cola del pool y
+lease" (abajo) tenga margen real para decidir "alcanza" o "no alcanza", en
+vez de un timeout efectivo de milisegundos.
 
 **Cola del pool y lease.** Todas las filas de un reclamo comparten el mismo
 `bloqueado_hasta`, pero con `concurrencia` limitada no todas se procesan al
 mismo tiempo — una fila puede esperar su turno mientras otras, antes en la
 cola, siguen "en vuelo". Si a una fila le toca el turno cuando ya casi no
-le queda lease, `procesarOutbox` NO intenta mandarla: la libera sola
-(`"pendiente"`, `intentos - 1`, debida de nuevo ya mismo — cuenta en
-`liberados`, o en `perdidos` si para cuando se escribe esto otro worker ya
-la reclamó). Si sí alcanza el margen, el intento corre con un timeout
-recortado a lo que realmente queda de lease. Sin esto, un lote con
-`concurrencia` baja y filas lentas podía terminar con DOS workers mandando
-la MISMA fila a la vez — reproducido contra Postgres real.
+le queda lease (menos de `timeoutMs + 1000` ms), `procesarOutbox` NO
+intenta mandarla: la libera sola (`"pendiente"`, `intentos - 1`, debida de
+nuevo ya mismo — cuenta en `liberados`, o en `perdidos` si para cuando se
+escribe esto otro worker ya la reclamó). Si sí alcanza el margen, el
+intento corre con el `timeoutMs` configurado (nunca un resto corto — por
+construcción, el margen exigido para intentar ya deja siempre ese margen).
+Sin esto, un lote con `concurrencia` baja y filas lentas podía terminar con
+DOS workers mandando la MISMA fila a la vez — reproducido contra Postgres
+real.
+
+Si `leaseMs` es corto frente al PEOR caso de esta cola (`timeoutMs *
+ceil(lote / concurrencia)`), `procesarOutbox` no tira — agrega un mensaje a
+`resumen.advertencias` (`[]` si no hay ninguno). Nunca se loguea por su
+cuenta (ni `console.warn` ni ninguna otra forma): es información para quien
+llama, para que decida qué hacer con ella (loguearla, subir `leaseMs`/
+`concurrencia`, bajar `lote`, o ignorarla). Con los valores por defecto del
+paquete esto NO se dispara (`60_000 * ceil(20 / 5) = 240_000 < 600_000`).
 
 **Nunca tira** — ni por un fallo de `Transporte` (excepción, o que no
 responda en el timeout efectivo: los dos se tratan como `"transitorio"`),
@@ -329,7 +348,7 @@ reintento con un backoff más largo — al menos 60 s, incluso en el primer
 intento.
 
 Devuelve `{ reclamados, enviados, reintentar, fallidos, descartados,
-perdidos, liberados, errores, ultimoError? }`.
+perdidos, liberados, errores, advertencias, ultimoError? }`.
 
 ```ts
 import { procesarOutbox, transporteCorreo, transporteWhatsApp } from "@mafesoftware/outbox/drizzle";
@@ -344,7 +363,7 @@ const resumen = await procesarOutbox({
   lote: 50,
   concurrencia: 10,
 });
-// { reclamados: 12, enviados: 10, reintentar: 1, fallidos: 0, descartados: 1, perdidos: 0, liberados: 0, errores: 0 }
+// { reclamados: 12, enviados: 10, reintentar: 1, fallidos: 0, descartados: 1, perdidos: 0, liberados: 0, errores: 0, advertencias: [] }
 ```
 
 #### `purgarOutbox(opciones: OpcionesPurgarOutbox): Promise<ResultadoPurgarOutbox>`

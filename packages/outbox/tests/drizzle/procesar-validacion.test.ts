@@ -42,7 +42,12 @@ describe("procesarOutbox: valida las opciones antes de tocar db/tabla", () => {
   });
 
   it('"leaseMs" === 5000 (el mínimo válido) NO tira por esta validación', async () => {
-    const resumen = await procesarOutbox({ db: undefined as never, tabla: undefined as never, transportes: {}, leaseMs: 5000 });
+    // timeoutMs explícito (el máximo permitido para este leaseMs, 2500) —
+    // desde la ronda de fix 3b el default de timeoutMs es un FIJO de
+    // 60_000, que con leaseMs: 5000 violaría "<= leaseMs / 2" por sí solo
+    // (ver el test de abajo); este test aísla específicamente el chequeo
+    // de "leaseMs" >= 5000.
+    const resumen = await procesarOutbox({ db: undefined as never, tabla: undefined as never, transportes: {}, leaseMs: 5000, timeoutMs: 2500 });
     expect(resumen.errores).toBe(1); // sigue fallando, pero por la base (db undefined), no por opciones_invalidas
   });
 
@@ -72,9 +77,21 @@ describe("procesarOutbox: valida las opciones antes de tocar db/tabla", () => {
     ).rejects.toMatchObject({ name: "ErrorOutbox", codigo: "opciones_invalidas" });
   });
 
-  it('"timeoutMs" por defecto (Math.floor(leaseMs/2)) siempre es válido (nunca excede leaseMs/2 al redondear para abajo)', async () => {
-    const resumen = await procesarOutbox({ db: undefined as never, tabla: undefined as never, transportes: {}, leaseMs: 10_001 });
-    expect(resumen.errores).toBe(1); // no tiró por opciones_invalidas
+  it('"timeoutMs" por defecto (60_000, FIJO desde la ronda de fix 3b) es válido con "leaseMs" en su propio default (600_000)', async () => {
+    // Sin pasar NADA de leaseMs/timeoutMs: los dos valores por defecto del
+    // paquete tienen que ser compatibles entre sí (60_000 <= 600_000 / 2).
+    const resumen = await procesarOutbox({ db: undefined as never, tabla: undefined as never, transportes: {} });
+    expect(resumen.errores).toBe(1); // no tiró por opciones_invalidas — llegó hasta el fallo de la base
+  });
+
+  it('"timeoutMs" por defecto (60_000, FIJO) SÍ tira si se customiza "leaseMs" por debajo de 120_000 sin pasar "timeoutMs" explícito — ronda de fix 3b: ya no escala con leaseMs como antes (Math.floor(leaseMs/2))', async () => {
+    // leaseMs: 10_001 (válido en sí mismo, >= 5000) pero el default fijo de
+    // timeoutMs (60_000) excede leaseMs/2 (5000.5) — tiene que rechazarse,
+    // no colarse como en la ronda anterior (donde el default SIEMPRE
+    // escalaba junto con leaseMs y nunca podía violar su propia cota).
+    await expect(
+      procesarOutbox({ db: undefined as never, tabla: undefined as never, transportes: {}, leaseMs: 10_001 }),
+    ).rejects.toMatchObject({ name: "ErrorOutbox", codigo: "opciones_invalidas" });
   });
 
   it('"concurrencia" no entero o < 1 tira ErrorOutbox("opciones_invalidas")', async () => {
@@ -151,5 +168,13 @@ describe("procesarOutbox: valida las opciones antes de tocar db/tabla", () => {
       concurrencia: 2,
     });
     expect(resumen.advertencias).toEqual([]);
+  });
+
+  it('con TODAS las opciones por defecto (sin pasar lote/leaseMs/timeoutMs/concurrencia), "advertencias" da [] — ronda de fix 3b: el controller marcó que los defaults del paquete NO pueden dispararse su propia advertencia', async () => {
+    // lote: 20, concurrencia: 5 (olas = 4), leaseMs: 600_000, timeoutMs:
+    // 60_000 -> 60_000 * 4 = 240_000 <= 600_000: sin advertencia.
+    const resumen = await procesarOutbox({ db: undefined as never, tabla: undefined as never, transportes: {} });
+    expect(resumen.advertencias).toEqual([]);
+    expect(resumen.errores).toBe(1); // sigue fallando por la base (db undefined) — la validación y la advertencia van ANTES de tocarla
   });
 });

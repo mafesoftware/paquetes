@@ -72,7 +72,8 @@ negocio.
     UPDATE SKIP LOCKED ... UPDATE ... RETURNING` (transacción corta), llama
     al `Transporte` de cada canal FUERA de esa transacción (tope de
     `concurrencia` simultáneos, `5` por defecto; `timeoutMs` por intento,
-    `Math.floor(leaseMs / 2)` por defecto), y registra el resultado en su
+    `60_000` — 1 min, FIJO desde la ronda de fix 3b, ver más abajo — por
+    defecto), y registra el resultado en su
     propia transacción corta por fila — CERROJADA por el lease exacto con
     el que se reclamó (`estado = 'procesando' and bloqueado_hasta =
     <lease>`), para que un worker "zombi" nunca pise lo que otro worker ya
@@ -288,3 +289,32 @@ de L1 pasaba por el motivo equivocado):
   ahora deja explícito que un 409 de Resend ANTES mapeaba a `"rechazado"`
   (permanente) y AHORA mapea a `"conflicto_idempotencia"` (transitorio), y
   que ese cambio agrega un miembro a la unión `CategoriaErrorCorreo`.
+
+**Ronda de fix 3b** (controller ruling sobre un concern de la ronda 3: los
+defaults del propio paquete no pueden dispararse su propia advertencia):
+
+- **Default de `timeoutMs` cambiado de `Math.floor(leaseMs / 2)` a un FIJO
+  de `60_000`** (1 min). Con el default anterior, los valores por defecto
+  del PROPIO paquete (`lote: 20`, `concurrencia: 5`, `leaseMs: 600_000`)
+  disparaban SIEMPRE la advertencia nueva de la ronda 3 (`timeoutMs *
+  ceil(lote / concurrencia)` con `timeoutMs = leaseMs / 2` y `olas = 4` da
+  `leaseMs * 2`, que por construcción supera `leaseMs`) — cualquier app que
+  llamara a `procesarOutbox()` sin pasar opciones iba a ver la advertencia
+  en (casi) cada corrida. Con `60_000` fijo: `60_000 * 4 = 240_000 <
+  600_000`, sin advertencia. **Efecto colateral, documentado en el JSDoc de
+  la opción**: si se customiza `leaseMs` por debajo de `120_000` SIN pasar
+  `timeoutMs` explícito, el default fijo (`60_000`) ahora viola `<= leaseMs
+  / 2` y `procesarOutbox` tira `ErrorOutbox("opciones_invalidas")` — antes,
+  el default (derivado de `leaseMs`) nunca podía violar su propia cota. Con
+  un `leaseMs` chico, hay que pasar `timeoutMs` explícito.
+- Nuevo test que confirma exactamente lo pedido: `procesarOutbox` con
+  TODAS las opciones por defecto da `advertencias: []`.
+- Se revirtieron los ajustes de `lote: 1` que la ronda 3 había agregado a
+  varios tests preexistentes SOLO para silenciar la advertencia con
+  opciones por defecto — ya no hacen falta con el nuevo default. Se
+  conservaron (con el comentario actualizado) los dos casos donde el
+  `lote: 1` sigue haciendo falta de verdad: tests con `leaseMs`/`timeoutMs`
+  CUSTOM chicos, donde `lote`/`concurrencia` por defecto seguirían
+  disparando la advertencia igual.
+- README y JSDoc de `procesarOutbox`/`OpcionesProcesarOutbox` actualizados
+  con el nuevo default y su consecuencia sobre `leaseMs` customizado.

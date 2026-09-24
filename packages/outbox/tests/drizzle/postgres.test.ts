@@ -241,7 +241,7 @@ describe("procesarOutbox (Postgres)", () => {
     const tenantId = randomUUID();
     const { id } = await db.transaction((tx) => encolar(tx, tabla, { tenantId, canal: "correo", destino: "a@b.com", plantilla: "p", claveIdempotencia: randomUUID() }));
 
-    const resumen = await procesarOutbox({ db, tabla, lote: 1, transportes: { correo: transporteFijo({ ok: true, idExterno: "resend_abc" }) } });
+    const resumen = await procesarOutbox({ db, tabla, transportes: { correo: transporteFijo({ ok: true, idExterno: "resend_abc" }) } });
 
     expect(resumen).toEqual({ reclamados: 1, enviados: 1, reintentar: 0, fallidos: 0, descartados: 0, perdidos: 0, liberados: 0, errores: 0, advertencias: [] });
     const fila = await filaPorId(nombre, id);
@@ -257,7 +257,7 @@ describe("procesarOutbox (Postgres)", () => {
     const tenantId = randomUUID();
     const { id } = await db.transaction((tx) => encolar(tx, tabla, { tenantId, canal: "correo", destino: "a@b.com", plantilla: "p", claveIdempotencia: randomUUID() }));
 
-    const resumen = await procesarOutbox({ db, tabla, lote: 1, transportes: { correo: transporteFijo({ ok: true }) } });
+    const resumen = await procesarOutbox({ db, tabla, transportes: { correo: transporteFijo({ ok: true }) } });
 
     expect(resumen).toEqual({ reclamados: 1, enviados: 1, reintentar: 0, fallidos: 0, descartados: 0, perdidos: 0, liberados: 0, errores: 0, advertencias: [] });
     const fila = await filaPorId(nombre, id);
@@ -296,7 +296,6 @@ describe("procesarOutbox (Postgres)", () => {
     const resumen = await procesarOutbox({
       db,
       tabla,
-      lote: 1,
       transportes: { correo: transporteFijo({ ok: false, categoria: "red", codigo: "ECONNRESET" }) },
       ahora: () => antes,
     });
@@ -329,7 +328,7 @@ describe("procesarOutbox (Postgres)", () => {
     let momento = new Date();
 
     // Intento 1 de 2: falla transitorio -> "pendiente", agenda proximo_intento_en.
-    const r1 = await procesarOutbox({ db, tabla, lote: 1, transportes: { correo: transporteFijo({ ok: false, categoria: "limite" }) }, ahora: () => momento });
+    const r1 = await procesarOutbox({ db, tabla, transportes: { correo: transporteFijo({ ok: false, categoria: "limite" }) }, ahora: () => momento });
     expect(r1).toEqual({ reclamados: 1, enviados: 0, reintentar: 1, fallidos: 0, descartados: 0, perdidos: 0, liberados: 0, errores: 0, advertencias: [] });
     expect((await filaPorId(nombre, id))?.estado).toBe("pendiente");
 
@@ -337,7 +336,7 @@ describe("procesarOutbox (Postgres)", () => {
     momento = new Date(momento.getTime() + 2 * 3_600_000);
 
     // Intento 2 de 2: vuelve a fallar transitorio, ya sin intentos -> "fallido".
-    const r2 = await procesarOutbox({ db, tabla, lote: 1, transportes: { correo: transporteFijo({ ok: false, categoria: "limite" }) }, ahora: () => momento });
+    const r2 = await procesarOutbox({ db, tabla, transportes: { correo: transporteFijo({ ok: false, categoria: "limite" }) }, ahora: () => momento });
     expect(r2).toEqual({ reclamados: 1, enviados: 0, reintentar: 0, fallidos: 1, descartados: 0, perdidos: 0, liberados: 0, errores: 0, advertencias: [] });
 
     const fila = await filaPorId(nombre, id);
@@ -363,7 +362,7 @@ describe("procesarOutbox (Postgres)", () => {
       encolar(tx, tabla, { tenantId, canal: "whatsapp", destino: "5491100000000", plantilla: "p", claveIdempotencia: randomUUID(), maxIntentos: 5 }),
     );
 
-    const resumen = await procesarOutbox({ db, tabla, lote: 1, transportes: { whatsapp: transporteFijo({ ok: false, categoria, codigo: "detalle" }) } });
+    const resumen = await procesarOutbox({ db, tabla, transportes: { whatsapp: transporteFijo({ ok: false, categoria, codigo: "detalle" }) } });
 
     expect(resumen).toEqual({ reclamados: 1, enviados: 0, reintentar: 0, fallidos: 0, descartados: 1, perdidos: 0, liberados: 0, errores: 0, advertencias: [] });
     const fila = await filaPorId(nombre, id);
@@ -387,7 +386,7 @@ describe("procesarOutbox (Postgres)", () => {
       bloqueadoHasta: new Date(Date.now() - 60_000), // venció hace 1 minuto
     });
 
-    const resumen = await procesarOutbox({ db, tabla, lote: 1, transportes: { correo: transporteFijo({ ok: true, idExterno: "recuperado" }) } });
+    const resumen = await procesarOutbox({ db, tabla, transportes: { correo: transporteFijo({ ok: true, idExterno: "recuperado" }) } });
 
     expect(resumen).toEqual({ reclamados: 1, enviados: 1, reintentar: 0, fallidos: 0, descartados: 0, perdidos: 0, liberados: 0, errores: 0, advertencias: [] });
     const fila = await filaPorId(nombre, id);
@@ -423,7 +422,7 @@ describe("procesarOutbox (Postgres)", () => {
       encolar(tx, tabla, { tenantId, canal: "correo", destino: "a@b.com", plantilla: "p", claveIdempotencia: randomUUID(), maxIntentos: 5 }),
     );
 
-    const resumen = await procesarOutbox({ db, tabla, lote: 1, transportes: { correo: transporteFijo("tira") } });
+    const resumen = await procesarOutbox({ db, tabla, transportes: { correo: transporteFijo("tira") } });
 
     expect(resumen).toEqual({ reclamados: 1, enviados: 0, reintentar: 1, fallidos: 0, descartados: 0, perdidos: 0, liberados: 0, errores: 0, advertencias: [] });
     const fila = await filaPorId(nombre, id);
@@ -441,7 +440,7 @@ describe("procesarOutbox (Postgres)", () => {
       encolar(tx, tabla, { tenantId, canal: "whatsapp", destino: "5491100000000", plantilla: "p", claveIdempotencia: randomUUID() }),
     );
 
-    const resumen = await procesarOutbox({ db, tabla, lote: 1, transportes: {} }); // sin "whatsapp"
+    const resumen = await procesarOutbox({ db, tabla, transportes: {} }); // sin "whatsapp"
 
     expect(resumen).toEqual({ reclamados: 1, enviados: 0, reintentar: 0, fallidos: 0, descartados: 1, perdidos: 0, liberados: 0, errores: 0, advertencias: [] });
     const fila = await filaPorId(nombre, id);
@@ -568,7 +567,16 @@ describe("procesarOutbox: fencing por lease — C1, reproducción del bug real (
         db,
         tabla,
         leaseMs: 5000,
-        lote: 1, // solo hay 1 fila — evita la advertencia de I1/I2 (pensada para lote/concurrencia por defecto, no para este test)
+        // Ronda de fix 3b: el default de "timeoutMs" ya no escala con
+        // "leaseMs" (es un fijo de 60_000) — con un "leaseMs" chico como
+        // este hay que pasarlo explícito, o "timeoutMs" (60_000) viola
+        // "<= leaseMs / 2" (2500) y tira ErrorOutbox("opciones_invalidas").
+        // 1000 ms le da de sobra a este test (B, más abajo, cierra la fila
+        // en un puñado de milisegundos reales) y, con "lote"/"concurrencia"
+        // por defecto (20/5, "olas" = 4), 1000 * 4 = 4000 <= 5000: tampoco
+        // dispara la advertencia de "Cola del pool y lease" — no hace
+        // falta acotar "lote" a mano.
+        timeoutMs: 1000,
         transportes: {
           correo: async () => {
             envios.push("A");
@@ -812,7 +820,7 @@ describe("procesarOutbox: la cola del pool respeta el lease — L1 (Postgres)", 
       tabla,
       leaseMs: 5000,
       timeoutMs: 2000,
-      lote: 1, // solo hay 1 fila — evita la advertencia de I1/I2 (pensada para lote/concurrencia por defecto, no para este test)
+      lote: 1, // solo hay 1 fila — con "leaseMs"/"timeoutMs" chicos explícitos, "lote"/"concurrencia" por defecto (20/5) dispararía la advertencia de "Cola del pool y lease" igual
       ahora: ahoraFalso,
       transportes: { correo: transporte },
     });
@@ -907,7 +915,7 @@ describe('procesarOutbox: "bloqueadoHasta" inválido se trata como perdida, sin 
     } as unknown as NodePgDatabase;
 
     const transporte = vi.fn();
-    const resumen = await procesarOutbox({ db: dbConBloqueadoHastaInvalido, tabla, lote: 1, transportes: { correo: transporte } });
+    const resumen = await procesarOutbox({ db: dbConBloqueadoHastaInvalido, tabla, transportes: { correo: transporte } });
 
     expect(transporte).not.toHaveBeenCalled();
     expect(resumen).toEqual({ reclamados: 1, enviados: 0, reintentar: 0, fallidos: 0, descartados: 0, perdidos: 1, liberados: 0, errores: 0, advertencias: [] });
@@ -1218,7 +1226,7 @@ describe("procesarOutbox: timeout por intento — I4 (Postgres)", () => {
         // que corre es el configurado (2000 ms), no un resto arbitrario.
         leaseMs: 5000,
         timeoutMs: 2000,
-        lote: 1, // solo hay 1 fila — evita la advertencia de I1/I2 (pensada para lote/concurrencia por defecto, no para este test)
+        lote: 1, // solo hay 1 fila — con "leaseMs"/"timeoutMs" chicos explícitos, "lote"/"concurrencia" por defecto (20/5) dispararía la advertencia de "Cola del pool y lease" igual
         transportes: { correo: () => new Promise(() => {}) }, // cuelga para siempre
       });
 
