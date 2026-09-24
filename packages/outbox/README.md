@@ -299,8 +299,9 @@ reclamó (ver "Entrega al menos una vez" arriba): si otro worker ya reclamó
 la fila de nuevo, el registro se descarta sin pisar nada (`perdidos`),
 nunca vuelve la fila a un estado anterior.
 
-`leaseMs` (`600_000` — 10 min — por defecto) tiene que ser `>= 5000`;
-`timeoutMs` tiene que ser `<= leaseMs / 2`. El default de `timeoutMs`
+`leaseMs` (`600_000` — 10 min — por defecto) tiene que ser un entero finito
+`>= 5000`; `timeoutMs`, un entero finito `>= 1000` y `<= leaseMs / 2` (si
+no, `ErrorOutbox("opciones_invalidas")`). El default de `timeoutMs`
 NUNCA puede violar esa cota por sí solo (el `Math.min` lo garantiza para
 cualquier `leaseMs`), así que customizar SOLO `leaseMs` (sin pasar
 `timeoutMs`) nunca tira por esto — con un `leaseMs` chico, el default cae
@@ -316,7 +317,11 @@ cola, siguen "en vuelo". Si a una fila le toca el turno cuando ya casi no
 le queda lease (menos de `timeoutMs + 1000` ms), `procesarOutbox` NO
 intenta mandarla: la libera sola (`"pendiente"`, `intentos - 1`, debida de
 nuevo ya mismo — cuenta en `liberados`, o en `perdidos` si para cuando se
-escribe esto otro worker ya la reclamó). Si sí alcanza el margen, el
+escribe esto otro worker ya la reclamó). La fila liberada **conserva su
+lugar en la cola** (`proximo_intento_en` no se mueve hacia adelante: queda
+en `least(coalesce(proximo_intento_en, programado_para), <momento del
+reclamo>)`), así que la próxima corrida la toma antes que lo que llegó
+después — nunca pasa hambre bajo carga sostenida. Si sí alcanza el margen, el
 intento corre con el `timeoutMs` configurado (nunca un resto corto — por
 construcción, el margen exigido para intentar ya deja siempre ese margen).
 Sin esto, un lote con `concurrencia` baja y filas lentas podía terminar con
@@ -324,12 +329,13 @@ DOS workers mandando la MISMA fila a la vez — reproducido contra Postgres
 real.
 
 Si `leaseMs` es corto frente al PEOR caso de esta cola (`timeoutMs *
-ceil(lote / concurrencia)`), `procesarOutbox` no tira — agrega un mensaje a
+ceil(lote / concurrencia) + 1000`), `procesarOutbox` no tira — agrega un mensaje a
 `resumen.advertencias` (`[]` si no hay ninguno). Nunca se loguea por su
 cuenta (ni `console.warn` ni ninguna otra forma): es información para quien
 llama, para que decida qué hacer con ella (loguearla, subir `leaseMs`/
 `concurrencia`, bajar `lote`, o ignorarla). Con los valores por defecto del
-paquete esto NO se dispara (`60_000 * ceil(20 / 5) = 240_000 < 600_000`).
+paquete esto NO se dispara (`60_000 * ceil(20 / 5) + 1000 = 241_000 <=
+600_000`).
 
 **Nunca tira** — ni por un fallo de `Transporte` (excepción, o que no
 responda en el timeout efectivo: los dos se tratan como `"transitorio"`),

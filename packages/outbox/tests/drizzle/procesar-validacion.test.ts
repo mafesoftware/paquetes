@@ -109,11 +109,12 @@ describe("procesarOutbox: valida las opciones antes de tocar db/tabla", () => {
   });
 
   it('"leaseMs" customizado a secas (sin "timeoutMs") deriva un timeout válido — leaseMs: 90_000 -> timeoutMs: 45_000 (Math.floor(leaseMs / 2), < 60_000)', async () => {
-    // lote: 2, concurrencia: 1 -> "olas" = 2.
-    // Esperado (45_000): 45_000 * 2 = 90_000, NO < 90_000 (igual, borde
-    // inclusivo) -> sin advertencia.
-    // Si usara el fijo puro de la 3b (60_000): 60_000 * 2 = 120_000, SÍ <
-    // ... 90_000 < 120_000 -> SÍ dispara advertencia. Distingue los dos.
+    // lote: 2, concurrencia: 1 -> "olas" = 2. Ronda de fix 4: la
+    // advertencia incluye el colchón de 1 s -> 45_000 * 2 + 1000 = 91_000 >
+    // 90_000, así que SÍ avisa (antes, sin el colchón, este caso caía justo
+    // en el borde y no avisaba). La sonda es el TEXTO de la advertencia,
+    // que trae el timeoutMs usado: "45000 * 2", no "60000 * 2" (el fijo
+    // puro de la 3b).
     const resumen = await procesarOutbox({
       db: undefined as never,
       tabla: undefined as never,
@@ -123,7 +124,48 @@ describe("procesarOutbox: valida las opciones antes de tocar db/tabla", () => {
       concurrencia: 1,
     });
     expect(resumen.errores).toBe(1);
-    expect(resumen.advertencias).toEqual([]); // prueba que el timeoutMs derivado fue 45_000, no 60_000
+    expect(resumen.advertencias).toHaveLength(1);
+    expect(resumen.advertencias[0]).toContain("45000 * 2 + 1000 = 91000"); // prueba que el timeoutMs derivado fue 45_000, no 60_000
+  });
+
+  it('la advertencia incluye el colchón de 1 s: leaseMs: 5000, lote: 2, concurrencia: 1 (timeoutMs derivado 2500) -> 2500 * 2 + 1000 = 6000 > 5000, avisa — ronda de fix 4', async () => {
+    const resumen = await procesarOutbox({
+      db: undefined as never,
+      tabla: undefined as never,
+      transportes: {},
+      leaseMs: 5000,
+      lote: 2,
+      concurrencia: 1,
+    });
+    expect(resumen.errores).toBe(1);
+    expect(resumen.advertencias).toHaveLength(1);
+    expect(resumen.advertencias[0]).toContain("2500 * 2 + 1000 = 6000");
+  });
+
+  it('"timeoutMs" < 1000 tira ErrorOutbox("opciones_invalidas") — ronda de fix 4: antes un piso de 1000 ms lo subía en silencio por encima de lo configurado', async () => {
+    for (const timeoutMs of [1, 500, 999]) {
+      await expect(
+        procesarOutbox({ db: undefined as never, tabla: undefined as never, transportes: {}, leaseMs: 10_000, timeoutMs }),
+      ).rejects.toMatchObject({ name: "ErrorOutbox", codigo: "opciones_invalidas" });
+    }
+  });
+
+  it('"timeoutMs" === 1000 (el mínimo válido) NO tira por esta validación', async () => {
+    const resumen = await procesarOutbox({ db: undefined as never, tabla: undefined as never, transportes: {}, leaseMs: 10_000, timeoutMs: 1000, lote: 1 });
+    expect(resumen.errores).toBe(1);
+  });
+
+  it('"leaseMs"/"timeoutMs" tienen que ser enteros finitos: Infinity, NaN y fraccionarios tiran ErrorOutbox("opciones_invalidas") — ronda de fix 4', async () => {
+    for (const leaseMs of [Number.POSITIVE_INFINITY, Number.NaN, 10_000.5]) {
+      await expect(
+        procesarOutbox({ db: undefined as never, tabla: undefined as never, transportes: {}, leaseMs, timeoutMs: 2000 }),
+      ).rejects.toMatchObject({ name: "ErrorOutbox", codigo: "opciones_invalidas" });
+    }
+    for (const timeoutMs of [Number.POSITIVE_INFINITY, Number.NaN, 2000.5]) {
+      await expect(
+        procesarOutbox({ db: undefined as never, tabla: undefined as never, transportes: {}, leaseMs: 10_000, timeoutMs }),
+      ).rejects.toMatchObject({ name: "ErrorOutbox", codigo: "opciones_invalidas" });
+    }
   });
 
   it('"leaseMs" customizado a secas (sin "timeoutMs") deriva un timeout válido — leaseMs: 600_000 (el default) -> timeoutMs: 60_000 (el tope fijo, leaseMs / 2 = 300_000 > 60_000)', async () => {
@@ -204,7 +246,7 @@ describe("procesarOutbox: valida las opciones antes de tocar db/tabla", () => {
       tabla: undefined as never,
       transportes: {},
       leaseMs: 10_000,
-      timeoutMs: 100,
+      timeoutMs: 1000, // el mínimo válido (ronda de fix 4): 1000 * 1 + 1000 = 2000 <= 10_000
       lote: 2,
       concurrencia: 2,
     });

@@ -796,8 +796,12 @@ describe("procesarOutbox: la cola del pool respeta el lease — L1 (Postgres)", 
     const { tabla, nombre } = await tablaFresca();
     const tenantId = randomUUID();
     const inicio = new Date("2026-01-01T00:00:00.000Z");
+    // programadoPara 500 ms ANTES del reclamo: así se distingue "conserva su
+    // lugar en la cola" (proximo_intento_en = programadoPara) de "se manda al
+    // final" (proximo_intento_en = el momento del turno o del reclamo).
+    const programadoPara = new Date(inicio.getTime() - 500);
     const { id } = await db.transaction((tx) =>
-      encolar(tx, tabla, { tenantId, canal: "correo", destino: "a@b.com", plantilla: "p", claveIdempotencia: randomUUID(), maxIntentos: 5, programadoPara: inicio }),
+      encolar(tx, tabla, { tenantId, canal: "correo", destino: "a@b.com", plantilla: "p", claveIdempotencia: randomUUID(), maxIntentos: 5, programadoPara }),
     );
 
     // leaseMs: 5000 (el mínimo válido, I2), timeoutMs: 2000 (<= leaseMs/2,
@@ -829,8 +833,105 @@ describe("procesarOutbox: la cola del pool respeta el lease — L1 (Postgres)", 
     expect(fila?.estado).toBe("pendiente");
     expect(fila?.intentos).toBe(0); // se reclamó (0->1) y se liberó sin gastarlo (1->0)
     expect(fila?.bloqueado_hasta).toBeNull();
-    expect(new Date(fila!.proximo_intento_en as string).getTime()).toBe(momentoDelTurno.getTime());
+    // Ronda de fix 4: la fila liberada CONSERVA su lugar en la cola FIFO
+    // (least(coalesce(proximo_intento_en, programado_para), momento del
+    // reclamo)) — antes quedaba en momentoDelTurno, detrás de todo lo que
+    // hubiera llegado mientras esperaba su turno (inanición, ver el test
+    // siguiente).
+    expect(new Date(fila!.proximo_intento_en as string).getTime()).toBe(programadoPara.getTime());
+    expect(new Date(fila!.proximo_intento_en as string).getTime()).toBeLessThan(momentoDelTurno.getTime());
   });
+
+  it(
+    "una fila liberada NO pasa hambre bajo carga sostenida — ronda de fix 4: 4 filas iniciales, lote 4, concurrencia 1, lease 6000, timeout 2000, cada envío cuesta 2000 ms simulados y llegan 2 filas nuevas por corrida; en 8 corridas, toda fila inicial sale en las 2 primeras y todo se manda en orden FIFO",
+    async () => {
+      const { tabla, nombre } = await tablaFresca();
+      const tenantId = randomUUID();
+      const T0 = new Date("2026-01-01T00:00:00.000Z").getTime();
+      const COSTO_ENVIO_MS = 2000;
+      const CORRIDAS = 8;
+
+      // Reloj simulado: solo avanza cuando el Transporte "manda" algo.
+      let reloj = T0;
+      const ahora = (): Date => new Date(reloj);
+
+      /** Encola con un `programadoPara` explícito — define el orden FIFO esperado. */
+      async function encolarEn(etiqueta: string, programadoMs: number): Promise<string> {
+        const { id } = await db.transaction((tx) =>
+          encolar(tx, tabla, {
+            tenantId,
+            canal: "correo",
+            destino: `${etiqueta}@b.com`,
+            plantilla: "p",
+            claveIdempotencia: randomUUID(),
+            maxIntentos: 5,
+            programadoPara: new Date(programadoMs),
+          }),
+        );
+        etiquetaDe.set(id, etiqueta);
+        ordenDeLlegada.push(id);
+        return id;
+      }
+      const etiquetaDe = new Map<string, string>();
+      const ordenDeLlegada: string[] = [];
+
+      const iniciales: string[] = [];
+      for (let i = 0; i < 4; i++) iniciales.push(await encolarEn(`ini${i}`, T0 - 4 + i));
+
+      const enviadosEnOrden: string[] = [];
+      const corridaDeEnvio = new Map<string, number>();
+      let corridaActual = 0;
+      const transporte: Transporte = async (mensaje) => {
+        reloj += COSTO_ENVIO_MS;
+        enviadosEnOrden.push(mensaje.id);
+        corridaDeEnvio.set(mensaje.id, corridaActual);
+        return { ok: true, idExterno: `x-${mensaje.id}` };
+      };
+
+      for (let corrida = 1; corrida <= CORRIDAS; corrida++) {
+        corridaActual = corrida;
+        const inicioCorrida = reloj;
+        const resumen = await procesarOutbox({
+          db,
+          tabla,
+          lote: 4,
+          concurrencia: 1,
+          leaseMs: 6000,
+          timeoutMs: 2000,
+          ahora,
+          transportes: { correo: transporte },
+        });
+        expect(resumen.errores, `corrida ${corrida}`).toBe(0);
+        expect(resumen.enviados, `corrida ${corrida}`).toBe(2);
+        expect(resumen.liberados, `corrida ${corrida}`).toBe(2);
+        // 2 filas nuevas "llegan durante" la corrida (entre su inicio y su fin).
+        await encolarEn(`n${corrida}a`, inicioCorrida + 1000);
+        await encolarEn(`n${corrida}b`, inicioCorrida + 3000);
+      }
+
+      // Toda fila inicial sale en las 2 primeras corridas (antes: ini2/ini3
+      // se liberaban en TODAS y nunca salían).
+      for (const id of iniciales) {
+        const corrida = corridaDeEnvio.get(id);
+        expect(corrida, `${etiquetaDe.get(id)} nunca se envió`).toBeDefined();
+        expect(corrida!, `${etiquetaDe.get(id)} se envió en la corrida ${corrida}`).toBeLessThanOrEqual(2);
+      }
+
+      // FIFO: lo enviado es exactamente el prefijo del orden de llegada.
+      expect(enviadosEnOrden.map((id) => etiquetaDe.get(id))).toEqual(
+        ordenDeLlegada.slice(0, enviadosEnOrden.length).map((id) => etiquetaDe.get(id)),
+      );
+      expect(enviadosEnOrden.length).toBe(CORRIDAS * 2);
+
+      // Liberar nunca gasta intentos: cada fila enviada quedó con intentos = 1.
+      for (const id of enviadosEnOrden) {
+        const fila = await filaPorId(nombre, id);
+        expect(fila?.estado).toBe("enviado");
+        expect(fila?.intentos, `${etiquetaDe.get(id)}`).toBe(1);
+      }
+    },
+    30_000,
+  );
 
   it('con un config válido, el timeout efectivo nunca es "un segundo espurio": cuando se intenta (no se libera), min(timeoutMs, restante - 1000) siempre da >= timeoutMs / 2, y en la práctica el Transporte recibe el timeoutMs configurado entero — I1/I2', async () => {
     const { tabla, nombre } = await tablaFresca();
