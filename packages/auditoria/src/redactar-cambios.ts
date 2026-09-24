@@ -2,13 +2,6 @@ import { CAMPOS_SENSIBLES_POR_DEFECTO, redactar } from "./redactar.js";
 import { esClaveSensible, normalizarTerminos } from "./coincidencia-sensible.js";
 import type { CambioAuditoria } from "./lo-que-cambio.js";
 
-/** `" (2)"`, `" (3)"`… al final de un segmento — el sufijo que agrega la conversión de un `Map` cuando dos claves dan el mismo texto (puede repetirse: `"x (2) (2)"`). */
-const SUFIJO_DE_COLISION = /(?: \(\d+\))+$/;
-
-function segmentoSensible(segmento: string, sensibles: ReadonlySet<string>): boolean {
-  return esClaveSensible(segmento, sensibles) || esClaveSensible(segmento.replace(SUFIJO_DE_COLISION, ""), sensibles);
-}
-
 /**
  * Redacta `cambios`, el resultado de `loQueCambio` sobre valores
  * NORMALIZADOS (`normalizarParaDiff`) pero todavía SIN redactar. Es la
@@ -32,9 +25,10 @@ function segmentoSensible(segmento: string, sensibles: ReadonlySet<string>): boo
  *   por `"token"`, aunque `"access"` no), cada lado DEFINIDO pasa a
  *   `"[redactado]"`: el valor nunca se ve, pero queda registrado QUE
  *   cambió. Un lado `undefined` (alta/baja) se deja `undefined`, para no
- *   fingir que había un valor. Un segmento con el sufijo de colisión de un
- *   `Map` (`"password (2)"`) se evalúa también sin el sufijo, así que
- *   sigue siendo sensible.
+ *   fingir que había un valor. Cada segmento pasa por el MISMO
+ *   `esClaveSensible` que usa `redactar` (sin sufijo de colisión, sin
+ *   acentos, minúsculas, sin separadores): `"password (2)"` y
+ *   `"Contraseña"` son sensibles.
  * - Si no, cada lado pasa por `redactar` (puede ser un arreglo u objeto
  *   con una clave sensible ADENTRO — `loQueCambio` compara arreglos como
  *   valor entero).
@@ -54,7 +48,7 @@ export function redactarCambios(
 ): CambioAuditoria[] {
   const sensibles = normalizarTerminos(camposSensibles);
   return cambios.map((cambio) => {
-    const tieneSegmentoSensible = cambio.campo.split(".").some((segmento) => segmentoSensible(segmento, sensibles));
+    const tieneSegmentoSensible = cambio.campo.split(".").some((segmento) => esClaveSensible(segmento, sensibles));
     if (tieneSegmentoSensible) {
       return {
         campo: cambio.campo,

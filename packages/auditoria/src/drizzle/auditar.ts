@@ -150,6 +150,20 @@ function leerSeguro(objeto: unknown, clave: string): unknown {
   }
 }
 
+/**
+ * Lee `entrada[campo]` UNA vez y arma su texto para el log, atrapando
+ * cualquier excepción (un getter que tira, un valor cuyo `String()` tira):
+ * en ese caso `{ ok: false, texto: "[desconocido]" }`. Nunca tira.
+ */
+function leerCampo(entrada: EntradaAuditoria, campo: "entidad" | "entidadId" | "accion"): { ok: true; valor: string; texto: string } | { ok: false; texto: string } {
+  try {
+    const valor = entrada[campo];
+    return { ok: true, valor, texto: String(valor) };
+  } catch {
+    return { ok: false, texto: "[desconocido]" };
+  }
+}
+
 /** El texto que se loguea con `console.error` para un `ErrorAuditoria` — `"code=X, message=Y"`, o solo `Y` si no hay código. */
 function textoParaLog(error: ErrorAuditoria): string {
   return error.codigo !== null ? `code=${error.codigo}, message=${error.mensaje}` : error.mensaje;
@@ -321,6 +335,19 @@ export async function auditar(
   // no `MENSAJE_GENERICO_DB`) — si no, un bug de esta función se vería en
   // el log como "problema de la base de datos", que manda a buscar en el
   // lugar equivocado.
+  // N2 (P.10b): `entidad`/`entidadId`/`accion` se leen UNA sola vez, acá,
+  // antes de cualquier `try`, y de ahí en más se usan las copias — en el
+  // INSERT y en las dos líneas de log de los `catch`. Antes los `catch` los
+  // volvían a leer de `entrada` para armar el log: un getter que tira
+  // hacía que el propio `catch` tirara y `auditar` RECHAZARA, rompiendo la
+  // garantía de "nunca tira". Si alguna lectura tira, el log dice
+  // `[desconocido]` y la preparación falla (no se inserta una fila con un
+  // valor inventado).
+  const entidad = leerCampo(entrada, "entidad");
+  const entidadId = leerCampo(entrada, "entidadId");
+  const accion = leerCampo(entrada, "accion");
+  const contexto = `entidad=${entidad.texto}, entidadId=${entidadId.texto}, accion=${accion.texto}`;
+
   let antesParametro: string | null;
   let despuesParametro: string | null;
   let cambiosParametro: string;
@@ -338,6 +365,9 @@ export async function auditar(
   let colId: ReturnType<typeof sql.identifier>;
 
   try {
+    if (!entidad.ok || !entidadId.ok || !accion.ok) {
+      throw new Error("auditar: no se pudo leer entidad/entidadId/accion");
+    }
     const camposSensibles = entrada.camposSensibles ?? CAMPOS_SENSIBLES_POR_DEFECTO;
 
     // N1 (ronda 2) + regresión de N1 (ronda 4): el diff se calcula sobre
@@ -422,7 +452,7 @@ export async function auditar(
     // Nunca el error real acá (aunque en la práctica sería un bug interno,
     // no datos de la app): mensaje fijo, distinto del de fallo de base.
     console.error(
-      `auditar: no se pudo preparar el registro de auditoría (entidad=${entrada.entidad}, entidadId=${entrada.entidadId}, accion=${entrada.accion}): ${MENSAJE_GENERICO_PREP}`,
+      `auditar: no se pudo preparar el registro de auditoría (${contexto}): ${MENSAJE_GENERICO_PREP}`,
     );
     return { ok: false, error: { codigo: null, mensaje: MENSAJE_GENERICO_PREP } };
   }
@@ -436,7 +466,7 @@ export async function auditar(
       const consulta = sql`
         insert into ${tabla} (${colTenant}, ${colEntidad}, ${colEntidadId}, ${colAccion}, ${colActorTipo}, ${colActorId}, ${colAntes}, ${colDespues}, ${colCambios}, ${colIp}, ${colUserAgent})
         values (
-          ${entrada.tenantId}, ${entrada.entidad}, ${entrada.entidadId}, ${entrada.accion}, ${entrada.actor.tipo}, ${entrada.actor.id ?? null},
+          ${entrada.tenantId}, ${entidad.valor}, ${entidadId.valor}, ${accion.valor}, ${entrada.actor.tipo}, ${entrada.actor.id ?? null},
           ${antesParametro}, ${despuesParametro}, ${cambiosParametro}, ${entrada.ip ?? null}, ${entrada.userAgent ?? null}
         )
         returning ${colId} as id
@@ -459,7 +489,7 @@ export async function auditar(
     // devuelto): solo `code`/`message` de `error.cause`.
     const errorParaDevolver = errorSeguro(error);
     console.error(
-      `auditar: no se pudo escribir el registro de auditoría (entidad=${entrada.entidad}, entidadId=${entrada.entidadId}, accion=${entrada.accion}): ${textoParaLog(errorParaDevolver)}`,
+      `auditar: no se pudo escribir el registro de auditoría (${contexto}): ${textoParaLog(errorParaDevolver)}`,
     );
     return { ok: false, error: errorParaDevolver };
   }

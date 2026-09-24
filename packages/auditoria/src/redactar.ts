@@ -22,6 +22,7 @@ export const CAMPOS_SENSIBLES_POR_DEFECTO: readonly string[] = [
   "token",
   "tokens",
   "secreto",
+  "secreta",
   "secret",
   "secrets",
   "cbu",
@@ -100,16 +101,15 @@ function redactarValor(valor: unknown, sensibles: ReadonlySet<string>, pila: Set
       // Ronda 5: OBJETO plano con la clave como texto, desambiguada con
       // " (2)", " (3)"… si dos claves dan el mismo texto (`entradasDeMap`,
       // el mismo cálculo que `serializarParaAuditoria`/`normalizarParaDiff`).
-      // La sensibilidad se decide por la clave SIN sufijo (`claveBase`): la
-      // segunda de dos claves que dan `"password"` queda `"password (2)"`,
-      // y sigue siendo sensible. Una iteración que tira deja el nodo en
-      // "[error]" (M2).
+      // P.10b: la sensibilidad la decide `esClaveSensible` sobre la clave
+      // FINAL, igual que en la rama de objeto de abajo (ella misma saca el
+      // sufijo de colisión): `"password (2)"` sigue siendo sensible. Una
+      // iteración que tira deja el nodo en "[error]" (M2).
       const leidas = entradasDeMap(valor as Map<unknown, unknown>);
       if (!leidas.ok) return "[error]";
       const resultado: Record<string, unknown> = {};
-      for (const { clave, claveBase, valor: v } of leidas.entradas) {
-        const sensible = esClaveSensible(claveBase, sensibles) || esClaveSensible(clave, sensibles);
-        definirPropiedad(resultado, clave, sensible ? "[redactado]" : redactarValor(v, sensibles, pila));
+      for (const { clave, valor: v } of leidas.entradas) {
+        definirPropiedad(resultado, clave, esClaveSensible(clave, sensibles) ? "[redactado]" : redactarValor(v, sensibles, pila));
       }
       return resultado;
     } finally {
@@ -161,12 +161,22 @@ function redactarValor(valor: unknown, sensibles: ReadonlySet<string>, pila: Set
 
 /**
  * Una copia profunda de `obj` donde cualquier CLAVE sensible (según
- * `esClaveSensible`: matchea el nombre normalizado — minúsculas, sin
- * `_`/`-` — de `camposSensibles` por IGUALDAD o por TERMINAR CON un
- * término de la lista) queda reemplazada por `"[redactado]"`, sin importar
+ * `esClaveSensible`: el nombre normalizado IGUALA o TERMINA CON un término
+ * de `camposSensibles`, normalizado de la misma forma) queda reemplazada
+ * por `"[redactado]"`, sin importar
  * la profundidad ni si está adentro de un arreglo, un `Map`, un `Set` o una
  * instancia de una clase propia. `camposSensibles` es por defecto
  * `CAMPOS_SENSIBLES_POR_DEFECTO`.
+ *
+ * **Normalización** (la misma para claves de objeto, claves de `Map`,
+ * segmentos de ruta de `redactarCambios` y los términos de la lista), en
+ * orden: (1) se saca el sufijo de colisión final `" (N)"` (`"password (2)"`
+ * → `"password"`); (2) se quitan los acentos, Unicode NFD sin marcas
+ * combinantes (`"contraseña"` → `"contrasena"`); (3) minúsculas
+ * (`"CONTRASEÑA"` → `"contrasena"`); (4) se quitan `_`, `-` y espacios
+ * (`"clave_secreta"` → `"clavesecreta"`, que termina en `"secreta"`;
+ * `"api key"` → `"apikey"`). Tapar de más es el costo aceptado: una clave
+ * literal `"password (2)"` se tapa aunque no venga de un `Map`.
  *
  * **La regla de matching es "igual O termina con", no "contiene".** Con
  * `"password"` en la lista:
@@ -274,11 +284,17 @@ function redactarValor(valor: unknown, sensibles: ReadonlySet<string>, pila: Set
  * redactar(new Map<unknown, string>([[1, "hunter2"], ["1", "x"], ["contrasena", "hunter3"]]));
  * // { "1": "hunter2", "1 (2)": "x", contrasena: "[redactado]" } (objeto; la clave repetida como texto lleva sufijo)
  *
+ * redactar({ contraseña: "a", CONTRASEÑA: "b", clave_secreta: "c", "password (2)": "d" });
+ * // { contraseña: "[redactado]", CONTRASEÑA: "[redactado]", clave_secreta: "[redactado]", "password (2)": "[redactado]" }
+ *
+ * redactar({ Código: "x", codigo: "y" }, ["código"]); // término propio con acento
+ * // { Código: "[redactado]", codigo: "[redactado]" }
+ *
  * redactar({ passwords: ["hunter2", "hunter3"], tokens: ["t1"], secrets: ["s1"] });
  * // { passwords: "[redactado]", tokens: "[redactado]", secrets: "[redactado]" } (plurales EXPLÍCITOS en la lista default)
  *
  * CAMPOS_SENSIBLES_POR_DEFECTO;
- * // ["contrasena", "password", "passwords", "hash", "token", "tokens", "secreto", "secret", "secrets", "cbu", "cvu", "clave", "api_key", "apikey", "totp", "authorization"]
+ * // ["contrasena", "password", "passwords", "hash", "token", "tokens", "secreto", "secreta", "secret", "secrets", "cbu", "cvu", "clave", "api_key", "apikey", "totp", "authorization"]
  * ```
  */
 export function redactar<T>(obj: T, camposSensibles: readonly string[] = CAMPOS_SENSIBLES_POR_DEFECTO): T {

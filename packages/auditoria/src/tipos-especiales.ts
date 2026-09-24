@@ -172,10 +172,8 @@ export function definirPropiedad(objeto: Record<string, unknown>, clave: string,
 
 /** Una entrada de un `Map` ya convertida para usarse como propiedad de un objeto plano. */
 export interface EntradaDeMap {
-  /** La clave FINAL: `claveBase`, o `claveBase` con sufijo `" (2)"`, `" (3)"`… si colisionó. */
+  /** La clave FINAL: `claveComoTexto(claveOriginal)`, con sufijo `" (2)"`, `" (3)"`… si colisionó. Si es sensible lo decide `esClaveSensible`, que saca el sufijo. */
   clave: string;
-  /** `claveComoTexto(claveOriginal)`, sin sufijo — la que decide si la entrada es sensible. */
-  claveBase: string;
   valor: unknown;
 }
 
@@ -210,7 +208,7 @@ export function entradasDeMap(map: Map<unknown, unknown>): { ok: true; entradas:
       let clave = claveBase;
       for (let n = 2; usadas.has(clave); n++) clave = `${claveBase} (${n})`;
       usadas.add(clave);
-      entradas.push({ clave, claveBase, valor });
+      entradas.push({ clave, valor });
     }
     return { ok: true, entradas };
   } catch {

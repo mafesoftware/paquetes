@@ -77,7 +77,7 @@ describe("redactar", () => {
     // parte de la lista default tampoco.
   });
 
-  it("CAMPOS_SENSIBLES_POR_DEFECTO tiene exactamente la lista de la spec (M-d: incluye los plurales passwords/tokens/secrets)", () => {
+  it("CAMPOS_SENSIBLES_POR_DEFECTO tiene exactamente la lista de la spec (M-d: incluye los plurales passwords/tokens/secrets; P.10b: secreta)", () => {
     expect(CAMPOS_SENSIBLES_POR_DEFECTO).toEqual([
       "contrasena",
       "password",
@@ -86,6 +86,7 @@ describe("redactar", () => {
       "token",
       "tokens",
       "secreto",
+      "secreta",
       "secret",
       "secrets",
       "cbu",
@@ -409,5 +410,51 @@ describe("redactar", () => {
       }).not.toThrow();
       expect((resultado as Record<string, unknown>).x).toBe("[error]");
     });
+  });
+});
+
+describe("P.10b — normalización única de claves (esClaveSensible)", () => {
+  it("normalizarClave: sufijo de colisión, acentos, mayúsculas y separadores", async () => {
+    const { normalizarClave } = await import("../src/coincidencia-sensible.js");
+    expect(normalizarClave("password (2)")).toBe("password");
+    expect(normalizarClave("password (2) (3)")).toBe("password");
+    expect(normalizarClave("CONTRASEÑA")).toBe("contrasena");
+    expect(normalizarClave("Clave_Secreta")).toBe("clavesecreta");
+    expect(normalizarClave("x-api key")).toBe("xapikey");
+    expect(normalizarClave("Ärger\tÜber")).toBe("argeruber");
+    // El sufijo solo se saca AL FINAL: "(2) password" no es un sufijo.
+    expect(normalizarClave("(2) password")).toBe("(2)password");
+  });
+
+  it('redactar tapa "contraseña"/"Contraseña"/"CONTRASEÑA"/"clave_secreta" sin una segunda entrada en la lista', () => {
+    expect(redactar({ contraseña: "a", Contraseña: "b", CONTRASEÑA: "c", clave_secreta: "d", nombre: "Ana" })).toEqual({
+      contraseña: "[redactado]",
+      Contraseña: "[redactado]",
+      CONTRASEÑA: "[redactado]",
+      clave_secreta: "[redactado]",
+      nombre: "Ana",
+    });
+    expect(CAMPOS_SENSIBLES_POR_DEFECTO).not.toContain("contraseña");
+  });
+
+  it('una clave literal "password (2)" de un objeto plano se tapa (igual que en cambios)', () => {
+    expect(redactar({ "password (2)": "x", "token (10)": "y", "nombre (2)": "Ana" })).toEqual({
+      "password (2)": "[redactado]",
+      "token (10)": "[redactado]",
+      "nombre (2)": "Ana",
+    });
+  });
+
+  it("un término propio con acento o mayúsculas matchea la clave sin acento (y al revés)", () => {
+    expect(redactar({ codigo: 1, Código: 2, miCODIGO: 3, codigoPostalX: 4 }, ["Código"])).toEqual({
+      codigo: "[redactado]",
+      Código: "[redactado]",
+      miCODIGO: "[redactado]",
+      codigoPostalX: 4,
+    });
+  });
+
+  it('la regla sigue siendo "igual o termina con": passwordHint y tokenizer siguen visibles', () => {
+    expect(redactar({ "passwordHint (2)": "h", "tokenizer (3)": "t" })).toEqual({ "passwordHint (2)": "h", "tokenizer (3)": "t" });
   });
 });

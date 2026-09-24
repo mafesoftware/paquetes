@@ -25,7 +25,8 @@ de Postgres bloquea `UPDATE`/`DELETE`/`TRUNCATE` sobre la tabla.
   "contiene": `passwordHash`/`accessToken`/`clientSecret`/`x-api-key` se
   redactan, `passwordHint`/`tokenizer` no). Lista default: `contrasena`,
   `password`, `hash`, `token`, `secreto`, `secret`, `cbu`, `cvu`, `clave`,
-  `api_key`, `apikey`, `totp`, `authorization`. Reconoce `Buffer`/
+  `api_key`, `apikey`, `totp`, `authorization` (más los plurales de la
+  ronda 4 y `secreta` de P.10b). Reconoce `Buffer`/
   `TypedArray`/`ArrayBuffer`/`DataView` (`"[binario N bytes]"`), `Date`
   (ISO), `RegExp` (`String(re)`), `URL` (`origin`+`pathname`, sin
   `search`/`hash`, que pueden traer secretos), `Error` (`{ name }`
@@ -187,3 +188,31 @@ de punta a punta:
 - El sanitizador de errores de `auditar` tampoco tira él mismo con un error
   raro (`Proxy` con trampas rotas, getter de `cause`/`code`/`message` que
   tira): cae al código `null` y/o al mensaje genérico.
+
+**P.10b** — una sola normalización de claves:
+
+- **Fuga crítica corregida**: una clave de `Map` que colisiona
+  (`"password (2)"`) filtraba su valor a `cambios` cuando el `Map` quedaba
+  adentro de una HOJA del diff (un arreglo, un `Set`, un cambio de tipo, una
+  raíz que pasa de `null` a un arreglo): `redactarCambios` sacaba el sufijo
+  de colisión al mirar la ruta, pero la rama de objeto de `redactar` no.
+  Ahora hay UN solo `esClaveSensible`, usado por `redactar` (objetos y
+  `Map`s) y por cada segmento de ruta de `redactarCambios`, que normaliza la
+  clave así: saca el sufijo de colisión final `" (N)"`, quita acentos
+  (Unicode NFD sin marcas combinantes), pasa a minúsculas y quita `_`, `-` y
+  espacios; recién ahí aplica "igual o termina con". Los términos de la
+  lista se normalizan igual, así que un término propio con acentos
+  (`"código"`) funciona.
+- `"contraseña"`/`"Contraseña"`/`"CONTRASEÑA"` se tapan por la
+  normalización (sin una segunda entrada en la lista). La lista default
+  agrega `"secreta"` para cubrir `"clave_secreta"`.
+- Una clave LITERAL `"password (2)"` en un objeto plano ahora se tapa en las
+  copias guardadas, igual que en `cambios` (antes las dos discrepaban).
+  Tapar de más es el costo aceptado.
+- `auditar` lee `entidad`/`entidadId`/`accion` una sola vez, antes de todo;
+  un getter que tira ya no hace rechazar a `auditar` desde el `catch` que
+  arma el log: resuelve `{ ok: false }` con `"error preparando la
+  auditoría"` y el log dice `[desconocido]`.
+- Todo probado con el `auditar` real y un `dbOTx` falso que captura los
+  parámetros: ningún secreto aparece en ellos y `cambios` coincide con las
+  copias guardadas.

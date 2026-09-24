@@ -9,19 +9,54 @@
  * `redactar` con su parámetro `camposSensibles`).
  */
 
-/** Minúsculas y sin `_`/`-`: así `"API-Key"`, `"apiKey"`, `"api_key"` y `"x-api-key"` normalizan al mismo texto. */
+/**
+ * `" (2)"`, `" (3)"`… al FINAL de la clave — el sufijo que agrega la
+ * conversión de un `Map` a objeto cuando dos claves dan el mismo texto
+ * (`entradasDeMap`). Puede repetirse (`"x (2) (2)"`, si la clave original ya
+ * terminaba en `" (2)"`), por eso el `+`: se sacan todos.
+ */
+const SUFIJO_DE_COLISION = /(?: \(\d+\))+$/;
+
+/** Marcas combinantes Unicode (lo que queda de un acento después de `NFD`: `"ñ"` → `"n"` + `"\u0303"`). */
+const MARCAS_COMBINANTES = /\p{M}/gu;
+
+/** Separadores que no cuentan: `_`, `-` y cualquier espacio en blanco. */
+const SEPARADORES = /[_\-\s]/g;
+
+/**
+ * La forma normalizada de una clave (o de un término de la lista), en este
+ * orden:
+ *
+ * 1. se saca el sufijo de colisión final (`"password (2)"` → `"password"`);
+ * 2. Unicode `NFD` y se quitan las marcas combinantes (`"contraseña"` →
+ *    `"contrasena"`, `"Código"` → `"Codigo"`);
+ * 3. minúsculas;
+ * 4. se quitan `_`, `-` y los espacios (`"API-Key"`, `"api_key"`, `"api key"`
+ *    y `"apiKey"` dan `"apikey"`).
+ *
+ * ```ts
+ * normalizarClave("CONTRASEÑA (2)"); // "contrasena"
+ * normalizarClave("x-api key");      // "xapikey"
+ * ```
+ */
 export function normalizarClave(clave: string): string {
-  return clave.toLowerCase().replace(/[_-]/g, "");
+  return clave.replace(SUFIJO_DE_COLISION, "").normalize("NFD").replace(MARCAS_COMBINANTES, "").toLowerCase().replace(SEPARADORES, "");
 }
 
-/** `camposSensibles` ya normalizados, en un `Set` para lookup O(1). */
+/** `camposSensibles` normalizados con la MISMA `normalizarClave` (así un término propio con acentos, `"código"`, funciona), en un `Set` para lookup O(1). */
 export function normalizarTerminos(camposSensibles: readonly string[]): Set<string> {
   return new Set(camposSensibles.map(normalizarClave));
 }
 
 /**
- * ¿`clave` es sensible? Sensible si su forma normalizada (minúsculas, sin
- * `_`/`-`) IGUALA a algún término de `terminosNormalizados`, o TERMINA CON
+ * ¿`clave` es sensible? Es LA ÚNICA función que lo decide: la usan la rama
+ * de objeto y la de `Map` de `redactar` y cada segmento de ruta de
+ * `redactarCambios`, así las copias guardadas y `cambios` nunca discrepan
+ * (antes cada una tenía su propia variante y una clave `"password (2)"`
+ * adentro de una hoja del diff se filtraba). Sensible si su forma
+ * normalizada (`normalizarClave`: sin sufijo de colisión, sin acentos,
+ * minúsculas, sin `_`/`-`/espacios) IGUALA a algún término de
+ * `terminosNormalizados` (que salen de `normalizarTerminos`), o TERMINA CON
  * alguno. La regla "termina con" (no "contiene") es a propósito: cubre
  * variantes compuestas típicas —
  *
@@ -38,6 +73,11 @@ export function normalizarTerminos(camposSensibles: readonly string[]): Set<stri
  * `"tokenizer"` (`"tokenizer"`, NO termina en `"token"` — queda al
  * principio) NO se redactan. Un `"contiene"` en vez de `"termina con"`
  * hubiera tapado esos dos por error.
+ *
+ * Tapa de más a propósito: una clave literal que termine en `" (N)"` se
+ * trata igual que una de colisión (`"password (2)"` se tapa), y cualquier
+ * clave que termine en un término se tapa aunque no sea un secreto. Tapar
+ * de más es el costo aceptado; tapar de menos, no.
  *
  * **Límite documentado**: esto es matching por NOMBRE DE CLAVE, no por
  * valor. Un secreto guardado bajo una clave NO sensible (ej. `notas: "la
