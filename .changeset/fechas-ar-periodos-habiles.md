@@ -33,3 +33,11 @@ aritmética de meses segura para cuotas y días hábiles.
   válida cuyo día es ≤ el día pedido; `sumarPeriodos(p, a+b) ===
   sumarPeriodos(sumarPeriodos(p, a), b)`; `siguienteHabil` siempre da un
   día hábil ≥ la fecha pedida.
+- **Cambio de comportamiento en `diasEntre` (0.1), solo para entrada
+  inválida**: ahora valida los dos argumentos con el mismo validador que la
+  API 0.2 (`"YYYY-MM-DD"`, día de calendario real) y tira `ErrorFecha`
+  (`formato_invalido`/`fecha_invalida`) si no. Antes, un formato roto daba
+  `NaN` y un calendario imposible daba un conteo silenciosamente incorrecto
+  (`diasEntre("2026-02-30", "2026-03-01")` daba `-1`, porque `Date.parse`
+  rueda un "30 de febrero" al 2 de marzo sin avisar). Para entrada válida el
+  resultado no cambia.

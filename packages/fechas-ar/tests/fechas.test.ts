@@ -11,6 +11,7 @@ import {
   diaLargoDeInstante,
   diaYHora,
   diasEntre,
+  ErrorFecha,
   finDelDia,
   haceCuanto,
   horaCorta,
@@ -109,6 +110,34 @@ describe("aritmetica de dias", () => {
   it("diasEntre cuenta el 29 de febrero de un ano bisiesto (requisito 0.2)", () => {
     expect(diasEntre("2028-02-28", "2028-03-01")).toBe(2);
     expect(diasEntre("2028-02-01", "2029-02-01")).toBe(366);
+  });
+
+  it("diasEntre valida los dos argumentos: tira ErrorFecha con un dia de calendario imposible", () => {
+    // Antes de la validacion, Date.parse rodaba el "30 de febrero" al 2 de
+    // marzo sin avisar, y esto daba -1 en vez de tirar.
+    expect(() => diasEntre("2026-02-30", "2026-03-01")).toThrow(ErrorFecha);
+    try {
+      diasEntre("2026-02-30", "2026-03-01");
+    } catch (e) {
+      expect((e as ErrorFecha).codigo).toBe("fecha_invalida");
+    }
+  });
+  it("diasEntre valida el segundo argumento tambien", () => {
+    expect(() => diasEntre("2026-03-01", "2026-02-30")).toThrow(ErrorFecha);
+  });
+  it("diasEntre tira ErrorFecha (formato_invalido) con basura o un formato roto", () => {
+    expect(() => diasEntre("not-a-date", "2026-03-01")).toThrow(ErrorFecha);
+    expect(() => diasEntre("2026-03-01", "2026-13-01")).toThrow(ErrorFecha);
+    try {
+      diasEntre("not-a-date", "2026-03-01");
+    } catch (e) {
+      expect((e as ErrorFecha).codigo).toBe("formato_invalido");
+    }
+    try {
+      diasEntre("2026-03-01", "2026-13-01");
+    } catch (e) {
+      expect((e as ErrorFecha).codigo).toBe("fecha_invalida"); // mes 13: formato bien, calendario mal
+    }
   });
 });
 

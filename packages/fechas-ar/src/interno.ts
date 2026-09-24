@@ -1,9 +1,16 @@
 /**
  * Validación y aritmética de calendario compartidas por `periodo.ts`,
- * `meses.ts` y `habiles.ts`. NO se re-exporta desde `index.ts`: es detalle de
- * implementación, igual que `escala-factor.ts` en `plata-ar`.
+ * `meses.ts`, `habiles.ts` y `index.ts`. La mayor parte de este módulo NO se
+ * re-exporta desde `index.ts` (es detalle de implementación, igual que
+ * `escala-factor.ts` en `plata-ar`), con dos excepciones: `diaDeSemanaISO` y
+ * `sumarDiasISOInterno` son la única implementación de `diaDeSemana`/
+ * `sumarDiasISO` (API 0.1) — `index.ts` las importa de acá y las re-exporta
+ * bajo esos nombres públicos, en vez de tener una segunda copia. Viven en
+ * este módulo base (que no depende de nada) y no en `index.ts` para que
+ * `habiles.ts` pueda usarlas sin que `index.ts` (que re-exporta `habiles.ts`)
+ * termine importándose a sí mismo.
  *
- * Todo acá es aritmética entera pura sobre año/mes/día — sin `Date`, para no
+ * El resto es aritmética entera pura sobre año/mes/día — sin `Date`, para no
  * depender de zona horaria ni de los límites de rango de `Date` (año 275760).
  */
 
@@ -99,23 +106,22 @@ export function aMesesTotales(anio: number, mes: number): number {
 }
 
 /**
- * Día de la semana (0 = domingo) de un `"YYYY-MM-DD"` ya validado. Misma
- * técnica que `diaDeSemana` (`index.ts`, API 0.1): `Date` en UTC puro, sin
- * `getHours`. Se duplica acá a propósito — no se importa desde `index.ts` —
- * para que `habiles.ts` no dependa de `index.ts` y así evitar un ciclo de
- * imports (`index.ts` re-exporta `habiles.ts`).
+ * Día de la semana (0 = domingo) de un día de calendario. `Date` en UTC
+ * puro, sin `getHours`. Implementación única de `diaDeSemana` (API 0.1):
+ * `index.ts` la importa de acá y la re-exporta con ese nombre — ver el
+ * comentario de arriba.
  */
-export function diaDeSemanaISO(fecha: string): number {
-  return new Date(`${fecha}T00:00:00Z`).getUTCDay();
+export function diaDeSemanaISO(iso: string): number {
+  return new Date(`${iso.slice(0, 10)}T00:00:00Z`).getUTCDay();
 }
 
 /**
- * Suma `dias` (puede ser negativo) a un `"YYYY-MM-DD"`, sin pasar por husos.
- * Misma técnica que `sumarDiasISO` (`index.ts`, API 0.1); duplicada acá por
- * la misma razón que `diaDeSemanaISO`.
+ * Suma `dias` (puede ser negativo) a un día de calendario, sin pasar por
+ * husos. Implementación única de `sumarDiasISO` (API 0.1); misma nota que
+ * `diaDeSemanaISO`.
  */
-export function sumarDiasISOInterno(fecha: string, dias: number): string {
-  const d = new Date(`${fecha}T00:00:00Z`);
+export function sumarDiasISOInterno(iso: string, dias: number): string {
+  const d = new Date(`${iso.slice(0, 10)}T00:00:00Z`);
   d.setUTCDate(d.getUTCDate() + dias);
   return d.toISOString().slice(0, 10);
 }

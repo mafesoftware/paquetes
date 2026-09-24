@@ -56,6 +56,15 @@
  * calculó otro código, no lo tipeó una persona.
  */
 
+// `diaDeSemanaISO`/`sumarDiasISOInterno` son la ÚNICA implementación de
+// `diaDeSemana`/`sumarDiasISO` de acá abajo (API 0.1): se importan y se
+// re-exportan con sus nombres públicos en vez de duplicar el cuerpo.
+// `validarFechaISO` la usa `diasEntre` para no aceptar un formato roto ni un
+// calendario imposible en silencio. Ver el comentario al inicio de
+// `interno.ts` para el porqué `diaDeSemanaISO`/`sumarDiasISOInterno` viven
+// ahí y no acá.
+import { diaDeSemanaISO, sumarDiasISOInterno, validarFechaISO } from "./interno.js";
+
 export * from "./errores.js";
 export * from "./periodo.js";
 export * from "./meses.js";
@@ -336,12 +345,14 @@ function horaDePared(instante: Date, zona: string): number {
   return hora * 60 + p("minute");
 }
 
-/** Suma días a un `"2026-08-19"` sin pasar por husos. */
-export function sumarDiasISO(iso: string, dias: number): string {
-  const d = new Date(`${iso.slice(0, 10)}T00:00:00Z`);
-  d.setUTCDate(d.getUTCDate() + dias);
-  return d.toISOString().slice(0, 10);
-}
+/**
+ * Suma días a un `"2026-08-19"` sin pasar por husos.
+ *
+ * Implementada en `interno.ts` (`sumarDiasISOInterno`) y re-exportada acá
+ * con su nombre público de la API 0.1, para que `habiles.ts` la use sin
+ * depender de `index.ts` (ver el comentario al inicio de `interno.ts`).
+ */
+export const sumarDiasISO = sumarDiasISOInterno;
 
 /**
  * Cuántos días enteros hay entre dos días de calendario: `hastaISO -
@@ -350,10 +361,18 @@ export function sumarDiasISO(iso: string, dias: number): string {
  * Es exactamente la función `diasEntre(a, b)` que pide la API 0.2: misma
  * firma, mismo `b − a` con signo. No se duplicó como `diasEntreFechas`
  * porque no hace falta — esta ya es esa función.
+ *
+ * Valida los dos argumentos con `validarFechaISO` (`interno.ts`): un formato
+ * roto o un calendario imposible (`"2026-02-30"`) tira `ErrorFecha` en vez de
+ * devolver un `NaN` o un conteo silenciosamente incorrecto —
+ * `diasEntre("2026-02-30", "2026-03-01")` daba `-1` antes de esta validación,
+ * porque `Date.parse` de un "30 de febrero" rueda al 2 de marzo sin avisar.
  */
 export function diasEntre(desdeISO: string, hastaISO: string): number {
-  const a = Date.parse(`${desdeISO.slice(0, 10)}T00:00:00Z`);
-  const b = Date.parse(`${hastaISO.slice(0, 10)}T00:00:00Z`);
+  validarFechaISO(desdeISO);
+  validarFechaISO(hastaISO);
+  const a = Date.parse(`${desdeISO}T00:00:00Z`);
+  const b = Date.parse(`${hastaISO}T00:00:00Z`);
   return Math.round((b - a) / 86_400_000);
 }
 
@@ -471,10 +490,13 @@ export function haceCuanto(f: Date | string, ahora = new Date(), locale = "es-AR
   return fmt.format(-Math.round(ms / elegida[1]), elegida[0]);
 }
 
-/** El día de la semana de un día de calendario. 0 = domingo. */
-export function diaDeSemana(iso: string): number {
-  return new Date(`${iso.slice(0, 10)}T00:00:00Z`).getUTCDay();
-}
+/**
+ * El día de la semana de un día de calendario. 0 = domingo.
+ *
+ * Implementada en `interno.ts` (`diaDeSemanaISO`) y re-exportada acá con su
+ * nombre público de la API 0.1, misma razón que `sumarDiasISO` arriba.
+ */
+export const diaDeSemana = diaDeSemanaISO;
 
 /** `"08:30"` → 510. Los horarios de una grilla se guardan como minutos. */
 export function aMinutos(hhmm: string): number | null {

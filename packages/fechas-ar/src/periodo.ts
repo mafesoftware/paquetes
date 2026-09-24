@@ -33,9 +33,21 @@ type MesDosDigitos =
  */
 export type Periodo = `${number}-${MesDosDigitos}`;
 
-/** Valida en runtime que `s` sea un `Periodo` real: `"YYYY-MM"`, mes 01..12. */
+/**
+ * Valida en runtime que `s` sea un `Periodo` real: `"YYYY-MM"`, mes 01..12.
+ *
+ * Delega en `validarPeriodo` (`interno.ts`) — el único lugar con el formato
+ * de un período — para no tener el mismo patrón escrito dos veces: acá se
+ * atrapa el `ErrorFecha` que tira `validarPeriodo` con un formato roto y se
+ * convierte en `false`, que es lo que necesita un type guard.
+ */
 export function esPeriodo(s: string): s is Periodo {
-  return /^\d{4}-(0[1-9]|1[0-2])$/.test(s);
+  try {
+    validarPeriodo(s);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /** El período (`"YYYY-MM"`) al que pertenece un día de calendario `"YYYY-MM-DD"`. */
