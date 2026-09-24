@@ -135,6 +135,22 @@ secreto guardado bajo una clave NO sensible (ej. `{ notas: "la clave
 temporal es Xy9$zK" }`, donde la clave es `"notas"`, no `"clave"`) **no se
 detecta**. `redactar` nunca mira el contenido de un string.
 
+**Dos límites más de la regla "termina con"**:
+- **Un plural arbitrario no matchea su singular**: `"misPasswords"` NO
+  termina en `"password"` — termina en `"passwords"` (con la "s"), un
+  sufijo DISTINTO. Por eso la lista default incluye `"passwords"`,
+  `"tokens"` y `"secrets"` como términos PROPIOS (no derivados
+  automáticamente); un plural que no esté en la lista (`"apiKeys"`,
+  `"secretos"` en inglés informal, ...) sigue sin matchear a menos que se
+  agregue a mano en `camposSensibles`.
+- **La clave de un `Map` queda como TEXTO en el resultado, sin mirar su
+  CONTENIDO**: solo el NOMBRE de la clave decide si el valor del par se
+  tapa (igual que con la clave de un objeto). Si una app usa un secreto
+  COMO CLAVE de un `Map` (`new Map([[apiKeySecret, metadata]])`, en vez de
+  `{ apiKey: secreto }`), ese secreto sale intacto en el resultado — no
+  uses un valor sensible como clave de un `Map` que vaya a pasar por
+  `redactar`/`serializarParaAuditoria`.
+
 **Tipos especiales** (mismo tratamiento y mismo ORDEN que
 `serializarParaAuditoria`, ver más abajo — el orden importa: `URL` tiene su
 propio `toJSON` que devuelve el `href` COMPLETO con query/hash, así que se
@@ -195,6 +211,9 @@ redactar(new URL("https://api.com/perfil?token=SECRETO#frag"));
 
 redactar(new Map([[1, "hunter2"], ["contrasena", "hunter3"]]));
 // [["1", "hunter2"], ["contrasena", "[redactado]"]] (arreglo de pares, no objeto)
+
+redactar({ passwords: ["hunter2", "hunter3"], tokens: ["t1"], secrets: ["s1"] });
+// { passwords: "[redactado]", tokens: "[redactado]", secrets: "[redactado]" } (plurales EXPLÍCITOS en la lista default)
 ```
 
 #### `CAMPOS_SENSIBLES_POR_DEFECTO: readonly string[]`
@@ -205,7 +224,7 @@ La lista default de nombres de campo que tapa `redactar`/`auditar`:
 import { CAMPOS_SENSIBLES_POR_DEFECTO } from "@mafesoftware/auditoria";
 
 CAMPOS_SENSIBLES_POR_DEFECTO;
-// ["contrasena", "password", "hash", "token", "secreto", "secret", "cbu", "cvu", "clave", "api_key", "apikey", "totp", "authorization"]
+// ["contrasena", "password", "passwords", "hash", "token", "tokens", "secreto", "secret", "secrets", "cbu", "cvu", "clave", "api_key", "apikey", "totp", "authorization"]
 ```
 
 #### `serializarParaAuditoria(v: unknown): unknown`
@@ -247,6 +266,58 @@ serializarParaAuditoria(new URL("https://api.com/x?token=SECRETO"));
 
 serializarParaAuditoria(new Error("mensaje que puede tener datos"));
 // { name: "Error" } (nunca .message)
+```
+
+#### `normalizarParaDiff(v: unknown): unknown`
+
+Convierte `v` a datos planos tipo JSON — **para comparar, no para guardar**:
+a diferencia de `serializarParaAuditoria`, **nunca redacta nada** (una clave
+`"password"` queda con su valor real). Usa las MISMAS reglas de tipos
+especiales que `serializarParaAuditoria` (mismo módulo compartido
+`tipos-especiales.ts`, mismo orden): `Buffer`/`TypedArray`/`ArrayBuffer`/
+`DataView` → `"[binario N bytes]"`; `Date` → ISO string; `RegExp` →
+`String(re)`; `URL` → `origin` + `pathname`; `Error` → `{ name }`; cualquier
+objeto con `toJSON` propio (**instancia de clase O plano** — a diferencia de
+un `JSON.stringify` nativo, que solo llama `toJSON` en objetos que lo
+definen, esto también cubre un objeto LITERAL con un `toJSON` propio) → su
+resultado, normalizado recursivamente; `Map` → arreglo de pares; `Set` →
+arreglo; `bigint` → string con sufijo `"n"`; cualquier otra instancia de
+clase se recorre por sus campos propios enumerables. `null`/`undefined` se
+preservan tal cual en cualquier posición (nunca se convierten a otra cosa),
+justamente para no romper el manejo de "lado ausente" de `loQueCambio`.
+**Nunca tira** — un dato roto (getter que tira, `Proxy` con trampas rotas,
+`toJSON` que tira) da `"[error]"` en ese nodo, nunca propaga la excepción.
+
+**Por qué existe.** `auditar` corría `loQueCambio` directo sobre los valores
+CRUDOS de `entrada.antes`/`entrada.despues`. Dos instancias EQUIVALENTES
+pero no idénticas — dos `Decimal` separados con el mismo `toJSON()`, dos
+`Map`/`URL`/instancias de clase con el mismo contenido pero construidos por
+separado (típico al leer una fila de la base y volver a construir el objeto
+"nuevo" antes de guardar) — no son `===` ni tienen la misma forma interna,
+así que `loQueCambio` las reportaba como CAMBIADAS aunque el dato
+semánticamente fuera el mismo: una regresión de una ronda anterior, donde
+`cambios` incluía entradas falsas. La solución es normalizar los DOS lados a
+la misma forma plana ANTES de diffear (`loQueCambio(normalizarParaDiff(antes),
+normalizarParaDiff(despues))`) y recién DESPUÉS redactar el resultado — la
+normalización nunca esconde un cambio real, porque compara el mismo tipo de
+dato que terminará guardado (vía `serializarParaAuditoria`), solo evita
+comparar por REFERENCIA lo que hay que comparar por VALOR.
+
+```ts
+import { normalizarParaDiff } from "@mafesoftware/auditoria";
+
+class Decimal {
+  constructor(private texto: string) {}
+  toJSON() { return this.texto; }
+}
+normalizarParaDiff(new Decimal("12.50")); // "12.50"
+
+// Un objeto PLANO con toJSON propio también lo usa (no solo instancias de clase):
+normalizarParaDiff({ dni: "20111111119", toJSON: () => ({ dniEnmascarado: "***1119" }) });
+// { dniEnmascarado: "***1119" }
+
+// A diferencia de redactar/serializarParaAuditoria: nunca tapa nada.
+normalizarParaDiff({ password: "hunter2" }); // { password: "hunter2" }
 ```
 
 ### `/drizzle` (`@mafesoftware/auditoria/drizzle`)
@@ -336,9 +407,13 @@ sqlInmutabilidad("a".repeat(41)); // tira: nombre demasiado largo
 
 `ErrorAuditoria` es `{ codigo: string | null; mensaje: string }`.
 
-Calcula `cambios` con `loQueCambio` sobre los valores CRUDOS de
-`entrada.antes`/`entrada.despues`, redacta `antes`/`despues`/`cambios`,
-serializa los tres, e inserta.
+Calcula `cambios` con `loQueCambio` sobre `entrada.antes`/`entrada.despues`
+**normalizados** con `normalizarParaDiff` (no los valores crudos — ver la
+sección de `normalizarParaDiff` más arriba: evita reportar como "cambiado"
+un campo cuyo valor es semánticamente el mismo pero llegó en una instancia
+distinta, p. ej. dos `Decimal`/`Map`/instancias de clase equivalentes),
+redacta `antes`/`despues` (los valores CRUDOS, no los normalizados) y
+`cambios`, serializa los tres, e inserta.
 
 **Cómo se evita que un secreto (cambiado o no) llegue a `cambios`.**
 `cambios` se calcula sobre los valores CRUDOS — no sobre versiones ya
@@ -378,6 +453,38 @@ los parámetros bindeados NUNCA aparecen en ninguna de las dos. Antes,
 mostrara o lo reenviara sin saber que traía el SQL/los parámetros
 adentro) — ahora es seguro de mostrar/loguear tal cual, sin que la app
 tenga que armar su propio resumen.
+
+**Los errores de Postgres clase `22` (Data Exception — `22P02` "invalid text
+representation" y el resto de esa clase) tienen un `message` que ECOA el
+valor de entrada que lo causó** (ej. `invalid input syntax for type uuid:
+"no-es-un-uuid-valido"` incluye el string inválido tal cual se mandó, que
+puede ser un dato del usuario). A diferencia de la clase `23`
+(violaciones de constraint, cuyo `message` describe la RESTRICCIÓN, no el
+valor), estos códigos no son seguros de mostrar/loguear tal cual: para
+cualquier código que empiece con `"22"`, `resultado.error.mensaje` (y el
+resumen logueado) se reemplaza por un texto genérico que conserva el código
+pero no el valor — `` `valor inválido para la columna (${codigo})` `` — en
+vez del `message` real de Postgres.
+
+```ts
+// tenantId inválido (columna uuid) → 22P02, sin ecoar el valor:
+const resultado = await auditar(db, auditoria, {
+  tenantId: "no-es-un-uuid-valido",
+  entidad: "producto", entidadId, accion: "actualizar", actor: { tipo: "sistema" },
+});
+// resultado.error === { codigo: "22P02", mensaje: "valor inválido para la columna (22P02)" }
+// (nunca "no-es-un-uuid-valido" en el mensaje ni en el log)
+```
+
+**Un fallo ANTES de llegar a la base (normalizando/redactando/serializando/
+armando el SQL) da un mensaje DISTINTO al de un fallo de Postgres** —
+`"error preparando la auditoría"` (con `codigo: null`), no `"error de base
+de datos sin detalle"` — para no hacer parecer un problema de la base algo
+que en realidad es un bug de esta función o de cómo se armó `tabla`. Este
+paso previo no debería fallar en uso normal (`redactar`/`serializarParaAuditoria`/
+`normalizarParaDiff` están diseñados para nunca tirar), pero una `tabla`
+malformada (una columna `undefined`) sí puede hacerlo fallar antes de tocar
+`dbOTx`.
 
 El trade-off de "nunca tira" adentro de una transacción: un `INSERT` que
 falla deja esa transacción ABORTADA en Postgres — un simple `try/catch` NO
@@ -481,19 +588,41 @@ NUNCA, pero un cambio en un campo sensible SÍ queda registrado en
 esta ronda), que `console.error` nunca loguea el error completo ni valores
 de la entrada (spía sobre `console.error`, silenciado en los tests de
 fallo para no ensuciar la salida), `pagina`/`porPagina` con
-`NaN`/`Infinity`, aislamiento entre tenants y paginación.
+`NaN`/`Infinity`, aislamiento entre tenants y paginación, y (ronda 4, M-a)
+un `tenantId` no-uuid contra la columna uuid real de la tabla de prueba →
+Postgres devuelve `22P02` real, y `resultado.error.mensaje` es el texto
+genérico (`"valor inválido para la columna (22P02)"`, sin el valor
+inválido ni la palabra "uuid" adentro, ni en el resultado ni en lo
+logueado).
 `tests/drizzle/auditar-log-seguro.test.ts` (sin Postgres real — un `dbOTx`
 falso alcanza) prueba que el log nunca cae al `.message` del error de
-AFUERA (que trae el SQL + params) ni siquiera cuando falta `error.cause`.
+AFUERA (que trae el SQL + params) ni siquiera cuando falta `error.cause`, y
+(ronda 4, M-b) que un fallo ANTES de `dbOTx.transaction` (una `tabla` rota,
+armada a mano, sin la columna `tenantId`) da `{ codigo: null, mensaje:
+"error preparando la auditoría" }` — nunca el genérico de fallo de base —
+y que el `dbOTx` (que tiraría si se llegara a llamar) nunca se toca.
 `tests/redaccion-anidada.test.ts` (núcleo, sin Postgres) prueba la misma
-lógica de redacción de `cambios` con las funciones exportadas del núcleo,
-más los tipos especiales (`Buffer`, `URL`, `Error`, `toJSON`, claves de
-`Map` rotas, `Proxy` con `ownKeys` roto) en `tests/redactar.test.ts`/
-`tests/serializar.test.ts`. `tests/drizzle/postgres-inmutabilidad.test.ts`
+lógica de redacción de `cambios` importando la función REAL
+`redactarCambios` (movida a `src/drizzle/redactar-cambios.ts`, interna —
+no reexportada desde `drizzle/index.ts` — para que el test ejercite el
+código real y no una copia), armando el pipeline completo
+`loQueCambio(normalizarParaDiff(antes), normalizarParaDiff(despues))` +
+`redactarCambios`, más los tipos especiales (`Buffer`, `URL`, `Error`,
+`toJSON`, claves de `Map` rotas, `Proxy` con `ownKeys` roto) en
+`tests/redactar.test.ts`/`tests/serializar.test.ts`, y (ronda 4) una
+sección de regresión dedicada a instancias EQUIVALENTES pero no idénticas
+(`Decimal`/`Map`/`URL`/instancia de clase construidos por separado con el
+mismo contenido → sin entrada en `cambios`; un objeto plano con `toJSON`
+propio que enmascara un dni igual en ambos lados → sin entrada falsa).
+`tests/normalizar-para-diff.test.ts` (núcleo, sin Postgres) prueba
+`normalizarParaDiff` por tipo especial, ciclos, y "nunca tira" (`Proxy` con
+trampas rotas, `get toJSON(){throw}`, `Error` con getter de `name` que
+tira). `tests/drizzle/postgres-inmutabilidad.test.ts`
 prueba que el trigger de `sqlInmutabilidad` rechaza
 `UPDATE`/`DELETE`/`TRUNCATE`. No hay mock que valga para lo que sí
 necesita Postgres real: son comportamientos de la base (un `SAVEPOINT`
-real, un trigger real), no lógica de la app en el vacío.
+real, un trigger real, un código `SQLSTATE` real), no lógica de la app en
+el vacío.
 
 Levantalo con `docker compose up -d db_test` desde la raíz del monorepo
 antes de correr `bun run test` — si no está arriba, esos archivos FALLAN

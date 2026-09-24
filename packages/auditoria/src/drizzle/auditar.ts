@@ -1,8 +1,9 @@
 import { sql } from "drizzle-orm";
-import { loQueCambio, type CambioAuditoria } from "../lo-que-cambio.js";
+import { loQueCambio } from "../lo-que-cambio.js";
 import { CAMPOS_SENSIBLES_POR_DEFECTO, redactar } from "../redactar.js";
-import { esClaveSensible, normalizarTerminos } from "../coincidencia-sensible.js";
+import { normalizarParaDiff } from "../normalizar-para-diff.js";
 import { serializarParaAuditoria } from "../serializar.js";
+import { redactarCambios } from "./redactar-cambios.js";
 import type { DbCliente } from "./cliente.js";
 import type { ActorTipo, TablaAuditoria } from "./tabla.js";
 
@@ -39,48 +40,6 @@ export interface ErrorAuditoria {
 export type ResultadoAuditar = { ok: true; id: string } | { ok: false; error: ErrorAuditoria };
 
 /**
- * Redacta `cambios` (el resultado de `loQueCambio` sobre los valores
- * CRUDOS — ver el JSDoc de `auditar`, sección "Cómo se evita que un
- * secreto llegue a `cambios`").
- *
- * A diferencia de `redactar` (que tapa por NOMBRE DE CLAVE de un objeto),
- * acá el nombre del campo sensible vive como VALOR de `campo` (ej.
- * `{ campo: "token.access", antes: "abc", despues: "xyz" }`), no como
- * clave — así que correr `redactar` sobre el arreglo TAL CUAL no
- * alcanzaría: las claves de cada entrada son `"campo"`, `"antes"`,
- * `"despues"`, ninguna sensible por sí misma.
- *
- * Chequea CUALQUIER segmento de la ruta con puntos (no solo el último): si
- * `"token.access"` matchea porque `"token"` es sensible (aunque `"access"`
- * no lo sea), el VALOR entero de esa entrada se reemplaza por
- * `"[redactado]"` en cada lado que esté DEFINIDO — un lado `undefined`
- * (típico de un alta/baja: no había "antes", o no queda "despues") se deja
- * `undefined`, para no fingir que había un valor ahí. Para un cambio que
- * NO tiene ningún segmento sensible en su ruta, igual se corre `redactar`
- * sobre cada lado (`antes`/`despues` pueden ser objetos, arreglos,
- * instancias, `Map`s o `Set`s con una clave sensible ADENTRO — ej. un
- * arreglo de objetos donde cambió un `password` en algún elemento).
- */
-function redactarCambios(cambios: CambioAuditoria[], camposSensibles: readonly string[]): CambioAuditoria[] {
-  const sensibles = normalizarTerminos(camposSensibles);
-  return cambios.map((cambio) => {
-    const tieneSegmentoSensible = cambio.campo.split(".").some((segmento) => esClaveSensible(segmento, sensibles));
-    if (tieneSegmentoSensible) {
-      return {
-        campo: cambio.campo,
-        antes: cambio.antes === undefined ? undefined : "[redactado]",
-        despues: cambio.despues === undefined ? undefined : "[redactado]",
-      };
-    }
-    return {
-      campo: cambio.campo,
-      antes: redactar(cambio.antes, camposSensibles),
-      despues: redactar(cambio.despues, camposSensibles),
-    };
-  });
-}
-
-/**
  * Un mensaje que NUNCA contiene "Failed query"/"params:" — el patrón exacto
  * que arma un `DrizzleQueryError` para su PROPIO `.message` (el SQL armado
  * seguido de los parámetros bindeados). Un mensaje de Postgres real (el que
@@ -93,8 +52,35 @@ function mensajeSeguro(mensaje: string): string | undefined {
   return mensaje;
 }
 
-/** El texto fijo que usan `errorSeguro`/el log cuando no hay un mensaje seguro que mostrar. */
-const MENSAJE_GENERICO = "error de base de datos sin detalle";
+/** El texto fijo que usan `errorSeguro`/el log cuando no hay un mensaje seguro que mostrar para un fallo de la BASE. */
+const MENSAJE_GENERICO_DB = "error de base de datos sin detalle";
+
+/**
+ * El texto fijo para un fallo ANTES de llegar a la base (normalizar,
+ * redactar, serializar, armar el SQL) — M-b de la ronda 4. Distinto de
+ * `MENSAJE_GENERICO_DB` a propósito: si `auditar` tirara ACÁ (no debería,
+ * dado todo el trabajo de "nunca tira" en `normalizarParaDiff`/`redactar`/
+ * `serializarParaAuditoria`, pero un bug real es siempre posible), el error
+ * NO viene de Postgres — mezclarlo con el mensaje de fallo de base
+ * confundiría el diagnóstico real (parecería un problema de la base
+ * cuando el problema está en esta función).
+ */
+const MENSAJE_GENERICO_PREP = "error preparando la auditoría";
+
+/**
+ * ¿`codigo` es de la clase SQLSTATE `22` (Data Exception)? Esa clase
+ * (`22P02` invalid_text_representation, `22003` numeric_value_out_of_range,
+ * ...) es distinta de una violación de constraint (`23xxx`): el `message`
+ * de Postgres para estos códigos hace ECO del valor de entrada que lo violó
+ * — ej. `invalid input syntax for type uuid: "no-es-un-uuid"` repite
+ * literalmente el string que mandó la app (`tenantId`, en el caso
+ * reproducido). Un `23xxx` (`violates check constraint`, `violates
+ * not-null constraint`) describe la RESTRICCIÓN, nunca el valor — por eso
+ * SOLO la clase `22` necesita este reemplazo.
+ */
+function esClase22(codigo: string): boolean {
+  return codigo.startsWith("22");
+}
 
 /**
  * Un resumen SEGURO de `error` — nunca el objeto de error completo, y nunca
@@ -107,13 +93,17 @@ const MENSAJE_GENERICO = "error de base de datos sin detalle";
  * SOLO `code`/`message` de `error.cause` (donde Drizzle deja el error
  * original del driver `pg`) — nunca `error.query`/`error.params` del
  * wrapper, que ni siquiera se leen acá. `codigo` queda `null` si no se
- * pudo determinar; `mensaje` cae al texto genérico fijo `MENSAJE_GENERICO`
+ * pudo determinar; `mensaje` cae al texto genérico fijo `MENSAJE_GENERICO_DB`
  * si no hay uno seguro (ausente, o filtrado por `mensajeSeguro` porque
  * traía "Failed query"/"params:"). El `message` de un error de Postgres
- * (`null value in column ... violates not-null constraint`, `new row for
- * relation ... violates check constraint ...`) describe la RESTRICCIÓN que
- * falló, nunca el VALOR que la violó (eso vive en `DETAIL`, que tampoco se
- * lee acá) — por eso es seguro de devolver/loguear.
+ * de clase `23` (`null value in column ... violates not-null constraint`,
+ * `new row for relation ... violates check constraint ...`) describe la
+ * RESTRICCIÓN que falló, nunca el VALOR que la violó (eso vive en
+ * `DETAIL`, que tampoco se lee acá) — por eso ES seguro de devolver/
+ * loguear tal cual. **La clase `22` es la excepción**: para esos códigos,
+ * el `message` de Postgres SÍ repite el valor de entrada (ver
+ * `esClase22`), así que se reemplaza siempre por un texto genérico que
+ * conserva el código (`"valor inválido para la columna (22P02)"`).
  *
  * Esta es la MISMA función que arma tanto el resumen que se loguea con
  * `console.error` como el `ErrorAuditoria` que `auditar` devuelve en
@@ -128,10 +118,14 @@ function errorSeguro(error: unknown): ErrorAuditoria {
   const codeCrudo = causaObjeto && "code" in causaObjeto ? (causaObjeto as { code?: unknown }).code : undefined;
   const codigo = typeof codeCrudo === "string" || typeof codeCrudo === "number" ? String(codeCrudo) : null;
 
+  if (codigo !== null && esClase22(codigo)) {
+    return { codigo, mensaje: `valor inválido para la columna (${codigo})` };
+  }
+
   const messageCruda = causaObjeto && "message" in causaObjeto ? (causaObjeto as { message?: unknown }).message : undefined;
   const mensajeCrudo = typeof messageCruda === "string" ? mensajeSeguro(messageCruda) : undefined;
 
-  return { codigo, mensaje: mensajeCrudo ?? MENSAJE_GENERICO };
+  return { codigo, mensaje: mensajeCrudo ?? MENSAJE_GENERICO_DB };
 }
 
 /** El texto que se loguea con `console.error` para un `ErrorAuditoria` — `"code=X, message=Y"`, o solo `Y` si no hay código. */
@@ -140,14 +134,20 @@ function textoParaLog(error: ErrorAuditoria): string {
 }
 
 /**
- * Escribe una fila de auditoría: calcula `cambios` con `loQueCambio` sobre
- * los valores CRUDOS de `entrada.antes`/`entrada.despues`, redacta
+ * Escribe una fila de auditoría: NORMALIZA `entrada.antes`/`entrada.despues`
+ * (`normalizarParaDiff`), calcula `cambios` con `loQueCambio` sobre esos
+ * valores normalizados (nunca redactados todavía), redacta
  * `antes`/`despues`/`cambios`, serializa los tres, e inserta.
  *
  * **Nunca tira.** Devuelve `{ ok: true, id } | { ok: false, error }` y, si
  * falla, además loguea un RESUMEN seguro con `console.error` — una falla
  * de auditoría NO tiene que tirar abajo la operación de negocio que la
- * disparó (crear el pedido, cobrar la factura, ...).
+ * disparó (crear el pedido, cobrar la factura, ...). Si el fallo pasa
+ * ANTES de llegar a la base (normalizar/redactar/serializar/armar el SQL —
+ * no debería, pero un bug real siempre es posible), el mensaje es
+ * `"error preparando la auditoría"` — DISTINTO del mensaje de un fallo de
+ * Postgres — para no hacer parecer un problema de la base algo que en
+ * realidad está en esta función.
  *
  * **`resultado.error` (cuando `ok: false`) es `{ codigo: string | null;
  * mensaje: string }` — un `ErrorAuditoria` SANITIZADO, nunca el error
@@ -164,24 +164,45 @@ function textoParaLog(error: ErrorAuditoria): string {
  * determinar — y `mensaje` es el `message` de Postgres (nunca el `.message`
  * del wrapper) o un texto genérico fijo si no hay uno seguro. El SQL
  * armado y los parámetros bindeados NUNCA aparecen en ninguno de los dos
- * campos. Esto significa que ya no hace falta armar un resumen propio para
- * mostrar/loguear el motivo de un fallo — `resultado.error` ya es seguro
- * para eso.
+ * campos. **Excepción para la clase SQLSTATE `22` (Data Exception,
+ * ej. `22P02` — "invalid input syntax for type uuid"):** a diferencia de
+ * una violación de constraint (clase `23`, cuyo `message` describe la
+ * RESTRICCIÓN sin el valor), el `message` de Postgres para la clase `22`
+ * hace ECO del valor de entrada que la violó (ej. `invalid input syntax
+ * for type uuid: "no-es-un-uuid"` repite literalmente lo que mandó la app
+ * — un `tenantId` inválido, por ejemplo). Para esos códigos, `mensaje` es
+ * SIEMPRE el texto genérico `"valor inválido para la columna (<código>)"`,
+ * nunca el `message` real de Postgres. Esto significa que ya no hace falta
+ * armar un resumen propio para mostrar/loguear el motivo de un fallo —
+ * `resultado.error` ya es seguro para eso.
  *
- * **Cómo se evita que un secreto (cambiado o no) llegue a `cambios`.**
- * `cambios` se calcula con `loQueCambio` sobre los valores CRUDOS de
- * `entrada.antes`/`entrada.despues` — NO sobre versiones ya redactadas — y
- * recién DESPUÉS se redacta el resultado (`redactarCambios`, interna),
- * mirando CUALQUIER segmento de la ruta con puntos (`"token.access"` →
- * `["token", "access"]`), no solo el último. Si algún segmento es sensible
- * (`"token"` lo es, aunque `"access"` no), el VALOR ENTERO de esa entrada
- * se reemplaza por `"[redactado]"` en cada lado que esté definido — nunca
- * el valor real, pero **sí queda registrado que ese campo CAMBIÓ**: antes
- * de este fix, redactar `antes`/`despues` ENTEROS antes de diffear hacía
- * que los dos lados llegaran a `loQueCambio` como el MISMO string
- * `"[redactado]"`, y un cambio real en un campo sensible desaparecía de
- * `cambios` por completo (no solo el valor: la SEÑAL de que hubo un
- * cambio). Para un cambio SIN ningún segmento sensible en su ruta, cada
+ * **Cómo se evita que un secreto (cambiado o no) llegue a `cambios`, y por
+ * qué se normaliza ANTES de diffear.** `cambios` se calcula con
+ * `loQueCambio` sobre `entrada.antes`/`entrada.despues` NORMALIZADOS
+ * (`normalizarParaDiff` — mismas reglas de tipos especiales que
+ * `serializarParaAuditoria`, pero SIN redactar) — nunca sobre valores ya
+ * redactados — y recién DESPUÉS se redacta el resultado (`redactarCambios`,
+ * interna), mirando CUALQUIER segmento de la ruta con puntos
+ * (`"token.access"` → `["token", "access"]`), no solo el último. Si algún
+ * segmento es sensible (`"token"` lo es, aunque `"access"` no), el VALOR
+ * ENTERO de esa entrada se reemplaza por `"[redactado]"` en cada lado que
+ * esté definido — nunca el valor real, pero **sí queda registrado que ese
+ * campo CAMBIÓ**: una versión anterior redactaba `antes`/`despues`
+ * ENTEROS antes de diffear, lo que hacía que los dos lados llegaran a
+ * `loQueCambio` como el MISMO string `"[redactado]"`, y un cambio real en
+ * un campo sensible desaparecía de `cambios` por completo (no solo el
+ * valor: la SEÑAL de que hubo un cambio).
+ *
+ * La normalización previa (agregada DESPUÉS de esa versión, para una
+ * regresión distinta) evita un problema separado: diffear los valores
+ * CRUDOS directamente hace que dos instancias DISTINTAS con el MISMO valor
+ * semántico (dos objetos `Decimal`-like separados con el mismo `toJSON()`,
+ * dos `Map`s con las mismas entradas, dos `URL` para la misma dirección,
+ * dos instancias de una misma clase con los mismos campos) se reporten
+ * como "cambiadas" — nunca son `===` entre sí, y `loQueCambio` no sabe que
+ * son equivalentes hasta que se normalizan a datos planos comparables.
+ *
+ * Para un cambio SIN ningún segmento sensible en su ruta, cada
  * lado se redacta igual con `redactar` — cubre el caso de un arreglo
  * cambiado ENTERO (`loQueCambio` compara arreglos como valor completo, no
  * por índice) que tiene, adentro, un objeto con una clave sensible.
@@ -269,21 +290,57 @@ export async function auditar(
   tabla: TablaAuditoria,
   entrada: EntradaAuditoria,
 ): Promise<ResultadoAuditar> {
+  // M-b: la PREPARACIÓN (normalizar, diffear, redactar, serializar, armar
+  // los `sql.identifier`) y el INSERT contra la base son dos `try/catch`
+  // SEPARADOS a propósito. Si algo tira ACÁ (no debería — `normalizarParaDiff`/
+  // `redactar`/`serializarParaAuditoria` están pensadas para nunca tirar,
+  // pero un bug real siempre es posible), NO es un fallo de Postgres, así
+  // que el mensaje genérico tiene que ser DISTINTO (`MENSAJE_GENERICO_PREP`,
+  // no `MENSAJE_GENERICO_DB`) — si no, un bug de esta función se vería en
+  // el log como "problema de la base de datos", que manda a buscar en el
+  // lugar equivocado.
+  let antesParametro: string | null;
+  let despuesParametro: string | null;
+  let cambiosParametro: string;
+  let colTenant: ReturnType<typeof sql.identifier>;
+  let colEntidad: ReturnType<typeof sql.identifier>;
+  let colEntidadId: ReturnType<typeof sql.identifier>;
+  let colAccion: ReturnType<typeof sql.identifier>;
+  let colActorTipo: ReturnType<typeof sql.identifier>;
+  let colActorId: ReturnType<typeof sql.identifier>;
+  let colAntes: ReturnType<typeof sql.identifier>;
+  let colDespues: ReturnType<typeof sql.identifier>;
+  let colCambios: ReturnType<typeof sql.identifier>;
+  let colIp: ReturnType<typeof sql.identifier>;
+  let colUserAgent: ReturnType<typeof sql.identifier>;
+  let colId: ReturnType<typeof sql.identifier>;
+
   try {
     const camposSensibles = entrada.camposSensibles ?? CAMPOS_SENSIBLES_POR_DEFECTO;
 
-    // N1: el diff se calcula sobre los valores CRUDOS — ver el JSDoc de
-    // esta función, sección "Cómo se evita que un secreto (cambiado o no)
-    // llegue a cambios". `cambiosCrudos` NUNCA se serializa ni se guarda
-    // tal cual: se redacta acá abajo (`redactarCambios`) antes de tocar la
-    // base.
-    const cambiosCrudos = loQueCambio(entrada.antes, entrada.despues);
+    // N1 (ronda 2) + regresión de N1 (ronda 4): el diff se calcula sobre
+    // los valores NORMALIZADOS (`normalizarParaDiff`, no redactados
+    // todavía) — no sobre los CRUDOS a secas. Sin normalizar, dos
+    // instancias DISTINTAS con el MISMO valor semántico (dos `Decimal`
+    // separados con el mismo `toJSON()`, dos `Map`s con las mismas
+    // entradas, dos `URL` iguales, dos instancias de una misma clase con
+    // los mismos campos) nunca son `===` ni estructuralmente comparables
+    // para `loQueCambio` tal como llegan — se reportaban como "cambiadas"
+    // aunque nada hubiera cambiado. Ver el JSDoc de `normalizarParaDiff`.
+    // `cambiosCrudos` NUNCA se serializa ni se guarda tal cual: se redacta
+    // acá abajo (`redactarCambios`) antes de tocar la base.
+    const antesNormalizado = normalizarParaDiff(entrada.antes);
+    const despuesNormalizado = normalizarParaDiff(entrada.despues);
+    const cambiosCrudos = loQueCambio(antesNormalizado, despuesNormalizado);
     const cambiosParaGuardar = redactarCambios(cambiosCrudos, camposSensibles);
 
     // Las fotos completas `antes`/`despues` (columnas separadas de
-    // `cambios`) se redactan por su cuenta — `redactar` ya devuelve
-    // `undefined` tal cual si `entrada.antes`/`entrada.despues` son
-    // `undefined` (no hace falta un ternario acá).
+    // `cambios`) se redactan por su cuenta, sobre los valores CRUDOS
+    // originales (no los normalizados de arriba: `redactar` ya sabe
+    // manejar Buffer/Date/RegExp/URL/Error/toJSON/Map/Set por su cuenta,
+    // así que no hace falta pasar por `normalizarParaDiff` primero) —
+    // `redactar` ya devuelve `undefined` tal cual si `entrada.antes`/
+    // `entrada.despues` son `undefined` (no hace falta un ternario acá).
     const antesRedactado = redactar(entrada.antes, camposSensibles);
     const despuesRedactado = redactar(entrada.despues, camposSensibles);
 
@@ -312,9 +369,9 @@ export async function auditar(
     //    diferencia del `coalesce` de `configurarNumerador` en
     //    `@mafesoftware/numeradores/drizzle`, que sí necesita un cast
     //    EXPLÍCITO). `null` viaja tal cual (nunca el string `"null"`).
-    const antesParametro = antesListo === null ? null : JSON.stringify(antesListo);
-    const despuesParametro = despuesListo === null ? null : JSON.stringify(despuesListo);
-    const cambiosParametro = JSON.stringify(cambiosListos);
+    antesParametro = antesListo === null ? null : JSON.stringify(antesListo);
+    despuesParametro = despuesListo === null ? null : JSON.stringify(despuesListo);
+    cambiosParametro = JSON.stringify(cambiosListos);
 
     // INSERT armado con `sql`/`sql.identifier` (no `.insert(tabla).values()`
     // del query builder), mismo motivo que `siguienteNumero`/
@@ -327,19 +384,28 @@ export async function auditar(
     // necesita para tipar `.values()`/`.returning()` en tiempo de
     // compilación. SQL crudo con columnas por `sql.identifier(tabla.x.name)`
     // funciona igual sin importar el nombre real de cada columna.
-    const colTenant = sql.identifier(tabla.tenantId.name);
-    const colEntidad = sql.identifier(tabla.entidad.name);
-    const colEntidadId = sql.identifier(tabla.entidadId.name);
-    const colAccion = sql.identifier(tabla.accion.name);
-    const colActorTipo = sql.identifier(tabla.actorTipo.name);
-    const colActorId = sql.identifier(tabla.actorId.name);
-    const colAntes = sql.identifier(tabla.antes.name);
-    const colDespues = sql.identifier(tabla.despues.name);
-    const colCambios = sql.identifier(tabla.cambios.name);
-    const colIp = sql.identifier(tabla.ip.name);
-    const colUserAgent = sql.identifier(tabla.userAgent.name);
-    const colId = sql.identifier(tabla.id.name);
+    colTenant = sql.identifier(tabla.tenantId.name);
+    colEntidad = sql.identifier(tabla.entidad.name);
+    colEntidadId = sql.identifier(tabla.entidadId.name);
+    colAccion = sql.identifier(tabla.accion.name);
+    colActorTipo = sql.identifier(tabla.actorTipo.name);
+    colActorId = sql.identifier(tabla.actorId.name);
+    colAntes = sql.identifier(tabla.antes.name);
+    colDespues = sql.identifier(tabla.despues.name);
+    colCambios = sql.identifier(tabla.cambios.name);
+    colIp = sql.identifier(tabla.ip.name);
+    colUserAgent = sql.identifier(tabla.userAgent.name);
+    colId = sql.identifier(tabla.id.name);
+  } catch {
+    // Nunca el error real acá (aunque en la práctica sería un bug interno,
+    // no datos de la app): mensaje fijo, distinto del de fallo de base.
+    console.error(
+      `auditar: no se pudo preparar el registro de auditoría (entidad=${entrada.entidad}, entidadId=${entrada.entidadId}, accion=${entrada.accion}): ${MENSAJE_GENERICO_PREP}`,
+    );
+    return { ok: false, error: { codigo: null, mensaje: MENSAJE_GENERICO_PREP } };
+  }
 
+  try {
     // SIEMPRE a través de `.transaction()` (ver el JSDoc de arriba): sobre
     // `dbOTx` de nivel superior abre una transacción normal; sobre una `tx`
     // ya en curso, arma un SAVEPOINT — así un fallo acá nunca aborta una

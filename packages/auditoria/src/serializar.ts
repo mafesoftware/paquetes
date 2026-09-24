@@ -1,15 +1,4 @@
-import {
-  claveComoTexto,
-  clavesPropias,
-  esBinario,
-  llamarToJSON,
-  objetoError,
-  textoBinario,
-  textoFecha,
-  textoRegExp,
-  textoUrl,
-  tieneToJSON,
-} from "./tipos-especiales.js";
+import { claveComoTexto, clasificar, clavesPropias, intentar, llamarToJSON } from "./tipos-especiales.js";
 
 /**
  * Lee `objeto[clave]`, atrapando una excepción si `clave` es un getter que
@@ -42,28 +31,37 @@ function serializar(valor: unknown, pila: Set<object>): unknown {
       pila.delete(valor);
     }
   }
-  // Tipos especiales, en ESTE orden (ver tipos-especiales.ts, y el mismo
-  // orden que usa `redactar`): binario, Date, RegExp, URL, Error, y recién
-  // después cualquier otro objeto con toJSON propio. `URL` tiene que
-  // resolverse ANTES del chequeo genérico de `toJSON` (`URL.prototype.toJSON`
-  // existe y devuelve el `href` COMPLETO, con query/hash).
-  if (esBinario(valor)) return textoBinario(valor);
-  if (valor instanceof Date) return textoFecha(valor);
-  if (valor instanceof RegExp) return textoRegExp(valor);
-  if (valor instanceof URL) return textoUrl(valor);
-  if (valor instanceof Error) return objetoError(valor);
-  if (typeof valor === "object" && valor !== null && tieneToJSON(valor)) {
+  if (typeof valor !== "object" || valor === null) {
+    // string, number, boolean, null: se devuelven tal cual.
+    return valor;
+  }
+
+  // `clasificar` (ver tipos-especiales.ts) reconoce binario/Date/RegExp/
+  // URL/Error/toJSON/Map/Set en ESE orden — `URL` tiene que resolverse
+  // ANTES del chequeo genérico de `toJSON` (`URL.prototype.toJSON` existe y
+  // devuelve el `href` COMPLETO, con query/hash). Corre SIEMPRE envuelta en
+  // `intentar`: los `instanceof`/`tieneToJSON` de adentro pueden tirar por
+  // un dato roto (un `Proxy` con `getPrototypeOf`/`get` rotos, un `Error`
+  // con `.name` que tira) — si tira, TODO el nodo queda `"[error]"`.
+  const clasificacion = intentar(() => clasificar(valor));
+  if (!clasificacion.ok) return "[error]";
+  const c = clasificacion.valor;
+
+  if (c.tipo === "resuelto") return c.valor;
+
+  if (c.tipo === "toJSON") {
     if (pila.has(valor)) return "[ciclo]";
     pila.add(valor);
     try {
-      const llamado = llamarToJSON(valor);
+      const llamado = llamarToJSON(valor as { toJSON: () => unknown });
       if (!llamado.ok) return "[error]";
       return serializar(llamado.valor, pila);
     } finally {
       pila.delete(valor);
     }
   }
-  if (valor instanceof Map) {
+
+  if (c.tipo === "map") {
     if (pila.has(valor)) return "[ciclo]";
     pila.add(valor);
     try {
@@ -72,7 +70,7 @@ function serializar(valor: unknown, pila: Set<object>): unknown {
       // normalizar a la MISMA clave de objeto, y un objeto perdería una en
       // silencio).
       const pares: [string, unknown][] = [];
-      for (const [clave, v] of valor.entries()) {
+      for (const [clave, v] of (valor as Map<unknown, unknown>).entries()) {
         const serializado = serializar(v, pila);
         if (serializado !== undefined) pares.push([claveComoTexto(clave), serializado]);
       }
@@ -81,49 +79,48 @@ function serializar(valor: unknown, pila: Set<object>): unknown {
       pila.delete(valor);
     }
   }
-  if (valor instanceof Set) {
+
+  if (c.tipo === "set") {
     if (pila.has(valor)) return "[ciclo]";
     pila.add(valor);
     try {
-      return Array.from(valor).map((v) => serializar(v, pila) ?? null);
+      return Array.from(valor as Set<unknown>).map((v) => serializar(v, pila) ?? null);
     } finally {
       pila.delete(valor);
     }
   }
-  if (typeof valor === "object" && valor !== null) {
-    // CUALQUIER objeto que no sea arreglo/binario/Date/RegExp/URL/Error/
-    // (algo con toJSON)/Map/Set — objeto plano, instancia de una clase
-    // propia, lo que sea — se recorre por sus claves propias ENUMERABLES.
-    if (pila.has(valor)) return "[ciclo]";
-    pila.add(valor);
-    try {
-      const objeto = valor as Record<string, unknown>;
-      const clavesLeidas = clavesPropias(objeto);
-      // Object.keys puede tirar (un Proxy cuya trampa ownKeys tira): sin
-      // poder enumerar nada, se devuelve "[error]" para todo el objeto.
-      if (!clavesLeidas.ok) return "[error]";
-      const resultado: Record<string, unknown> = {};
-      for (const clave of clavesLeidas.claves) {
-        const leido = leerPropiedad(objeto, clave);
-        if (!leido.ok) {
-          // Un getter que tira: no se propaga — "nunca tira" es la garantía
-          // de esta función, incluso si el DATO que le pasan está roto.
-          resultado[clave] = "[error]";
-          continue;
-        }
-        const serializado = serializar(leido.valor, pila);
-        // Acá sí se saca la clave entera (no se deja en `null`): "undefined
-        // se descarta" es la regla pedida, y en un objeto (a diferencia de
-        // un arreglo) sacar una clave no mueve a ninguna otra.
-        if (serializado !== undefined) resultado[clave] = serializado;
+
+  // c.tipo === "objeto": CUALQUIER objeto que no sea arreglo/binario/Date/
+  // RegExp/URL/Error/(algo con toJSON)/Map/Set — objeto plano, instancia
+  // de una clase propia, lo que sea — se recorre por sus claves propias
+  // ENUMERABLES.
+  if (pila.has(valor)) return "[ciclo]";
+  pila.add(valor);
+  try {
+    const objeto = valor as Record<string, unknown>;
+    const clavesLeidas = clavesPropias(objeto);
+    // Object.keys puede tirar (un Proxy cuya trampa ownKeys tira): sin
+    // poder enumerar nada, se devuelve "[error]" para todo el objeto.
+    if (!clavesLeidas.ok) return "[error]";
+    const resultado: Record<string, unknown> = {};
+    for (const clave of clavesLeidas.claves) {
+      const leido = leerPropiedad(objeto, clave);
+      if (!leido.ok) {
+        // Un getter que tira: no se propaga — "nunca tira" es la garantía
+        // de esta función, incluso si el DATO que le pasan está roto.
+        resultado[clave] = "[error]";
+        continue;
       }
-      return resultado;
-    } finally {
-      pila.delete(valor);
+      const serializado = serializar(leido.valor, pila);
+      // Acá sí se saca la clave entera (no se deja en `null`): "undefined
+      // se descarta" es la regla pedida, y en un objeto (a diferencia de
+      // un arreglo) sacar una clave no mueve a ninguna otra.
+      if (serializado !== undefined) resultado[clave] = serializado;
     }
+    return resultado;
+  } finally {
+    pila.delete(valor);
   }
-  // string, number, boolean, null: se devuelven tal cual.
-  return valor;
 }
 
 /**

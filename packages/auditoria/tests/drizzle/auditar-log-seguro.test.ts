@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { auditar } from "../../src/drizzle/auditar.js";
-import { tablaAuditoria } from "../../src/drizzle/tabla.js";
+import { tablaAuditoria, type TablaAuditoria } from "../../src/drizzle/tabla.js";
 import type { DbCliente } from "../../src/drizzle/cliente.js";
 
 /**
@@ -129,6 +129,54 @@ describe("N5 — resumenDeError nunca lee error.message del wrapper (DrizzleQuer
 
       if (resultado.ok) throw new Error("no debería pasar");
       expect(resultado.error).toEqual({ codigo: "23514", mensaje: 'new row for relation "x" violates check constraint "y"' });
+    } finally {
+      spyError.mockRestore();
+    }
+  });
+});
+
+/**
+ * M-b: un fallo ANTES de llegar a la base (preparando la auditoría —
+ * normalizar/redactar/serializar/armar el SQL) tiene que dar un mensaje
+ * DISTINTO al de un fallo de Postgres — "error preparando la auditoría",
+ * no "error de base de datos sin detalle" — para no hacer parecer un
+ * problema de la base algo que en realidad es un bug de esta función (o,
+ * en este test, una `tabla` armada a mano y rota a propósito).
+ *
+ * Se fuerza el fallo con una `tabla` a la que le falta una columna: `auditar`
+ * lee `tabla.tenantId.name` (vía `sql.identifier`) ANTES de llamar a
+ * `dbOTx.transaction(...)`, así que con `tenantId` ausente eso tira
+ * `TypeError: Cannot read properties of undefined` — nunca se llega a
+ * tocar `dbOTx` (que ni siquiera necesita ser funcional para este test).
+ */
+describe("M-b — un fallo antes de la base da \"error preparando la auditoría\", no \"error de base de datos\"", () => {
+  it("una tabla sin la columna tenantId hace fallar la preparación (antes de dbOTx.transaction), con el mensaje distintivo", async () => {
+    const tablaRota = { ...tablaAuditoria(), tenantId: undefined } as unknown as TablaAuditoria;
+    const dbQueNuncaDeberiaLlamarse: DbCliente = {
+      transaction: async () => {
+        throw new Error("no debería llegar a llamarse: el fallo tiene que pasar ANTES");
+      },
+    } as unknown as DbCliente;
+
+    const spyError = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const resultado = await auditar(dbQueNuncaDeberiaLlamarse, tablaRota, {
+        tenantId: "11111111-1111-1111-1111-111111111111",
+        entidad: "test",
+        entidadId: "1",
+        accion: "crear",
+        actor: { tipo: "sistema" },
+      });
+
+      expect(resultado.ok).toBe(false);
+      if (resultado.ok) throw new Error("no debería pasar");
+      expect(resultado.error).toEqual({ codigo: null, mensaje: "error preparando la auditoría" });
+      // NUNCA el mensaje genérico de un fallo de BASE — son mensajes
+      // distintos justamente para no confundir el diagnóstico.
+      expect(resultado.error.mensaje).not.toBe("error de base de datos sin detalle");
+
+      const textoLogueado = spyError.mock.calls.flat().map((arg) => (typeof arg === "string" ? arg : JSON.stringify(arg))).join(" ");
+      expect(textoLogueado).toContain("error preparando la auditoría");
     } finally {
       spyError.mockRestore();
     }

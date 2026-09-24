@@ -1,3 +1,5 @@
+import { intentar } from "./tipos-especiales.js";
+
 /** Un campo que cambió entre `antes` y `despues`. */
 export interface CambioAuditoria {
   /** La ruta con puntos hasta el campo (ej. `"direccion.calle"`), o `"(raiz)"` si `antes`/`despues` no son objetos. */
@@ -6,11 +8,32 @@ export interface CambioAuditoria {
   despues: unknown;
 }
 
-/** Un objeto "plano": no `null`, no arreglo, no `Date`, y con el prototipo de `Object` (o sin prototipo) — nunca una instancia de una clase propia, `Map`, `Set`, etc., que este paquete trata como un valor hoja, no como algo para recorrer campo a campo. */
+/**
+ * Un objeto "plano": no `null`, no arreglo, no `Date`, y con el prototipo
+ * de `Object` (o sin prototipo) — nunca una instancia de una clase propia,
+ * `Map`, `Set`, etc., que este paquete trata como un valor hoja, no como
+ * algo para recorrer campo a campo.
+ *
+ * El chequeo entero corre envuelto en `intentar` (ver `tipos-especiales.ts`):
+ * `v instanceof Date` y `Object.getPrototypeOf(v)` pueden tirar si `v` es un
+ * `Proxy` con la trampa `getPrototypeOf` rota (`instanceof` sin un
+ * `Symbol.hasInstance` custom, y `Object.getPrototypeOf`, hacen
+ * `[[GetPrototypeOf]]` del valor, que en un `Proxy` dispara esa trampa). Si
+ * tira, se trata como NO plano (un valor hoja) en vez de propagar — `diff`
+ * lo compara entero más abajo, y si TAMBIÉN eso tira en algún punto, esa
+ * rama del diff no puede resolverse limpiamente; no debería pasar en el uso
+ * normal de este paquete (`normalizarParaDiff` ya deja todo en forma plana
+ * antes de llegar acá), pero `loQueCambio` es pública y puede recibir
+ * cualquier cosa directamente.
+ */
 function esObjetoPlano(v: unknown): v is Record<string, unknown> {
-  if (typeof v !== "object" || v === null || Array.isArray(v) || v instanceof Date) return false;
-  const proto = Object.getPrototypeOf(v);
-  return proto === Object.prototype || proto === null;
+  if (typeof v !== "object" || v === null || Array.isArray(v)) return false;
+  const resultado = intentar(() => {
+    if (v instanceof Date) return false;
+    const proto = Object.getPrototypeOf(v);
+    return proto === Object.prototype || proto === null;
+  });
+  return resultado.ok && resultado.valor;
 }
 
 /**

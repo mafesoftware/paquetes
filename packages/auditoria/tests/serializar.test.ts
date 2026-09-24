@@ -234,5 +234,53 @@ describe("serializarParaAuditoria", () => {
       }).not.toThrow();
       expect((resultado as Record<string, unknown>).x).toBe("[error]");
     });
+
+    it("M-b: un Proxy cuyas trampas getPrototypeOf/get tiran no tira: el nodo entero queda \"[error]\"", () => {
+      const proxy = new Proxy(
+        {},
+        {
+          getPrototypeOf() {
+            throw new Error("getPrototypeOf roto a propósito");
+          },
+          get() {
+            throw new Error("get roto a propósito");
+          },
+        },
+      );
+      let resultado: unknown;
+      expect(() => {
+        resultado = serializarParaAuditoria({ x: proxy });
+      }).not.toThrow();
+      expect((resultado as Record<string, unknown>).x).toBe("[error]");
+    });
+
+    it("M-b: un objeto con \"get toJSON(){throw}\" no tira: el nodo entero queda \"[error]\"", () => {
+      const roto = { a: 1 };
+      Object.defineProperty(roto, "toJSON", {
+        get() {
+          throw new Error("getter de toJSON roto a propósito");
+        },
+        enumerable: true,
+      });
+      let resultado: unknown;
+      expect(() => {
+        resultado = serializarParaAuditoria({ x: roto });
+      }).not.toThrow();
+      expect((resultado as Record<string, unknown>).x).toBe("[error]");
+    });
+
+    it("M-b: un Error con un getter de \"name\" que tira no tira: el nodo entero queda \"[error]\"", () => {
+      class ErrorRoto extends Error {
+        get name(): string {
+          throw new Error("getter de name roto a propósito");
+        }
+      }
+      const errorRoto = new ErrorRoto("mensaje con datos");
+      let resultado: unknown;
+      expect(() => {
+        resultado = serializarParaAuditoria({ x: errorRoto });
+      }).not.toThrow();
+      expect((resultado as Record<string, unknown>).x).toBe("[error]");
+    });
   });
 });

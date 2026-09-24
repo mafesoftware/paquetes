@@ -10,6 +10,10 @@
  * - `serializar.ts`: `serializarParaAuditoria` — deja un valor listo para
  *   `jsonb` (bigint → string con sufijo `"n"`, Date → ISO, undefined se
  *   descarta), sin tirar nunca.
+ * - `normalizar-para-diff.ts`: `normalizarParaDiff` — las mismas reglas de
+ *   tipos especiales que `serializarParaAuditoria`, pero SIN redactar; para
+ *   correr `loQueCambio` sobre datos ya normalizados (dos instancias
+ *   distintas con el mismo valor semántico no deberían verse "cambiadas").
  *
  * Núcleo puro: sin variables de entorno, sin framework, sin base de datos.
  * Lo específico de Drizzle (la tabla, el trigger de inmutabilidad, y las
@@ -20,3 +24,4 @@
 export { loQueCambio, type CambioAuditoria } from "./lo-que-cambio.js";
 export { redactar, CAMPOS_SENSIBLES_POR_DEFECTO } from "./redactar.js";
 export { serializarParaAuditoria } from "./serializar.js";
+export { normalizarParaDiff } from "./normalizar-para-diff.js";

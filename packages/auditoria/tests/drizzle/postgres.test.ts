@@ -334,6 +334,43 @@ describe("auditar (Postgres real)", () => {
     );
   });
 
+  it("M-a: un tenantId con formato inválido (22P02) da un mensaje GENÉRICO que conserva el código, nunca el message real de Postgres (que hace eco del valor)", async () => {
+    const tenantIdInvalido = "no-es-un-uuid-valido";
+    const spyError = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const resultado = await auditar(db, auditoria, {
+        tenantId: tenantIdInvalido,
+        entidad: "usuario",
+        entidadId: randomUUID(),
+        accion: "crear",
+        actor: { tipo: "usuario" },
+      });
+
+      expect(resultado.ok).toBe(false);
+      if (resultado.ok) throw new Error("no debería pasar");
+
+      // Clase 22 de SQLSTATE (Data Exception): el code real es 22P02
+      // (invalid_text_representation) — el message REAL de Postgres para
+      // este código hace eco del valor de entrada
+      // ("invalid input syntax for type uuid: \"no-es-un-uuid-valido\"") —
+      // confirmado que NUNCA aparece, ni en el error devuelto ni en el log.
+      expect(resultado.error.codigo).toBe("22P02");
+      expect(resultado.error.mensaje).toBe("valor inválido para la columna (22P02)");
+      expect(resultado.error.mensaje).not.toContain(tenantIdInvalido);
+      expect(resultado.error.mensaje.toLowerCase()).not.toContain("uuid");
+
+      const textoLogueado = spyError.mock.calls
+        .flat()
+        .map((arg) => (typeof arg === "string" ? arg : JSON.stringify(arg)))
+        .join(" ");
+      expect(textoLogueado).not.toContain(tenantIdInvalido);
+      expect(textoLogueado).toContain("22P02");
+      expect(textoLogueado).toContain("valor inválido para la columna");
+    } finally {
+      spyError.mockRestore();
+    }
+  });
+
   it("I4: pagina/porPagina con NaN o Infinity caen a los defaults en vez de romper la consulta", async () => {
     const tenantId = randomUUID();
     await auditar(db, auditoria, { tenantId, entidad: "x", entidadId: randomUUID(), accion: "crear", actor: { tipo: "sistema" } });

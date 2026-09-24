@@ -109,3 +109,44 @@ trigger de inmutabilidad, aislamiento entre tenants, paginación); `bun run
 test:sin-db` excluye el glob `postgres*.test.ts` (no solo
 `postgres.test.ts`) para cubrir los dos archivos de Postgres de este
 paquete.
+
+**Ronda 4** — normalización antes de diffear + endurecimiento de "nunca
+tira":
+
+- `normalizarParaDiff(v)` (nuevo export del núcleo): convierte `v` a datos
+  planos tipo JSON, con las MISMAS reglas de tipos especiales que
+  `serializarParaAuditoria` (`tipos-especiales.ts` compartido), pero
+  **sin redactar nada**. `auditar` ahora calcula `cambios` con
+  `loQueCambio(normalizarParaDiff(antes), normalizarParaDiff(despues))` en
+  vez de diffear los valores crudos — corrige una regresión: dos instancias
+  EQUIVALENTES pero no idénticas (dos `Decimal`/`Map`/`URL`/instancias de
+  clase con el mismo contenido, construidas por separado) se reportaban
+  como "cambiadas" por comparar por referencia/forma interna en vez de por
+  valor. `redactar`/`serializarParaAuditoria` siguen aplicándose después,
+  sobre los valores crudos, como antes.
+- Los códigos de error de Postgres de clase `22` (Data Exception, ej.
+  `22P02`) ecoan el valor de entrada inválido en su `message` (a diferencia
+  de la clase `23`, que describe la restricción). `auditar` ahora
+  reemplaza el `mensaje` por un texto genérico que conserva el código
+  (`"valor inválido para la columna (22P02)"`) para esa clase completa, en
+  el resultado y en el log — probado con un `tenantId` no-uuid contra
+  Postgres real.
+- `redactar`/`serializarParaAuditoria`/`normalizarParaDiff` comparten ahora
+  un dispatcher único (`clasificar`, en `tipos-especiales.ts`) envuelto en
+  un helper `intentar` que atrapa cualquier excepción de la inspección de
+  un nodo (`instanceof`, lectura de `toJSON`, lectura de `.name` de un
+  `Error`, `getPrototypeOf`) y la convierte en `"[error]"` para ese nodo —
+  probado con un `Proxy` cuyas trampas `getPrototypeOf`/`get` tiran, un
+  `get toJSON(){throw}`, y un `Error` con getter de `name` que tira. Un
+  fallo ANTES de llegar a la base (preparando la auditoría) ahora da un
+  mensaje distinto (`"error preparando la auditoría"`) al de un fallo de
+  Postgres (`"error de base de datos sin detalle"`).
+- `redactarCambios` (la redacción de `cambios` por segmento de ruta) se
+  movió a `src/drizzle/redactar-cambios.ts`, interna (no reexportada desde
+  `drizzle/index.ts`), para que los tests unitarios importen la función
+  REAL en vez de mantener una copia.
+- `CAMPOS_SENSIBLES_POR_DEFECTO` agrega `"passwords"`, `"tokens"` y
+  `"secrets"` (los plurales NO matchean su singular con la regla "termina
+  con" — `"misPasswords"` no termina en `"password"`). README documenta
+  también que la clave de un `Map` queda como texto en el resultado sin
+  mirar su contenido (no usar un secreto como clave de un `Map`).

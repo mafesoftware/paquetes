@@ -77,14 +77,17 @@ describe("redactar", () => {
     // parte de la lista default tampoco.
   });
 
-  it("CAMPOS_SENSIBLES_POR_DEFECTO tiene exactamente la lista de la spec", () => {
+  it("CAMPOS_SENSIBLES_POR_DEFECTO tiene exactamente la lista de la spec (M-d: incluye los plurales passwords/tokens/secrets)", () => {
     expect(CAMPOS_SENSIBLES_POR_DEFECTO).toEqual([
       "contrasena",
       "password",
+      "passwords",
       "hash",
       "token",
+      "tokens",
       "secreto",
       "secret",
+      "secrets",
       "cbu",
       "cvu",
       "clave",
@@ -93,6 +96,18 @@ describe("redactar", () => {
       "totp",
       "authorization",
     ]);
+  });
+
+  it("M-d: los plurales passwords/tokens/secrets se redactan (términos EXPLÍCITOS en la lista default)", () => {
+    expect(redactar({ passwords: ["hunter2", "hunter3"], tokens: ["t1"], secrets: ["s1"] })).toEqual({
+      passwords: "[redactado]",
+      tokens: "[redactado]",
+      secrets: "[redactado]",
+    });
+  });
+
+  it("M-d: un plural que NO está en la lista (ej. \"apiKeys\") sigue sin matchear — \"termina con\" no cubre el plural de un singular arbitrario", () => {
+    expect(redactar({ apiKeys: ["k1", "k2"] })).toEqual({ apiKeys: ["k1", "k2"] });
   });
 
   it("es una copia profunda: no muta el objeto original ni comparte referencias anidadas", () => {
@@ -337,6 +352,54 @@ describe("redactar", () => {
       let resultado: unknown;
       expect(() => {
         resultado = redactar({ x: proxy });
+      }).not.toThrow();
+      expect((resultado as Record<string, unknown>).x).toBe("[error]");
+    });
+
+    it("M-b: un Proxy cuyas trampas getPrototypeOf/get tiran no tira: el nodo entero queda \"[error]\"", () => {
+      const proxy = new Proxy(
+        {},
+        {
+          getPrototypeOf() {
+            throw new Error("getPrototypeOf roto a propósito");
+          },
+          get() {
+            throw new Error("get roto a propósito");
+          },
+        },
+      );
+      let resultado: unknown;
+      expect(() => {
+        resultado = redactar({ x: proxy });
+      }).not.toThrow();
+      expect((resultado as Record<string, unknown>).x).toBe("[error]");
+    });
+
+    it("M-b: un objeto con \"get toJSON(){throw}\" no tira: el nodo entero queda \"[error]\"", () => {
+      const roto = { contrasena: "hunter2" };
+      Object.defineProperty(roto, "toJSON", {
+        get() {
+          throw new Error("getter de toJSON roto a propósito");
+        },
+        enumerable: true,
+      });
+      let resultado: unknown;
+      expect(() => {
+        resultado = redactar({ x: roto });
+      }).not.toThrow();
+      expect((resultado as Record<string, unknown>).x).toBe("[error]");
+    });
+
+    it("M-b: un Error con un getter de \"name\" que tira no tira: el nodo entero queda \"[error]\"", () => {
+      class ErrorRoto extends Error {
+        get name(): string {
+          throw new Error("getter de name roto a propósito");
+        }
+      }
+      const errorRoto = new ErrorRoto("mensaje con datos");
+      let resultado: unknown;
+      expect(() => {
+        resultado = redactar({ x: errorRoto });
       }).not.toThrow();
       expect((resultado as Record<string, unknown>).x).toBe("[error]");
     });

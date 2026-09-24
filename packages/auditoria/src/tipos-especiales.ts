@@ -90,3 +90,68 @@ export function clavesPropias(objeto: object): { ok: true; claves: string[] } | 
     return { ok: false };
   }
 }
+
+/**
+ * Corre `fn()` atrapando CUALQUIER excepción. Para chequeos que pueden
+ * tirar por un DATO roto — no por un bug de este paquete — en vez de
+ * propagar: un `instanceof` sobre un `Proxy` con la trampa `getPrototypeOf`
+ * rota tira (`instanceof` sin un `Symbol.hasInstance` custom hace
+ * `[[GetPrototypeOf]]` del VALOR para caminar su cadena de prototipos, y en
+ * un `Proxy` eso dispara la trampa); leer `.toJSON` (`tieneToJSON`) puede
+ * tirar si es un getter roto; leer `.name` de un `Error` (`objetoError`)
+ * puede tirar si es un getter roto en una subclase. La garantía de "nunca
+ * tira" de `redactar`/`serializarParaAuditoria`/`normalizarParaDiff`
+ * depende de envolver estos chequeos en cada nodo que recorren, no solo
+ * las lecturas de propiedades "de datos" normales (que ya cubrían
+ * `leerPropiedad`/`clavesPropias`/`claveComoTexto` desde antes).
+ */
+export function intentar<T>(fn: () => T): { ok: true; valor: T } | { ok: false } {
+  try {
+    return { ok: true, valor: fn() };
+  } catch {
+    return { ok: false };
+  }
+}
+
+/**
+ * El resultado de clasificar un valor NO arreglo (el llamador filtra
+ * arreglos aparte, antes de llegar acá) en uno de los tipos especiales que
+ * reconoce este paquete: `"resuelto"` trae el valor YA CONVERTIDO para los
+ * casos "hoja" (binario/`Date`/`RegExp`/`URL`/`Error`, que no necesitan más
+ * recorrido); las demás etiquetas (`"toJSON"`/`"map"`/`"set"`/`"objeto"`)
+ * le dicen al llamador CÓMO seguir recorriendo — cada función
+ * (`redactar`/`serializarParaAuditoria`/`normalizarParaDiff`) hace ese
+ * recorrido a su manera (`redactar` chequea claves sensibles, las otras
+ * dos no), así que esa parte no se comparte.
+ */
+export type Clasificacion =
+  | { tipo: "resuelto"; valor: unknown }
+  | { tipo: "toJSON" }
+  | { tipo: "map" }
+  | { tipo: "set" }
+  | { tipo: "objeto" };
+
+/**
+ * Clasifica `valor` (que el llamador ya confirmó que es un objeto no
+ * arreglo) en uno de los tipos especiales, en el ORDEN que importa (ver el
+ * comentario de arriba del archivo: `URL` antes que el chequeo genérico de
+ * `toJSON`, porque `URL.prototype.toJSON` existe y da el `href` completo).
+ *
+ * **Se llama SIEMPRE envuelta en `intentar(...)`** — nunca directo: los
+ * `instanceof` de acá adentro (`Date`, `RegExp`, `URL`, `Error`, `Map`,
+ * `Set`), la lectura de `.toJSON` (`tieneToJSON`) y la de `.name` (dentro
+ * de `objetoError`, para el caso `Error`) pueden tirar por un dato roto —
+ * ver el JSDoc de `intentar`. Si `clasificar` tira, el llamador convierte
+ * TODO el nodo en `"[error]"`, sin poder saber a qué categoría pertenecía.
+ */
+export function clasificar(valor: object): Clasificacion {
+  if (esBinario(valor)) return { tipo: "resuelto", valor: textoBinario(valor) };
+  if (valor instanceof Date) return { tipo: "resuelto", valor: textoFecha(valor) };
+  if (valor instanceof RegExp) return { tipo: "resuelto", valor: textoRegExp(valor) };
+  if (valor instanceof URL) return { tipo: "resuelto", valor: textoUrl(valor) };
+  if (valor instanceof Error) return { tipo: "resuelto", valor: objetoError(valor) };
+  if (tieneToJSON(valor)) return { tipo: "toJSON" };
+  if (valor instanceof Map) return { tipo: "map" };
+  if (valor instanceof Set) return { tipo: "set" };
+  return { tipo: "objeto" };
+}

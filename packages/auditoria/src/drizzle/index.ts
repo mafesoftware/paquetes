@@ -17,6 +17,10 @@
  *   transacción).
  * - `listar.ts`: `listarAuditoria`.
  * - `cliente.ts`: interno (el tipo `DbCliente`), no se re-exporta acá.
+ * - `redactar-cambios.ts`: interno (`redactarCambios`, la redacción de
+ *   `cambios` que usa `auditar`), no se re-exporta acá — vive en su propio
+ *   archivo para que los tests puedan importar la función real en vez de
+ *   duplicarla, pero no es API pública.
  *
  * Ejemplo completo:
  *

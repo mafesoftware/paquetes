@@ -1,16 +1,5 @@
 import { esClaveSensible, normalizarTerminos } from "./coincidencia-sensible.js";
-import {
-  claveComoTexto,
-  clavesPropias,
-  esBinario,
-  llamarToJSON,
-  objetoError,
-  textoBinario,
-  textoFecha,
-  textoRegExp,
-  textoUrl,
-  tieneToJSON,
-} from "./tipos-especiales.js";
+import { claveComoTexto, clasificar, clavesPropias, intentar, llamarToJSON } from "./tipos-especiales.js";
 
 /**
  * Los nombres de campo que `redactar` tapa por defecto, en cualquier
@@ -28,10 +17,13 @@ import {
 export const CAMPOS_SENSIBLES_POR_DEFECTO: readonly string[] = [
   "contrasena",
   "password",
+  "passwords",
   "hash",
   "token",
+  "tokens",
   "secreto",
   "secret",
+  "secrets",
   "cbu",
   "cvu",
   "clave",
@@ -65,25 +57,30 @@ function redactarValor(valor: unknown, sensibles: ReadonlySet<string>, pila: Set
       pila.delete(valor);
     }
   }
-  // Tipos especiales, en ESTE orden (ver tipos-especiales.ts): binario,
-  // Date, RegExp, URL, Error, y recién después cualquier otro objeto con
-  // toJSON propio. Antes de esto, el bloque genérico de más abajo ("recorre
-  // por claves propias enumerables") los mangleaba: un RegExp quedaba `{}`,
-  // un Buffer se recorría byte a byte, una URL con "?token=..." conservaba
-  // el token porque `search`/`hash` no son claves propias enumerables (pero
-  // SÍ hubieran salido enteras si algo llamaba a su `toJSON`, que devuelve
-  // el href completo — por eso URL se resuelve ACÁ, antes del chequeo
-  // genérico de toJSON de más abajo).
-  if (esBinario(valor)) return textoBinario(valor);
-  if (valor instanceof Date) return textoFecha(valor);
-  if (valor instanceof RegExp) return textoRegExp(valor);
-  if (valor instanceof URL) return textoUrl(valor);
-  if (valor instanceof Error) return objetoError(valor);
-  if (typeof valor === "object" && valor !== null && tieneToJSON(valor)) {
+  if (typeof valor !== "object" || valor === null) {
+    // Valor hoja (string, number, bigint, boolean, null, undefined, symbol,
+    // función): se devuelve tal cual, no hay clave que revisar acá arriba.
+    return valor;
+  }
+
+  // `clasificar` (ver tipos-especiales.ts) reconoce binario/Date/RegExp/
+  // URL/Error/toJSON/Map/Set en ESE orden, y devuelve una CLASIFICACIÓN,
+  // no el recorrido — acá se hace lo que corresponde para cada una. Corre
+  // SIEMPRE envuelta en `intentar`: los `instanceof`/`tieneToJSON` de adentro
+  // pueden tirar por un dato roto (un `Proxy` con `getPrototypeOf`/`get`
+  // rotos, un `Error` con `.name` que tira) — si tira, TODO el nodo queda
+  // `"[error]"`, nunca se propaga.
+  const clasificacion = intentar(() => clasificar(valor));
+  if (!clasificacion.ok) return "[error]";
+  const c = clasificacion.valor;
+
+  if (c.tipo === "resuelto") return c.valor;
+
+  if (c.tipo === "toJSON") {
     if (pila.has(valor)) return "[ciclo]";
     pila.add(valor);
     try {
-      const llamado = llamarToJSON(valor);
+      const llamado = llamarToJSON(valor as { toJSON: () => unknown });
       if (!llamado.ok) return "[error]";
       // El resultado de toJSON() se redacta/recorre recursivamente — puede
       // ser cualquier cosa (un string, como en decimal.js; un objeto; un
@@ -95,7 +92,8 @@ function redactarValor(valor: unknown, sensibles: ReadonlySet<string>, pila: Set
       pila.delete(valor);
     }
   }
-  if (valor instanceof Map) {
+
+  if (c.tipo === "map") {
     if (pila.has(valor)) return "[ciclo]";
     pila.add(valor);
     try {
@@ -105,7 +103,7 @@ function redactarValor(valor: unknown, sensibles: ReadonlySet<string>, pila: Set
       // objeto, la segunda pisaría a la primera en silencio. Un arreglo de
       // pares no pierde ninguna entrada, sin importar qué colisione.
       const pares: [string, unknown][] = [];
-      for (const [clave, v] of valor.entries()) {
+      for (const [clave, v] of (valor as Map<unknown, unknown>).entries()) {
         const claveTexto = claveComoTexto(clave);
         pares.push([claveTexto, esClaveSensible(claveTexto, sensibles) ? "[redactado]" : redactarValor(v, sensibles, pila)]);
       }
@@ -114,48 +112,45 @@ function redactarValor(valor: unknown, sensibles: ReadonlySet<string>, pila: Set
       pila.delete(valor);
     }
   }
-  if (valor instanceof Set) {
+
+  if (c.tipo === "set") {
     if (pila.has(valor)) return "[ciclo]";
     pila.add(valor);
     try {
-      return Array.from(valor, (v) => redactarValor(v, sensibles, pila));
+      return Array.from(valor as Set<unknown>, (v) => redactarValor(v, sensibles, pila));
     } finally {
       pila.delete(valor);
     }
   }
-  if (typeof valor === "object" && valor !== null) {
-    // CUALQUIER objeto que no sea arreglo/binario/Date/RegExp/URL/Error/
-    // (algo con toJSON)/Map/Set — objeto plano, instancia de una clase
-    // propia, lo que sea — se recorre por sus claves propias ENUMERABLES
-    // (`Object.keys`, que para una instancia de clase son los campos de
-    // instancia, ej. `this.password = ...` en el constructor, NUNCA los
-    // métodos del prototipo).
-    if (pila.has(valor)) return "[ciclo]";
-    pila.add(valor);
-    try {
-      const objeto = valor as Record<string, unknown>;
-      const clavesLeidas = clavesPropias(objeto);
-      // Object.keys puede tirar (un Proxy cuya trampa ownKeys tira): sin
-      // poder enumerar nada, no hay forma de redactar nada adentro — se
-      // devuelve "[error]" para todo el objeto, no se propaga la excepción.
-      if (!clavesLeidas.ok) return "[error]";
-      const resultado: Record<string, unknown> = {};
-      for (const clave of clavesLeidas.claves) {
-        const leido = leerPropiedad(objeto, clave);
-        if (!leido.ok) {
-          resultado[clave] = "[error]";
-          continue;
-        }
-        resultado[clave] = esClaveSensible(clave, sensibles) ? "[redactado]" : redactarValor(leido.valor, sensibles, pila);
+
+  // c.tipo === "objeto": CUALQUIER objeto que no sea arreglo/binario/Date/
+  // RegExp/URL/Error/(algo con toJSON)/Map/Set — objeto plano, instancia
+  // de una clase propia, lo que sea — se recorre por sus claves propias
+  // ENUMERABLES (`Object.keys`, que para una instancia de clase son los
+  // campos de instancia, ej. `this.password = ...` en el constructor,
+  // NUNCA los métodos del prototipo).
+  if (pila.has(valor)) return "[ciclo]";
+  pila.add(valor);
+  try {
+    const objeto = valor as Record<string, unknown>;
+    const clavesLeidas = clavesPropias(objeto);
+    // Object.keys puede tirar (un Proxy cuya trampa ownKeys tira): sin
+    // poder enumerar nada, no hay forma de redactar nada adentro — se
+    // devuelve "[error]" para todo el objeto, no se propaga la excepción.
+    if (!clavesLeidas.ok) return "[error]";
+    const resultado: Record<string, unknown> = {};
+    for (const clave of clavesLeidas.claves) {
+      const leido = leerPropiedad(objeto, clave);
+      if (!leido.ok) {
+        resultado[clave] = "[error]";
+        continue;
       }
-      return resultado;
-    } finally {
-      pila.delete(valor);
+      resultado[clave] = esClaveSensible(clave, sensibles) ? "[redactado]" : redactarValor(leido.valor, sensibles, pila);
     }
+    return resultado;
+  } finally {
+    pila.delete(valor);
   }
-  // Valor hoja (string, number, bigint, boolean, null, undefined, symbol,
-  // función): se devuelve tal cual, no hay clave que revisar acá arriba.
-  return valor;
 }
 
 /**
@@ -187,6 +182,26 @@ function redactarValor(valor: unknown, sensibles: ReadonlySet<string>, pila: Set
  * donde la clave del objeto es `"notas"`, no `"clave"`) NO se detecta —
  * `redactar` nunca mira el CONTENIDO de un string, solo el nombre de la
  * clave que lo contiene.
+ *
+ * **Otros dos límites de la regla "termina con", documentados**:
+ * - **Un plural arbitrario NO matchea su singular**: `"passwordHint"` no
+ *   termina en `"password"`, pero TAMPOCO `"misPasswords"` termina en
+ *   `"password"` — termina en `"passwords"` (con la "s" de plural), que es
+ *   un sufijo DISTINTO. Por eso la lista default incluye explícitamente
+ *   `"passwords"`, `"tokens"` y `"secrets"` (los plurales más comunes) como
+ *   términos propios, no derivados automáticamente de sus singulares — un
+ *   plural que no esté en la lista (`"secretos"` en inglés informal,
+ *   `"apiKeys"`, ...) sigue sin matchear a menos que se agregue a mano en
+ *   `camposSensibles`.
+ * - **La clave de un `Map` queda como TEXTO en el resultado, sin redactar
+ *   por su CONTENIDO** (solo el nombre de la clave decide si el VALOR del
+ *   par se tapa, igual que con un objeto). Si una app usa un secreto COMO
+ *   clave de un `Map` (ej. `new Map([[apiKeySecret, metadata]])`, en vez de
+ *   `{ apiKey: secreto }`), ese secreto sale intacto como la clave del par
+ *   — `redactar` no tiene forma de saber que el CONTENIDO de esa clave es
+ *   sensible, solo mira nombres de clave declarados (de un objeto, o ya
+ *   convertidos a texto de un `Map`). No uses un valor sensible como clave
+ *   de un `Map` que vaya a pasar por `redactar`.
  *
  * **Tipos especiales** (mismo tratamiento que `serializarParaAuditoria`,
  * mismo orden — ver `tipos-especiales.ts`):
@@ -250,7 +265,11 @@ function redactarValor(valor: unknown, sensibles: ReadonlySet<string>, pila: Set
  * redactar(new Map([[1, "hunter2"], ["contrasena", "hunter3"]]));
  * // [["1", "hunter2"], ["contrasena", "[redactado]"]] (arreglo de pares, no objeto)
  *
- * CAMPOS_SENSIBLES_POR_DEFECTO; // ["contrasena", "password", "hash", "token", "secreto", "secret", "cbu", "cvu", "clave", "api_key", "apikey", "totp", "authorization"]
+ * redactar({ passwords: ["hunter2", "hunter3"], tokens: ["t1"], secrets: ["s1"] });
+ * // { passwords: "[redactado]", tokens: "[redactado]", secrets: "[redactado]" } (plurales EXPLÍCITOS en la lista default)
+ *
+ * CAMPOS_SENSIBLES_POR_DEFECTO;
+ * // ["contrasena", "password", "passwords", "hash", "token", "tokens", "secreto", "secret", "secrets", "cbu", "cvu", "clave", "api_key", "apikey", "totp", "authorization"]
  * ```
  */
 export function redactar<T>(obj: T, camposSensibles: readonly string[] = CAMPOS_SENSIBLES_POR_DEFECTO): T {
