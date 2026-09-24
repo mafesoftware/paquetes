@@ -17,10 +17,9 @@
  *   transacción).
  * - `listar.ts`: `listarAuditoria`.
  * - `cliente.ts`: interno (el tipo `DbCliente`), no se re-exporta acá.
- * - `redactar-cambios.ts`: interno (`redactarCambios`, la redacción de
- *   `cambios` que usa `auditar`), no se re-exporta acá — vive en su propio
- *   archivo para que los tests puedan importar la función real en vez de
- *   duplicarla, pero no es API pública.
+ * - `redactarCambios` (la redacción de `cambios` que usa `auditar`) vive
+ *   en el núcleo (`@mafesoftware/auditoria`) desde la ronda 5: no necesita
+ *   base de datos y es pública para el pipeline manual.
  *
  * Ejemplo completo:
  *

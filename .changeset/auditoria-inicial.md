@@ -30,14 +30,14 @@ de Postgres bloquea `UPDATE`/`DELETE`/`TRUNCATE` sobre la tabla.
   (ISO), `RegExp` (`String(re)`), `URL` (`origin`+`pathname`, sin
   `search`/`hash`, que pueden traer secretos), `Error` (`{ name }`
   únicamente) y cualquier objeto con `toJSON` propio (se llama y el
-  resultado se redacta recursivamente) — `Map` se convierte a un ARREGLO
-  de pares `[String(clave), valor]`, no un objeto (evita perder entradas
-  cuando dos claves distintas normalizan al mismo string).
+  resultado se redacta recursivamente) — `Map` se convierte a un OBJETO
+  plano con la clave como texto (dos claves que dan el mismo texto se
+  desambiguan con `" (2)"`, `" (3)"`…, en orden de inserción; ver ronda 5).
 - `serializarParaAuditoria(v)`: deja un valor listo para `jsonb` —
   `bigint` → string con sufijo `"n"`, `undefined` se descarta — sin tirar
   nunca, ni con una clave cuyo `get` tira, ni con un `Proxy` cuyas claves
   no se pueden enumerar. Mismos tipos especiales que `redactar` (binario,
-  `Date`, `RegExp`, `URL`, `Error`, `toJSON`, `Map` como arreglo de pares),
+  `Date`, `RegExp`, `URL`, `Error`, `toJSON`, `Map` como objeto plano),
   en el mismo orden.
 - `/drizzle` (requiere `drizzle-orm >=0.45 <0.46`, peerDependency opcional;
   usa `@mafesoftware/tenant/drizzle` para la columna de tenant):
@@ -57,7 +57,8 @@ de Postgres bloquea `UPDATE`/`DELETE`/`TRUNCATE` sobre la tabla.
     después de la que genera drizzle-kit — este paquete no trae
     migraciones. `tablaAuditoria` valida `nombre` con la misma regla.
   - `auditar(dbOTx, tabla, entrada)`: calcula `cambios` con `loQueCambio`
-    sobre los valores CRUDOS de `antes`/`despues`, y recién DESPUÉS redacta
+    sobre los valores NORMALIZADOS (`normalizarParaDiff`, ver ronda 4) de
+    `antes`/`despues`, y recién DESPUÉS redacta
     el resultado mirando CUALQUIER segmento de la ruta (no solo el
     último) — un secreto ANIDADO bajo una clave ancestro sensible (ej.
     `token.access` con `token` sensible) nunca llega sin tapar, y un
@@ -142,11 +143,47 @@ tira":
   mensaje distinto (`"error preparando la auditoría"`) al de un fallo de
   Postgres (`"error de base de datos sin detalle"`).
 - `redactarCambios` (la redacción de `cambios` por segmento de ruta) se
-  movió a `src/drizzle/redactar-cambios.ts`, interna (no reexportada desde
-  `drizzle/index.ts`), para que los tests unitarios importen la función
-  REAL en vez de mantener una copia.
+  movió a su propio archivo para que los tests unitarios importen la
+  función REAL en vez de mantener una copia (en la ronda 5 pasó a ser un
+  export público del núcleo).
 - `CAMPOS_SENSIBLES_POR_DEFECTO` agrega `"passwords"`, `"tokens"` y
   `"secrets"` (los plurales NO matchean su singular con la regla "termina
   con" — `"misPasswords"` no termina en `"password"`). README documenta
   también que la clave de un `Map` queda como texto en el resultado sin
   mirar su contenido (no usar un secreto como clave de un `Map`).
+
+**Ronda 5** — `Map` como objeto, `redactarCambios` pública y "nunca tira"
+de punta a punta:
+
+- **`Map` se representa como un OBJETO plano** en `redactar`,
+  `serializarParaAuditoria` y `normalizarParaDiff` (antes: arreglo de
+  pares), con la clave convertida a texto seguro. Si dos claves distintas
+  dan el mismo texto (el número `1` y el string `"1"`), la que llegó
+  después lleva un sufijo `" (2)"`, `" (3)"`… en orden de inserción — no
+  se pierde ninguna. Corrige una fuga CRÍTICA: con pares, `loQueCambio` veía
+  el `Map` como una hoja y la ruta del cambio se cortaba en él (`"m"`), así
+  que un valor bajo una clave sensible del `Map` (`new Map([["password",
+  "x"]])`) llegaba en claro a `cambios`. Ahora la clave del `Map` es un
+  segmento de la ruta (`"m.password"`) y queda
+  `"[redactado]"`/`"[redactado]"`, igual que en las copias guardadas.
+  `redactarCambios` trata un segmento con sufijo de colisión
+  (`"password (2)"`) como sensible. Probado con el `auditar` real y un
+  `dbOTx` falso que captura los parámetros (en la raíz, alta, baja, `toJSON`
+  que devuelve un `Map`). Una clave `"__proto__"` (de un `Map` o de un
+  objeto de `JSON.parse`) ahora se conserva como propiedad propia en vez de
+  cambiar el prototipo del resultado.
+- **`redactarCambios(cambios, camposSensibles?)` es un export público del
+  núcleo** (no necesita base de datos). El README documenta el pipeline
+  manual (`redactarCambios(loQueCambio(normalizarParaDiff(antes),
+  normalizarParaDiff(despues)))`) y advierte que lo que devuelve
+  `normalizarParaDiff` nunca se guarda ni se loguea.
+- Un `Map`/`Set` cuya **iteración tira** (un `Proxy` sobre un `Map`/`Set`,
+  una subclase con `entries()`/`[Symbol.iterator]` roto) queda `"[error]"`
+  en las tres funciones, en vez de escaparse.
+- **`loQueCambio` nunca tira**: un nodo que no se puede inspeccionar
+  (`Proxy` revocado o con `getPrototypeOf` roto, `ownKeys` que tira, getter
+  que tira) queda `"[error]"`; si comparar dos hojas tira, se consideran
+  distintas y el cambio se reporta.
+- El sanitizador de errores de `auditar` tampoco tira él mismo con un error
+  raro (`Proxy` con trampas rotas, getter de `cause`/`code`/`message` que
+  tira): cae al código `null` y/o al mensaje genérico.

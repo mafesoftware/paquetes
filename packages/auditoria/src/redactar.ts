@@ -1,5 +1,5 @@
 import { esClaveSensible, normalizarTerminos } from "./coincidencia-sensible.js";
-import { claveComoTexto, clasificar, clavesPropias, intentar, llamarToJSON } from "./tipos-especiales.js";
+import { clasificar, clavesPropias, definirPropiedad, elementosDeSet, entradasDeMap, intentar, llamarToJSON } from "./tipos-especiales.js";
 
 /**
  * Los nombres de campo que `redactar` tapa por defecto, en cualquier
@@ -97,17 +97,21 @@ function redactarValor(valor: unknown, sensibles: ReadonlySet<string>, pila: Set
     if (pila.has(valor)) return "[ciclo]";
     pila.add(valor);
     try {
-      // Arreglo de pares `[clave, valor]`, NO un objeto `{ [String(clave)]:
-      // valor }`: dos claves DISTINTAS del Map (ej. el número `1` y el
-      // string `"1"`) pueden normalizar a la MISMA clave de objeto — con un
-      // objeto, la segunda pisaría a la primera en silencio. Un arreglo de
-      // pares no pierde ninguna entrada, sin importar qué colisione.
-      const pares: [string, unknown][] = [];
-      for (const [clave, v] of (valor as Map<unknown, unknown>).entries()) {
-        const claveTexto = claveComoTexto(clave);
-        pares.push([claveTexto, esClaveSensible(claveTexto, sensibles) ? "[redactado]" : redactarValor(v, sensibles, pila)]);
+      // Ronda 5: OBJETO plano con la clave como texto, desambiguada con
+      // " (2)", " (3)"… si dos claves dan el mismo texto (`entradasDeMap`,
+      // el mismo cálculo que `serializarParaAuditoria`/`normalizarParaDiff`).
+      // La sensibilidad se decide por la clave SIN sufijo (`claveBase`): la
+      // segunda de dos claves que dan `"password"` queda `"password (2)"`,
+      // y sigue siendo sensible. Una iteración que tira deja el nodo en
+      // "[error]" (M2).
+      const leidas = entradasDeMap(valor as Map<unknown, unknown>);
+      if (!leidas.ok) return "[error]";
+      const resultado: Record<string, unknown> = {};
+      for (const { clave, claveBase, valor: v } of leidas.entradas) {
+        const sensible = esClaveSensible(claveBase, sensibles) || esClaveSensible(clave, sensibles);
+        definirPropiedad(resultado, clave, sensible ? "[redactado]" : redactarValor(v, sensibles, pila));
       }
-      return pares;
+      return resultado;
     } finally {
       pila.delete(valor);
     }
@@ -117,7 +121,9 @@ function redactarValor(valor: unknown, sensibles: ReadonlySet<string>, pila: Set
     if (pila.has(valor)) return "[ciclo]";
     pila.add(valor);
     try {
-      return Array.from(valor as Set<unknown>, (v) => redactarValor(v, sensibles, pila));
+      const leidos = elementosDeSet(valor as Set<unknown>);
+      if (!leidos.ok) return "[error]";
+      return leidos.elementos.map((v) => redactarValor(v, sensibles, pila));
     } finally {
       pila.delete(valor);
     }
@@ -142,10 +148,10 @@ function redactarValor(valor: unknown, sensibles: ReadonlySet<string>, pila: Set
     for (const clave of clavesLeidas.claves) {
       const leido = leerPropiedad(objeto, clave);
       if (!leido.ok) {
-        resultado[clave] = "[error]";
+        definirPropiedad(resultado, clave, "[error]");
         continue;
       }
-      resultado[clave] = esClaveSensible(clave, sensibles) ? "[redactado]" : redactarValor(leido.valor, sensibles, pila);
+      definirPropiedad(resultado, clave, esClaveSensible(clave, sensibles) ? "[redactado]" : redactarValor(leido.valor, sensibles, pila));
     }
     return resultado;
   } finally {
@@ -194,10 +200,12 @@ function redactarValor(valor: unknown, sensibles: ReadonlySet<string>, pila: Set
  *   `"apiKeys"`, ...) sigue sin matchear a menos que se agregue a mano en
  *   `camposSensibles`.
  * - **La clave de un `Map` queda como TEXTO en el resultado, sin redactar
- *   por su CONTENIDO** (solo el nombre de la clave decide si el VALOR del
- *   par se tapa, igual que con un objeto). Si una app usa un secreto COMO
- *   clave de un `Map` (ej. `new Map([[apiKeySecret, metadata]])`, en vez de
- *   `{ apiKey: secreto }`), ese secreto sale intacto como la clave del par
+ *   por su CONTENIDO** (solo el nombre de la clave decide si el VALOR de
+ *   esa entrada se tapa, igual que con un objeto). Si una app usa un
+ *   secreto COMO clave de un `Map` (ej. `new Map([[apiKeySecret,
+ *   metadata]])`, en vez de `{ apiKey: secreto }`), ese secreto sale
+ *   intacto como nombre de propiedad del resultado (y como segmento de la
+ *   ruta en `cambios`)
  *   — `redactar` no tiene forma de saber que el CONTENIDO de esa clave es
  *   sensible, solo mira nombres de clave declarados (de un objeto, o ya
  *   convertidos a texto de un `Map`). No uses un valor sensible como clave
@@ -219,13 +227,14 @@ function redactarValor(valor: unknown, sensibles: ReadonlySet<string>, pila: Set
  *   `URL.prototype.toJSON` existe y devuelve el `href` COMPLETO (con
  *   query/hash), así que si este chequeo corriera antes, la redacción
  *   específica de `URL` nunca se alcanzaría.
- * - `Map` se convierte a un arreglo de pares `[String(clave), valor]` (NO
- *   un objeto: dos claves de Map distintas pueden normalizar al MISMO
- *   nombre de propiedad — ej. el número `1` y el string `"1"` — y un
- *   objeto perdería una en silencio; ver el JSDoc de `redactarValor`
- *   interno). Un par cuya clave (ya convertida a texto) es sensible tiene
- *   su VALOR redactado.
- * - `Set` se convierte a un arreglo.
+ * - `Map` se convierte a un OBJETO plano con la clave como texto. Si dos
+ *   claves distintas dan el mismo texto (el número `1` y el string `"1"`),
+ *   la que llegó después (orden de inserción) lleva un sufijo `" (2)"`,
+ *   `" (3)"`…, así ninguna se pierde. Una entrada cuya clave (como texto,
+ *   sin sufijo) es sensible tiene su VALOR redactado.
+ * - `Set` se convierte a un arreglo. Un `Map`/`Set` cuya iteración tira
+ *   (un `Proxy` sobre un `Map`, una subclase con un `entries()` roto)
+ *   queda `"[error]"`.
  *
  * Nunca tira: una referencia circular queda como `"[ciclo]"`, una clave
  * cuyo `get` tira queda como `"[error]"`, una clave de `Map` cuyo
@@ -262,8 +271,8 @@ function redactarValor(valor: unknown, sensibles: ReadonlySet<string>, pila: Set
  * redactar({ precio: new Dinero(1250n) });
  * // { precio: "1250c" } (toJSON corre y su resultado se redacta/recorre)
  *
- * redactar(new Map([[1, "hunter2"], ["contrasena", "hunter3"]]));
- * // [["1", "hunter2"], ["contrasena", "[redactado]"]] (arreglo de pares, no objeto)
+ * redactar(new Map<unknown, string>([[1, "hunter2"], ["1", "x"], ["contrasena", "hunter3"]]));
+ * // { "1": "hunter2", "1 (2)": "x", contrasena: "[redactado]" } (objeto; la clave repetida como texto lleva sufijo)
  *
  * redactar({ passwords: ["hunter2", "hunter3"], tokens: ["t1"], secrets: ["s1"] });
  * // { passwords: "[redactado]", tokens: "[redactado]", secrets: "[redactado]" } (plurales EXPLÍCITOS en la lista default)

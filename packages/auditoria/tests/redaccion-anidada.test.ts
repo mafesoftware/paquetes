@@ -4,7 +4,7 @@ import { CAMPOS_SENSIBLES_POR_DEFECTO, redactar } from "../src/redactar.js";
 import { esClaveSensible, normalizarTerminos } from "../src/coincidencia-sensible.js";
 import { normalizarParaDiff } from "../src/normalizar-para-diff.js";
 import { serializarParaAuditoria } from "../src/serializar.js";
-import { redactarCambios } from "../src/drizzle/redactar-cambios.js";
+import { redactarCambios } from "../src/index.js";
 
 /**
  * C1 (CRÍTICO, hallado en la revisión de P.10), N1 (regresión que introdujo
@@ -36,8 +36,9 @@ import { redactarCambios } from "../src/drizzle/redactar-cambios.js";
  * `serializarParaAuditoria`, sin redactar) ANTES de diffear.
  *
  * **El flujo final** (el que usa `auditar`, `src/drizzle/auditar.ts`), que
- * este archivo reproduce con las funciones REALES (M-c: `redactarCambios`
- * se importa de `src/drizzle/redactar-cambios.ts`, no se duplica acá):
+ * este archivo reproduce con las funciones REALES (M-c; desde la ronda 5,
+ * M1, `redactarCambios` es un export PÚBLICO del núcleo y se importa de
+ * `src/index.ts`, como lo haría una app):
  *
  * 1. Normalizar `antes`/`despues` con `normalizarParaDiff` (SIN redactar).
  * 2. Diffear los valores NORMALIZADOS con `loQueCambio`.
@@ -281,5 +282,38 @@ describe("Regresión de la ronda 4 — instancias EQUIVALENTES (no idénticas) n
     const antesGuardado = serializarParaAuditoria(redactar(antes));
     const despuesGuardado = serializarParaAuditoria(redactar(despues));
     expect(antesGuardado).not.toEqual(despuesGuardado);
+  });
+});
+
+describe("M1 (ronda 5) — redactarCambios es pública y el pipeline manual del README es seguro", () => {
+  it("se exporta desde el núcleo (src/index.ts), sin DB", async () => {
+    const nucleo = await import("../src/index.js");
+    expect(typeof nucleo.redactarCambios).toBe("function");
+  });
+
+  it("usa CAMPOS_SENSIBLES_POR_DEFECTO si no se le pasa una lista", () => {
+    expect(redactarCambios([{ campo: "token", antes: "a", despues: "b" }])).toEqual([
+      { campo: "token", antes: "[redactado]", despues: "[redactado]" },
+    ]);
+  });
+
+  it("pipeline manual del README: normalizar → loQueCambio → redactarCambios, con un Map bajo clave sensible", () => {
+    const antes = { m: new Map([["password", "MANUAL1"]]), nombre: "Ana" };
+    const despues = { m: new Map([["password", "MANUAL2"]]), nombre: "Beto" };
+    const cambios = redactarCambios(loQueCambio(normalizarParaDiff(antes), normalizarParaDiff(despues)));
+    expect(cambios).toEqual([
+      { campo: "m.password", antes: "[redactado]", despues: "[redactado]" },
+      { campo: "nombre", antes: "Ana", despues: "Beto" },
+    ]);
+    expect(JSON.stringify(cambios)).not.toContain("MANUAL");
+  });
+
+  it("un segmento con sufijo de colisión de Map (\"password (2)\") se trata como sensible", () => {
+    expect(redactarCambios([{ campo: "m.password (2)", antes: "a", despues: "b" }])).toEqual([
+      { campo: "m.password (2)", antes: "[redactado]", despues: "[redactado]" },
+    ]);
+    expect(redactarCambios([{ campo: "m.password (2) (3)", antes: "a", despues: undefined }])).toEqual([
+      { campo: "m.password (2) (3)", antes: "[redactado]", despues: undefined },
+    ]);
   });
 });

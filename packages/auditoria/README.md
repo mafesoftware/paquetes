@@ -80,6 +80,13 @@ al crear, las dos dan el mismo resultado). Esto **no** cambia que `null` y
 DIRECTA: una clave con `null` explícito contra la misma clave ausente en
 el otro lado sigue siendo un cambio (`antes: null, despues: undefined`).
 
+**Nunca tira, con ningún dato.** Un nodo que no se puede inspeccionar — un
+`Proxy` revocado o con la trampa `getPrototypeOf` rota, un objeto cuyas
+claves no se pueden enumerar (`ownKeys` que tira), una propiedad cuyo getter
+tira — queda como `"[error]"` en su lugar del diff. Si comparar dos hojas
+(dos arreglos, por ejemplo) tira en algún punto, se consideran distintas y
+el cambio se reporta: nunca se esconde.
+
 **`loQueCambio(x, x)` da `[]`, nunca `"[ciclo]"`**, aunque `x` sea
 autoreferencial (`x.self = x`): los dos lados son literalmente el mismo
 valor, así que no hay ninguna diferencia que reportar. Dos objetos
@@ -107,6 +114,9 @@ loQueCambio(undefined, undefined); // []
 
 const x: any = { a: 1 }; x.self = x;
 loQueCambio(x, x); // [] (misma referencia: sin diferencia posible, aunque x sea autoreferencial)
+
+loQueCambio({ get a() { throw new Error("roto"); } }, { a: 1 });
+// [{ campo: "a", antes: "[error]", despues: 1 }] (nunca tira)
 ```
 
 #### `redactar(obj, camposSensibles = CAMPOS_SENSIBLES_POR_DEFECTO)`
@@ -144,10 +154,11 @@ detecta**. `redactar` nunca mira el contenido de un string.
   `"secretos"` en inglés informal, ...) sigue sin matchear a menos que se
   agregue a mano en `camposSensibles`.
 - **La clave de un `Map` queda como TEXTO en el resultado, sin mirar su
-  CONTENIDO**: solo el NOMBRE de la clave decide si el valor del par se
-  tapa (igual que con la clave de un objeto). Si una app usa un secreto
+  CONTENIDO**: solo el NOMBRE de la clave decide si el valor de esa entrada
+  se tapa (igual que con la clave de un objeto). Si una app usa un secreto
   COMO CLAVE de un `Map` (`new Map([[apiKeySecret, metadata]])`, en vez de
-  `{ apiKey: secreto }`), ese secreto sale intacto en el resultado — no
+  `{ apiKey: secreto }`), ese secreto sale intacto en el resultado (como
+  nombre de propiedad, y como segmento de la ruta en `cambios`) — no
   uses un valor sensible como clave de un `Map` que vaya a pasar por
   `redactar`/`serializarParaAuditoria`.
 
@@ -164,8 +175,8 @@ resuelve ANTES del chequeo genérico de `toJSON`):
 | `URL` | `origin` + `pathname`, SIN `search` ni `hash` (pueden traer secretos: `?token=...`, `#access_token=...`) |
 | `Error` | `{ name }` únicamente — nunca `.message` (puede traer el valor que causó el error) |
 | cualquier otro objeto con `toJSON` propio | se llama (atrapa una excepción → `"[error]"`) y el resultado se redacta recursivamente |
-| `Map` | arreglo de pares `[String(clave), valor]` — **no un objeto**: dos claves de `Map` distintas (ej. el número `1` y el string `"1"`) pueden normalizar al MISMO nombre de propiedad, y un objeto perdería una en silencio. Un par cuya clave (ya convertida a texto) es sensible tiene su VALOR redactado |
-| `Set` | arreglo |
+| `Map` | **objeto plano** con la clave como texto. Si dos claves distintas dan el mismo texto (el número `1` y el string `"1"`, o un objeto cuyo `toString` da `"password"`), la que llegó después (orden de inserción) lleva un sufijo `" (2)"`, `" (3)"`…: ninguna entrada se pierde. Una entrada cuya clave (como texto, sin sufijo) es sensible tiene su VALOR redactado. Como es un objeto, en `cambios` la clave del `Map` es un segmento más de la ruta (`"m.password"`) y la redacción por ruta la cubre. Un `Map` cuya iteración tira (un `Proxy` sobre un `Map`, una subclase con `entries()` roto) queda `"[error]"` |
+| `Set` | arreglo (`"[error]"` si su iteración tira) |
 
 **`redactar` convierte `Date` a un ISO string, no a una copia de `Date`.**
 Es un cambio deliberado (no un descuido): antes, `redactar` clonaba la
@@ -209,8 +220,8 @@ redactar(new Usuario("ana", "hunter2"));
 redactar(new URL("https://api.com/perfil?token=SECRETO#frag"));
 // "https://api.com/perfil" (sin "?token=SECRETO" ni "#frag")
 
-redactar(new Map([[1, "hunter2"], ["contrasena", "hunter3"]]));
-// [["1", "hunter2"], ["contrasena", "[redactado]"]] (arreglo de pares, no objeto)
+redactar(new Map<unknown, string>([[1, "hunter2"], ["1", "x"], ["contrasena", "hunter3"]]));
+// { "1": "hunter2", "1 (2)": "x", contrasena: "[redactado]" } (objeto; la clave repetida como texto lleva sufijo)
 
 redactar({ passwords: ["hunter2", "hunter3"], tokens: ["t1"], secrets: ["s1"] });
 // { passwords: "[redactado]", tokens: "[redactado]", secrets: "[redactado]" } (plurales EXPLÍCITOS en la lista default)
@@ -244,9 +255,10 @@ su sección más arriba): `Buffer`/`TypedArray`/`ArrayBuffer`/`DataView` →
 inválida); `RegExp` → `String(re)`; `URL` → `origin` + `pathname` (sin
 `search` ni `hash`); `Error` → `{ name }` únicamente; cualquier otro objeto
 con `toJSON` propio se llama y su resultado se serializa recursivamente;
-`Map` se convierte a un arreglo de pares `[String(clave), valor]` (no un
-objeto — evita perder entradas cuando dos claves distintas normalizan al
-mismo string); `Set` a un arreglo; cualquier otro objeto — plano o
+`Map` se convierte a un objeto plano con la clave como texto (dos claves
+que dan el mismo texto se desambiguan con `" (2)"`, `" (3)"`…, en orden de
+inserción); `Set` a un arreglo (un `Map`/`Set` cuya iteración tira queda
+`"[error]"`); cualquier otro objeto — plano o
 instancia de clase propia — se recorre por sus campos propios enumerables.
 
 ```ts
@@ -259,7 +271,7 @@ serializarParaAuditoria([1n, undefined, 3n]);
 // ["1n", null, "3n"]
 
 serializarParaAuditoria(new Map([["a", 1n]]));
-// [["a", "1n"]] (arreglo de pares, no objeto)
+// { a: "1n" }
 
 serializarParaAuditoria(new URL("https://api.com/x?token=SECRETO"));
 // "https://api.com/x"
@@ -280,8 +292,9 @@ especiales que `serializarParaAuditoria` (mismo módulo compartido
 objeto con `toJSON` propio (**instancia de clase O plano** — a diferencia de
 un `JSON.stringify` nativo, que solo llama `toJSON` en objetos que lo
 definen, esto también cubre un objeto LITERAL con un `toJSON` propio) → su
-resultado, normalizado recursivamente; `Map` → arreglo de pares; `Set` →
-arreglo; `bigint` → string con sufijo `"n"`; cualquier otra instancia de
+resultado, normalizado recursivamente; `Map` → objeto plano (mismas claves,
+con el mismo sufijo de colisión, que `redactar`/`serializarParaAuditoria`);
+`Set` → arreglo; `bigint` → string con sufijo `"n"`; cualquier otra instancia de
 clase se recorre por sus campos propios enumerables. `null`/`undefined` se
 preservan tal cual en cualquier posición (nunca se convierten a otra cosa),
 justamente para no romper el manejo de "lado ausente" de `loQueCambio`.
@@ -298,7 +311,8 @@ así que `loQueCambio` las reportaba como CAMBIADAS aunque el dato
 semánticamente fuera el mismo: una regresión de una ronda anterior, donde
 `cambios` incluía entradas falsas. La solución es normalizar los DOS lados a
 la misma forma plana ANTES de diffear (`loQueCambio(normalizarParaDiff(antes),
-normalizarParaDiff(despues))`) y recién DESPUÉS redactar el resultado — la
+normalizarParaDiff(despues))`) y recién DESPUÉS redactar el resultado con
+`redactarCambios` (ver más abajo; NUNCA con `redactar`, que no mira la ruta) — la
 normalización nunca esconde un cambio real, porque compara el mismo tipo de
 dato que terminará guardado (vía `serializarParaAuditoria`), solo evita
 comparar por REFERENCIA lo que hay que comparar por VALOR.
@@ -318,6 +332,51 @@ normalizarParaDiff({ dni: "20111111119", toJSON: () => ({ dniEnmascarado: "***11
 
 // A diferencia de redactar/serializarParaAuditoria: nunca tapa nada.
 normalizarParaDiff({ password: "hunter2" }); // { password: "hunter2" }
+
+normalizarParaDiff(new Map([["a", 1n]])); // { a: "1n" }
+```
+
+> **Nunca guardes ni loguees lo que devuelve `normalizarParaDiff`** (ni lo
+> que devuelve `loQueCambio` sobre eso): no redacta nada, así que una
+> contraseña, un token o un CBU salen en claro. Es solo un paso intermedio
+> para diffear. Lo que se guarda es el resultado de `redactarCambios` (y,
+> para las fotos completas, `serializarParaAuditoria(redactar(...))` de los
+> valores originales).
+
+#### `redactarCambios(cambios, camposSensibles = CAMPOS_SENSIBLES_POR_DEFECTO): CambioAuditoria[]`
+
+Redacta el resultado de `loQueCambio`. Es la MISMA función que usa `auditar`
+por dentro; está en el núcleo (sin base de datos) para que una app que arma
+su propio registro haga el pipeline a mano **en este orden**:
+
+```ts
+import { loQueCambio, normalizarParaDiff, redactarCambios } from "@mafesoftware/auditoria";
+
+// 1) normalizar los dos lados  2) diffear  3) redactar el diff — recién eso se guarda/loguea
+const cambios = redactarCambios(loQueCambio(normalizarParaDiff(antes), normalizarParaDiff(despues)));
+```
+
+`redactar` no sirve para este paso: en un cambio el nombre del campo
+sensible es el VALOR de `campo` (`{ campo: "token.access", ... }`), no una
+clave. `redactarCambios` mira **cada segmento** de la ruta: si alguno es
+sensible (`"token"` en `"token.access"`), cada lado DEFINIDO pasa a
+`"[redactado]"` — el valor nunca se ve, pero queda registrado QUE cambió —
+y un lado `undefined` (alta/baja) queda `undefined`. Un segmento con el
+sufijo de colisión de un `Map` (`"password (2)"`) se evalúa también sin el
+sufijo. Si ningún segmento es sensible, cada lado pasa por `redactar` (un
+arreglo cambiado entero puede tener una clave sensible adentro).
+
+```ts
+redactarCambios([
+  { campo: "m.password", antes: "A", despues: "B" },
+  { campo: "nombre", antes: "Ana", despues: "Beto" },
+  { campo: "usuarios", antes: [{ password: "x" }], despues: [] },
+]);
+// [
+//   { campo: "m.password", antes: "[redactado]", despues: "[redactado]" },
+//   { campo: "nombre", antes: "Ana", despues: "Beto" },
+//   { campo: "usuarios", antes: [{ password: "[redactado]" }], despues: [] },
+// ]
 ```
 
 ### `/drizzle` (`@mafesoftware/auditoria/drizzle`)
@@ -441,6 +500,10 @@ valor que la violó (eso vive en `DETAIL`, que tampoco se lee). Si
 `error.cause` falta o no tiene nada legible, el log usa un string genérico
 fijo (`"error de base de datos sin detalle"`), nunca "lo que haya" del
 error de afuera.
+El sanitizador tampoco tira él mismo, aunque el error atrapado sea un
+objeto raro (un `Proxy` cuyas trampas `has`/`get` tiran, un `cause`
+definido como getter que tira, un `Proxy` revocado): cada lectura va
+protegida y, si falla, `codigo` queda `null` y/o `mensaje` cae al genérico.
 
 **`resultado.error` (cuando `ok: false`) es `{ codigo, mensaje }`
 SANITIZADO — no el error crudo.** `codigo` es el `code` de Postgres (ej.
@@ -603,9 +666,9 @@ armada a mano, sin la columna `tenantId`) da `{ codigo: null, mensaje:
 y que el `dbOTx` (que tiraría si se llegara a llamar) nunca se toca.
 `tests/redaccion-anidada.test.ts` (núcleo, sin Postgres) prueba la misma
 lógica de redacción de `cambios` importando la función REAL
-`redactarCambios` (movida a `src/drizzle/redactar-cambios.ts`, interna —
-no reexportada desde `drizzle/index.ts` — para que el test ejercite el
-código real y no una copia), armando el pipeline completo
+`redactarCambios` (desde la ronda 5, export público del núcleo en
+`src/redactar-cambios.ts` — el test la importa de `src/index.ts`, como una
+app), armando el pipeline completo
 `loQueCambio(normalizarParaDiff(antes), normalizarParaDiff(despues))` +
 `redactarCambios`, más los tipos especiales (`Buffer`, `URL`, `Error`,
 `toJSON`, claves de `Map` rotas, `Proxy` con `ownKeys` roto) en
@@ -617,7 +680,18 @@ propio que enmascara un dni igual en ambos lados → sin entrada falsa).
 `tests/normalizar-para-diff.test.ts` (núcleo, sin Postgres) prueba
 `normalizarParaDiff` por tipo especial, ciclos, y "nunca tira" (`Proxy` con
 trampas rotas, `get toJSON(){throw}`, `Error` con getter de `name` que
-tira). `tests/drizzle/postgres-inmutabilidad.test.ts`
+tira). Ronda 5: `tests/drizzle/auditar-captura.test.ts` (sin Postgres: un
+`dbOTx` falso que captura la consulta compilada con `PgDialect`) corre el
+`auditar` real con `Map`s bajo/como claves sensibles (en la raíz, en alta y
+baja, devueltos por un `toJSON`, con claves que colisionan) y confirma que
+ningún secreto aparece en los parámetros, que `cambios` trae la entrada
+`"m.password"` tapada y que las copias guardadas coinciden, más que el
+sanitizador del catch nunca tira con errores raros (`Proxy` con trampas
+rotas, getter de `cause` que tira, `Proxy` revocado).
+`tests/iteracion-rota.test.ts` prueba `Map`/`Set` cuya iteración tira en
+las tres funciones, y `tests/lo-que-cambio-nunca-tira.test.ts` que
+`loQueCambio` no tira con nodos no inspeccionables.
+`tests/drizzle/postgres-inmutabilidad.test.ts`
 prueba que el trigger de `sqlInmutabilidad` rechaza
 `UPDATE`/`DELETE`/`TRUNCATE`. No hay mock que valga para lo que sí
 necesita Postgres real: son comportamientos de la base (un `SAVEPOINT`

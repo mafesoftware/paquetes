@@ -155,3 +155,79 @@ export function clasificar(valor: object): Clasificacion {
   if (valor instanceof Set) return { tipo: "set" };
   return { tipo: "objeto" };
 }
+
+/**
+ * Asigna `objeto[clave] = valor` como propiedad PROPIA (enumerable,
+ * escribible, configurable) con `Object.defineProperty`, nunca con `=`. La
+ * diferencia importa para una sola clave: `"__proto__"`. Con `=`, sobre un
+ * objeto normal, eso no crea una propiedad: CAMBIA EL PROTOTIPO del
+ * resultado (si el valor es un objeto) o no hace nada (si no lo es) — en
+ * los dos casos la entrada se pierde en silencio. Aparece de verdad: una
+ * clave `"__proto__"` de un `Map`, o una propia de un objeto que vino de
+ * `JSON.parse('{"__proto__": ...}')`.
+ */
+export function definirPropiedad(objeto: Record<string, unknown>, clave: string, valor: unknown): void {
+  Object.defineProperty(objeto, clave, { value: valor, enumerable: true, writable: true, configurable: true });
+}
+
+/** Una entrada de un `Map` ya convertida para usarse como propiedad de un objeto plano. */
+export interface EntradaDeMap {
+  /** La clave FINAL: `claveBase`, o `claveBase` con sufijo `" (2)"`, `" (3)"`… si colisionó. */
+  clave: string;
+  /** `claveComoTexto(claveOriginal)`, sin sufijo — la que decide si la entrada es sensible. */
+  claveBase: string;
+  valor: unknown;
+}
+
+/**
+ * Las entradas de `map`, con la clave convertida a texto seguro
+ * (`claveComoTexto`) y **desambiguada**: si dos claves distintas del `Map`
+ * dan el mismo texto (el número `1` y el string `"1"`, o un objeto cuyo
+ * `toString` da `"password"` y el string `"password"`), la que llegó
+ * DESPUÉS (orden de inserción) lleva un sufijo `" (2)"`, la siguiente
+ * `" (3)"`, etc. — ninguna entrada se pierde. Si el texto con sufijo
+ * también está tomado (una clave literal `"1 (2)"`), se sigue contando.
+ *
+ * Es el MISMO cálculo para `redactar`, `serializarParaAuditoria` y
+ * `normalizarParaDiff` — así las tres dan las mismas claves para el mismo
+ * `Map`, y `cambios` (que sale de `normalizarParaDiff`) usa las mismas
+ * rutas que las copias guardadas (que salen de `redactar` +
+ * `serializarParaAuditoria`).
+ *
+ * **Nunca tira**: la iteración (`map.entries()` y recorrerla) va en un
+ * `try/catch` — un `Proxy` sobre un `Map` (`instanceof Map` da `true`,
+ * pero `entries()` con el Proxy como `this` tira `TypeError: incompatible
+ * receiver`), una subclase con un `entries()` que tira, o un iterador que
+ * da algo que no es un par, dan `{ ok: false }`, y el llamador convierte el
+ * nodo entero en `"[error]"`.
+ */
+export function entradasDeMap(map: Map<unknown, unknown>): { ok: true; entradas: EntradaDeMap[] } | { ok: false } {
+  try {
+    const usadas = new Set<string>();
+    const entradas: EntradaDeMap[] = [];
+    for (const [claveOriginal, valor] of map.entries()) {
+      const claveBase = claveComoTexto(claveOriginal);
+      let clave = claveBase;
+      for (let n = 2; usadas.has(clave); n++) clave = `${claveBase} (${n})`;
+      usadas.add(clave);
+      entradas.push({ clave, claveBase, valor });
+    }
+    return { ok: true, entradas };
+  } catch {
+    return { ok: false };
+  }
+}
+
+/**
+ * Los elementos de `set` en un arreglo, atrapando una excepción de la
+ * iteración (`Array.from` usa `[Symbol.iterator]`): un `Proxy` sobre un
+ * `Set` o una subclase con un iterador que tira dan `{ ok: false }` — el
+ * llamador convierte el nodo en `"[error]"`.
+ */
+export function elementosDeSet(set: Set<unknown>): { ok: true; elementos: unknown[] } | { ok: false } {
+  try {
+    return { ok: true, elementos: Array.from(set) };
+  } catch {
+    return { ok: false };
+  }
+}

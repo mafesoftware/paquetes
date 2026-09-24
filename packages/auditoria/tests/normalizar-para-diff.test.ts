@@ -54,11 +54,17 @@ describe("normalizarParaDiff", () => {
     expect(normalizarParaDiff(roto)).toBe("[error]");
   });
 
-  it("Map se convierte a un arreglo de pares [clave, valor]", () => {
-    expect(normalizarParaDiff(new Map([["a", 1n], ["b", 2n]]))).toEqual([
-      ["a", "1n"],
-      ["b", "2n"],
-    ]);
+  it("ronda 5: Map se convierte a un OBJETO plano con la clave como texto", () => {
+    expect(normalizarParaDiff(new Map([["a", 1n], ["b", 2n]]))).toEqual({ a: "1n", b: "2n" });
+  });
+
+  it("ronda 5: claves de Map que colisionan como texto (1 y \"1\") no se pisan: la segunda lleva el sufijo \" (2)\", en orden de inserción", () => {
+    const m = new Map<unknown, unknown>([[1, "numerica"], ["1", "string"], [{ toString: () => "1" }, "objeto"]]);
+    expect(normalizarParaDiff(m)).toEqual({ "1": "numerica", "1 (2)": "string", "1 (3)": "objeto" });
+  });
+
+  it("ronda 5: nunca redacta tampoco adentro de un Map (una clave \"password\" queda con su valor)", () => {
+    expect(normalizarParaDiff(new Map([["password", "hunter2"]]))).toEqual({ password: "hunter2" });
   });
 
   it("Set se convierte a un arreglo", () => {
@@ -129,10 +135,7 @@ describe("normalizarParaDiff", () => {
     m.set("self", m);
     m.set("a", 1n);
     expect(() => normalizarParaDiff(m)).not.toThrow();
-    expect(normalizarParaDiff(m)).toEqual([
-      ["self", "[ciclo]"],
-      ["a", "1n"],
-    ]);
+    expect(normalizarParaDiff(m)).toEqual({ self: "[ciclo]", a: "1n" });
   });
 
   it("un Set que se contiene a sí mismo no tira: esa posición queda \"[ciclo]\"", () => {
@@ -211,7 +214,7 @@ describe("normalizarParaDiff", () => {
       const claveRota = Object.create(null) as object;
       const m = new Map<unknown, unknown>([[claveRota, "valor"]]);
       expect(() => normalizarParaDiff(m)).not.toThrow();
-      expect(normalizarParaDiff(m)).toEqual([["[clave]", "valor"]]);
+      expect(normalizarParaDiff(m)).toEqual({ "[clave]": "valor" });
     });
 
     it("un Proxy cuya trampa ownKeys tira no tira: el objeto entero queda \"[error]\"", () => {

@@ -183,32 +183,41 @@ describe("redactar", () => {
     expect(redactar(u)).toEqual({ nombre: "ana", password: "[redactado]" });
   });
 
-  it("N4/I3: un Map se convierte a un ARREGLO de pares [clave, valor] (no un objeto) y se redacta por par", () => {
+  it("N4/I3 (ronda 5): un Map se convierte a un OBJETO plano y se redacta por clave", () => {
     const m = new Map<string, unknown>([
       ["usuario", "ana"],
       ["contrasena", "hunter2"],
     ]);
-    expect(redactar(m)).toEqual([
-      ["usuario", "ana"],
-      ["contrasena", "[redactado]"],
-    ]);
+    expect(redactar(m)).toEqual({ usuario: "ana", contrasena: "[redactado]" });
   });
 
-  it("N4: dos claves de Map que colisionarían como propiedad de objeto (1 número y \"1\" string) NO se pisan en el arreglo de pares", () => {
+  it("N4 (ronda 5): dos claves de Map que colisionan como texto (1 número y \"1\" string) NO se pisan: la segunda lleva \" (2)\"", () => {
     const m = new Map<unknown, unknown>([
       [1, "numerica"],
       ["1", "string"],
     ]);
-    expect(redactar(m)).toEqual([
-      ["1", "numerica"],
-      ["1", "string"],
+    expect(redactar(m)).toEqual({ "1": "numerica", "1 (2)": "string" });
+  });
+
+  it("ronda 5: una clave de Map sensible que colisiona (\"password\" y un objeto cuyo toString da \"password\") queda tapada en las DOS entradas", () => {
+    const m = new Map<unknown, unknown>([
+      ["password", "hunter2"],
+      [{ toString: () => "password" }, "hunter3"],
     ]);
+    expect(redactar(m)).toEqual({ password: "[redactado]", "password (2)": "[redactado]" });
+  });
+
+  it("ronda 5: una clave de Map \"__proto__\" queda como propiedad PROPIA (no cambia el prototipo ni se pierde)", () => {
+    const r = redactar(new Map<string, unknown>([["__proto__", { password: "x" }]])) as Record<string, unknown>;
+    expect(Object.getPrototypeOf(r)).toBe(Object.prototype);
+    expect(Object.keys(r)).toEqual(["__proto__"]);
+    expect(Object.getOwnPropertyDescriptor(r, "__proto__")?.value).toEqual({ password: "[redactado]" });
   });
 
   it("I3: un Map con clave sensible en profundidad (Map de Map)", () => {
     const interno = new Map<string, unknown>([["password", "hunter2"]]);
     const externo = new Map<string, unknown>([["credenciales", interno]]);
-    expect(redactar(externo)).toEqual([["credenciales", [["password", "[redactado]"]]]]);
+    expect(redactar(externo)).toEqual({ credenciales: { password: "[redactado]" } });
   });
 
   it("I3: un Set se convierte a un arreglo (sin claves, así que sus elementos no se tapan por nombre, igual que un arreglo)", () => {
@@ -229,10 +238,7 @@ describe("redactar", () => {
     expect(() => {
       resultado = redactar(m);
     }).not.toThrow();
-    expect(resultado).toEqual([
-      ["self", "[ciclo]"],
-      ["contrasena", "[redactado]"],
-    ]);
+    expect(resultado).toEqual({ self: "[ciclo]", contrasena: "[redactado]" });
   });
 
   it("I3: un Set que se contiene a sí mismo no tira, esa rama queda como \"[ciclo]\"", () => {
@@ -330,14 +336,14 @@ describe("redactar", () => {
       expect(() => {
         resultado = redactar(m);
       }).not.toThrow();
-      expect(resultado).toEqual([["[clave]", "valor"]]);
+      expect(resultado).toEqual({ "[clave]": "valor" });
     });
 
     it("una clave de Map cuyo toString tira no tira: queda \"[clave]\"", () => {
       const claveRota = { toString: () => { throw new Error("toString roto"); } };
       const m = new Map<unknown, unknown>([[claveRota, "valor"]]);
       expect(() => redactar(m)).not.toThrow();
-      expect(redactar(m)).toEqual([["[clave]", "valor"]]);
+      expect(redactar(m)).toEqual({ "[clave]": "valor" });
     });
 
     it("un Proxy cuya trampa ownKeys tira no tira: el objeto entero queda \"[error]\"", () => {

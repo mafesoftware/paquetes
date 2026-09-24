@@ -15,25 +15,39 @@ export interface CambioAuditoria {
  * algo para recorrer campo a campo.
  *
  * El chequeo entero corre envuelto en `intentar` (ver `tipos-especiales.ts`):
- * `v instanceof Date` y `Object.getPrototypeOf(v)` pueden tirar si `v` es un
- * `Proxy` con la trampa `getPrototypeOf` rota (`instanceof` sin un
- * `Symbol.hasInstance` custom, y `Object.getPrototypeOf`, hacen
- * `[[GetPrototypeOf]]` del valor, que en un `Proxy` dispara esa trampa). Si
- * tira, se trata como NO plano (un valor hoja) en vez de propagar — `diff`
- * lo compara entero más abajo, y si TAMBIÉN eso tira en algún punto, esa
- * rama del diff no puede resolverse limpiamente; no debería pasar en el uso
- * normal de este paquete (`normalizarParaDiff` ya deja todo en forma plana
- * antes de llegar acá), pero `loQueCambio` es pública y puede recibir
- * cualquier cosa directamente.
+ * `Array.isArray` (tira sobre un `Proxy` revocado), `v instanceof Date` y
+ * `Object.getPrototypeOf(v)` (hacen `[[GetPrototypeOf]]`, que en un `Proxy`
+ * dispara esa trampa) pueden tirar. Si tira, se trata como NO plano. `diff`
+ * detecta antes esos nodos con `inspeccionable` y los convierte en
+ * `"[error]"`; esto es la segunda red, para `sonIguales`.
  */
 function esObjetoPlano(v: unknown): v is Record<string, unknown> {
-  if (typeof v !== "object" || v === null || Array.isArray(v)) return false;
+  if (typeof v !== "object" || v === null) return false;
   const resultado = intentar(() => {
-    if (v instanceof Date) return false;
+    if (Array.isArray(v) || v instanceof Date) return false;
     const proto = Object.getPrototypeOf(v);
     return proto === Object.prototype || proto === null;
   });
   return resultado.ok && resultado.valor;
+}
+
+/**
+ * ¿Se puede inspeccionar `v` sin que tire? Para un objeto, prueba
+ * `Array.isArray` y `Object.getPrototypeOf` (lo que necesitan `diff`,
+ * `esObjetoPlano` y un `instanceof`): un `Proxy` revocado o uno con la
+ * trampa `getPrototypeOf` rota no pasan. Un primitivo siempre pasa.
+ */
+function inspeccionable(v: unknown): boolean {
+  if (typeof v !== "object" || v === null) return true;
+  return intentar(() => {
+    Array.isArray(v);
+    Object.getPrototypeOf(v);
+  }).ok;
+}
+
+/** `v`, o `"[error]"` si no se puede inspeccionar (ver `inspeccionable`). */
+function oError(v: unknown): unknown {
+  return inspeccionable(v) ? v : "[error]";
 }
 
 /**
@@ -51,8 +65,18 @@ function esObjetoPlano(v: unknown): v is Record<string, unknown> {
  * que usa `diff` (agregar antes de bajar, sacar al volver), así que un
  * valor que aparece dos veces SIN ciclo (un DAG, no un self-reference) no
  * se confunde con un ciclo real.
+ *
+ * **Nunca tira** (ronda 5, M3): el cuerpo entero va en `intentar`. Un
+ * `instanceof` sobre un `Proxy` roto, un `ownKeys` que tira, un `has` que
+ * tira o un getter que tira, en cualquier punto de la comparación, dan
+ * `false` ("no son iguales") — el cambio se reporta, nunca se esconde.
  */
-function sonIguales(a: unknown, b: unknown, pila: Set<object> = new Set()): boolean {
+function sonIguales(a: unknown, b: unknown): boolean {
+  const r = intentar(() => sonIgualesSinGuardia(a, b, new Set()));
+  return r.ok && r.valor;
+}
+
+function sonIgualesSinGuardia(a: unknown, b: unknown, pila: Set<object>): boolean {
   if (a === b) return true;
   if (a instanceof Date && b instanceof Date) return a.getTime() === b.getTime();
   if (Array.isArray(a) && Array.isArray(b)) {
@@ -60,7 +84,7 @@ function sonIguales(a: unknown, b: unknown, pila: Set<object> = new Set()): bool
     if (a.length !== b.length) return false;
     pila.add(a);
     try {
-      return a.every((v, i) => sonIguales(v, b[i], pila));
+      return a.every((v, i) => sonIgualesSinGuardia(v, b[i], pila));
     } finally {
       pila.delete(a);
     }
@@ -72,12 +96,24 @@ function sonIguales(a: unknown, b: unknown, pila: Set<object> = new Set()): bool
     if (clavesA.length !== clavesB.length) return false;
     pila.add(a);
     try {
-      return clavesA.every((clave) => clave in b && sonIguales(a[clave], b[clave], pila));
+      return clavesA.every((clave) => clave in b && sonIgualesSinGuardia(a[clave], b[clave], pila));
     } finally {
       pila.delete(a);
     }
   }
   return false;
+}
+
+/** `Object.keys(v)`, o `undefined` si tira (un `Proxy` con `ownKeys`/`getOwnPropertyDescriptor` rotos). */
+function clavesOIndefinido(v: object): string[] | undefined {
+  const r = intentar(() => Object.keys(v));
+  return r.ok ? r.valor : undefined;
+}
+
+/** `objeto[clave]`, o `"[error]"` si la lectura tira (un getter roto, un `get` de `Proxy` roto). */
+function leerOError(objeto: Record<string, unknown>, clave: string): unknown {
+  const r = intentar(() => objeto[clave]);
+  return r.ok ? r.valor : "[error]";
 }
 
 function diff(
@@ -100,6 +136,14 @@ function diff(
   // detectándose más abajo y reportándose como `"[ciclo]"`: acá solo se
   // corta el caso en el que literalmente no hay diferencia posible.
   if (antesEntrada === despuesEntrada) return;
+
+  // Ronda 5 (M3): un nodo que no se puede inspeccionar (un `Proxy` revocado,
+  // uno con `getPrototypeOf` roto) se reemplaza por `"[error]"` antes de
+  // cualquier otra cosa — así nada de lo que sigue puede tirar por él.
+  if (!inspeccionable(antesEntrada) || !inspeccionable(despuesEntrada)) {
+    diff(oError(antesEntrada), oError(despuesEntrada), ruta, cambios, pilaAntes, pilaDespues);
+    return;
+  }
 
   // Un lado AUSENTE (`undefined` O `null` — los dos cuentan como "no hay
   // nada de este lado" para esto) contra un objeto plano del otro lado se
@@ -141,17 +185,28 @@ function diff(
   }
 
   if (esObjetoPlano(antes) && esObjetoPlano(despues)) {
+    // M3: si las claves de un lado no se pueden enumerar (`ownKeys` roto),
+    // ese lado entero pasa a ser `"[error]"` y se compara como hoja.
+    const clavesAntes = clavesOIndefinido(antes);
+    const clavesDespues = clavesOIndefinido(despues);
+    if (clavesAntes === undefined || clavesDespues === undefined) {
+      const a = clavesAntes === undefined ? "[error]" : antes;
+      const d = clavesDespues === undefined ? "[error]" : despues;
+      if (!sonIguales(a, d)) cambios.push({ campo: ruta || "(raiz)", antes: a, despues: d });
+      return;
+    }
     pilaAntes.add(antes);
     pilaDespues.add(despues);
     try {
-      const claves = new Set([...Object.keys(antes), ...Object.keys(despues)]);
+      const claves = new Set([...clavesAntes, ...clavesDespues]);
       for (const clave of claves) {
         const subRuta = ruta ? `${ruta}.${clave}` : clave;
         // Indexar una clave ausente da `undefined` — así "undefined
         // significa que la clave no está" sale solo, sin lógica aparte:
         // una clave agregada o quitada entre `antes`/`despues` se ve acá
-        // igual que un valor que pasó a/desde `undefined`.
-        diff(antes[clave], despues[clave], subRuta, cambios, pilaAntes, pilaDespues);
+        // igual que un valor que pasó a/desde `undefined`. Un getter que
+        // tira da `"[error]"` (M3).
+        diff(leerOError(antes, clave), leerOError(despues, clave), subRuta, cambios, pilaAntes, pilaDespues);
       }
     } finally {
       pilaAntes.delete(antes);
@@ -193,6 +248,17 @@ function diff(
  * "sin valor" — una clave con `null` explícito y una clave ausente SON un
  * cambio); una clave agregada o quitada entre `antes` y `despues` se ve
  * como su valor pasando desde/hacia `undefined`.
+ *
+ * **Nunca tira, con ningún dato.** Es pública y puede recibir cualquier
+ * cosa directo (sin pasar por `normalizarParaDiff`): un nodo que no se
+ * puede inspeccionar — un `Proxy` revocado o con la trampa
+ * `getPrototypeOf` rota, un objeto cuyas claves no se pueden enumerar
+ * (`ownKeys` que tira), una propiedad cuyo getter tira — queda como el
+ * string `"[error]"` en su lugar del diff (`{ get a() { throw } }` contra
+ * `{ a: 1 }` da `[{ campo: "a", antes: "[error]", despues: 1 }]`). Si la
+ * comparación de dos hojas (arreglos, por ejemplo) tira en algún punto,
+ * se consideran DISTINTAS y el cambio se reporta con los valores tal cual
+ * — nunca se esconde un cambio por no poder compararlo.
  *
  * **Nunca tira por un ciclo, y `loQueCambio(x, x)` con `x` autoreferencial
  * da `[]`, no `"[ciclo]"`.** Los dos lados EXACTAMENTE el mismo valor

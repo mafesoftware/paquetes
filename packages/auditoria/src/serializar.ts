@@ -1,4 +1,4 @@
-import { claveComoTexto, clasificar, clavesPropias, intentar, llamarToJSON } from "./tipos-especiales.js";
+import { clasificar, clavesPropias, definirPropiedad, elementosDeSet, entradasDeMap, intentar, llamarToJSON } from "./tipos-especiales.js";
 
 /**
  * Lee `objeto[clave]`, atrapando una excepción si `clave` es un getter que
@@ -65,16 +65,17 @@ function serializar(valor: unknown, pila: Set<object>): unknown {
     if (pila.has(valor)) return "[ciclo]";
     pila.add(valor);
     try {
-      // Arreglo de pares `[clave, valor]`, NO un objeto — ver el JSDoc de
-      // `redactar` (mismo motivo: dos claves de Map distintas pueden
-      // normalizar a la MISMA clave de objeto, y un objeto perdería una en
-      // silencio).
-      const pares: [string, unknown][] = [];
-      for (const [clave, v] of (valor as Map<unknown, unknown>).entries()) {
+      // Ronda 5: OBJETO plano con la clave como texto, desambiguada con
+      // " (2)", " (3)"… — mismo cálculo que `redactar`/`normalizarParaDiff`
+      // (`entradasDeMap`). Una iteración que tira deja el nodo en "[error]".
+      const leidas = entradasDeMap(valor as Map<unknown, unknown>);
+      if (!leidas.ok) return "[error]";
+      const resultado: Record<string, unknown> = {};
+      for (const { clave, valor: v } of leidas.entradas) {
         const serializado = serializar(v, pila);
-        if (serializado !== undefined) pares.push([claveComoTexto(clave), serializado]);
+        if (serializado !== undefined) definirPropiedad(resultado, clave, serializado);
       }
-      return pares;
+      return resultado;
     } finally {
       pila.delete(valor);
     }
@@ -84,7 +85,9 @@ function serializar(valor: unknown, pila: Set<object>): unknown {
     if (pila.has(valor)) return "[ciclo]";
     pila.add(valor);
     try {
-      return Array.from(valor as Set<unknown>).map((v) => serializar(v, pila) ?? null);
+      const leidos = elementosDeSet(valor as Set<unknown>);
+      if (!leidos.ok) return "[error]";
+      return leidos.elementos.map((v) => serializar(v, pila) ?? null);
     } finally {
       pila.delete(valor);
     }
@@ -108,14 +111,14 @@ function serializar(valor: unknown, pila: Set<object>): unknown {
       if (!leido.ok) {
         // Un getter que tira: no se propaga — "nunca tira" es la garantía
         // de esta función, incluso si el DATO que le pasan está roto.
-        resultado[clave] = "[error]";
+        definirPropiedad(resultado, clave, "[error]");
         continue;
       }
       const serializado = serializar(leido.valor, pila);
       // Acá sí se saca la clave entera (no se deja en `null`): "undefined
       // se descarta" es la regla pedida, y en un objeto (a diferencia de
       // un arreglo) sacar una clave no mueve a ninguna otra.
-      if (serializado !== undefined) resultado[clave] = serializado;
+      if (serializado !== undefined) definirPropiedad(resultado, clave, serializado);
     }
     return resultado;
   } finally {
@@ -164,9 +167,11 @@ function serializar(valor: unknown, pila: Set<object>): unknown {
  *   recursivamente. Corre DESPUÉS de los casos de arriba (`URL` tiene su
  *   propio `toJSON` que devuelve el `href` completo; por eso `URL` se
  *   resuelve antes).
- * - `Map` se convierte a un arreglo de pares `[String(clave), valor]` (no
- *   un objeto: evita perder entradas cuando dos claves distintas
- *   normalizan al mismo string). `Set` se convierte a un arreglo.
+ * - `Map` se convierte a un OBJETO plano con la clave como texto; si dos
+ *   claves distintas dan el mismo texto (el número `1` y el string `"1"`),
+ *   la que llegó después lleva un sufijo `" (2)"`, `" (3)"`… (orden de
+ *   inserción), así ninguna se pierde. `Set` se convierte a un arreglo. Un
+ *   `Map`/`Set` cuya iteración tira queda `"[error]"`.
  *   Cualquier otro objeto — plano o instancia de una clase propia — se
  *   recorre por sus claves propias enumerables, igual que un objeto plano.
  *
@@ -183,7 +188,7 @@ function serializar(valor: unknown, pila: Set<object>): unknown {
  * // ["1n", null, "3n"]
  *
  * serializarParaAuditoria(new Map([["a", 1n]]));
- * // [["a", "1n"]] (arreglo de pares, no objeto)
+ * // { a: "1n" }
  *
  * serializarParaAuditoria(new Set([1n, 2n]));
  * // ["1n", "2n"]

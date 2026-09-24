@@ -3,7 +3,7 @@ import { loQueCambio } from "../lo-que-cambio.js";
 import { CAMPOS_SENSIBLES_POR_DEFECTO, redactar } from "../redactar.js";
 import { normalizarParaDiff } from "../normalizar-para-diff.js";
 import { serializarParaAuditoria } from "../serializar.js";
-import { redactarCambios } from "./redactar-cambios.js";
+import { redactarCambios } from "../redactar-cambios.js";
 import type { DbCliente } from "./cliente.js";
 import type { ActorTipo, TablaAuditoria } from "./tabla.js";
 
@@ -112,20 +112,42 @@ function esClase22(codigo: string): boolean {
  * mirando el error por su cuenta.
  */
 function errorSeguro(error: unknown): ErrorAuditoria {
-  const causa = error && typeof error === "object" && "cause" in error ? (error as { cause?: unknown }).cause : undefined;
-  const causaObjeto = causa && typeof causa === "object" ? causa : undefined;
+  // Ronda 5 (M4): esta función corre ADENTRO del catch de `auditar`, así
+  // que si tirara, la excepción se escaparía de `auditar` (que promete no
+  // tirar nunca). Y el error atrapado puede ser cualquier cosa: un `Proxy`
+  // cuyas trampas `has`/`get` tiran, un `cause` definido como getter que
+  // tira, un `cause` donde `"code" in causa` tira. Cada lectura va en
+  // `leerSeguro`; si algo falla, `codigo` queda `null` y/o `mensaje` cae al
+  // genérico — nunca se propaga.
+  const causa = leerSeguro(error, "cause");
+  const causaObjeto = causa !== null && typeof causa === "object" ? causa : undefined;
 
-  const codeCrudo = causaObjeto && "code" in causaObjeto ? (causaObjeto as { code?: unknown }).code : undefined;
+  const codeCrudo = leerSeguro(causaObjeto, "code");
   const codigo = typeof codeCrudo === "string" || typeof codeCrudo === "number" ? String(codeCrudo) : null;
 
   if (codigo !== null && esClase22(codigo)) {
     return { codigo, mensaje: `valor inválido para la columna (${codigo})` };
   }
 
-  const messageCruda = causaObjeto && "message" in causaObjeto ? (causaObjeto as { message?: unknown }).message : undefined;
+  const messageCruda = leerSeguro(causaObjeto, "message");
   const mensajeCrudo = typeof messageCruda === "string" ? mensajeSeguro(messageCruda) : undefined;
 
   return { codigo, mensaje: mensajeCrudo ?? MENSAJE_GENERICO_DB };
+}
+
+/**
+ * `objeto[clave]` si `objeto` es un objeto que la tiene (`clave in
+ * objeto`), `undefined` si no — y también `undefined` si CUALQUIER paso
+ * tira (`in` sobre un `Proxy` con `has` roto, un getter que tira, un
+ * `Proxy` revocado). Nunca tira.
+ */
+function leerSeguro(objeto: unknown, clave: string): unknown {
+  try {
+    if (objeto === null || (typeof objeto !== "object" && typeof objeto !== "function")) return undefined;
+    return clave in objeto ? (objeto as Record<string, unknown>)[clave] : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /** El texto que se loguea con `console.error` para un `ErrorAuditoria` — `"code=X, message=Y"`, o solo `Y` si no hay código. */
@@ -182,7 +204,7 @@ function textoParaLog(error: ErrorAuditoria): string {
  * (`normalizarParaDiff` — mismas reglas de tipos especiales que
  * `serializarParaAuditoria`, pero SIN redactar) — nunca sobre valores ya
  * redactados — y recién DESPUÉS se redacta el resultado (`redactarCambios`,
- * interna), mirando CUALQUIER segmento de la ruta con puntos
+ * pública en el núcleo), mirando CUALQUIER segmento de la ruta con puntos
  * (`"token.access"` → `["token", "access"]`), no solo el último. Si algún
  * segmento es sensible (`"token"` lo es, aunque `"access"` no), el VALOR
  * ENTERO de esa entrada se reemplaza por `"[redactado]"` en cada lado que

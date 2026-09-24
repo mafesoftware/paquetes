@@ -84,26 +84,29 @@ describe("serializarParaAuditoria", () => {
     expect(serializarParaAuditoria(new Factura(1000n))).toEqual({ total: "1000n" });
   });
 
-  it("N4/I3: un Map se convierte a un ARREGLO de pares [clave, valor] (no un objeto), con bigint/Date serializados", () => {
+  it("N4/I3 (ronda 5): un Map se convierte a un OBJETO plano, con bigint/Date serializados", () => {
     const m = new Map<string, unknown>([
       ["total", 1000n],
       ["vence", new Date("2026-01-01T00:00:00.000Z")],
     ]);
-    expect(serializarParaAuditoria(m)).toEqual([
-      ["total", "1000n"],
-      ["vence", "2026-01-01T00:00:00.000Z"],
-    ]);
+    expect(serializarParaAuditoria(m)).toEqual({ total: "1000n", vence: "2026-01-01T00:00:00.000Z" });
   });
 
-  it("N4: dos claves de Map que colisionarían como propiedad de objeto (1 número y \"1\" string) NO se pisan en el arreglo de pares", () => {
+  it("N4 (ronda 5): dos claves de Map que colisionan como texto (1 número y \"1\" string) NO se pisan: la segunda lleva \" (2)\"", () => {
     const m = new Map<unknown, unknown>([
       [1, "numerica"],
       ["1", "string"],
     ]);
-    expect(serializarParaAuditoria(m)).toEqual([
-      ["1", "numerica"],
-      ["1", "string"],
-    ]);
+    expect(serializarParaAuditoria(m)).toEqual({ "1": "numerica", "1 (2)": "string" });
+  });
+
+  it("ronda 5: una clave \"__proto__\" (de un Map o propia de un objeto de JSON.parse) sobrevive como propiedad propia", () => {
+    const r = serializarParaAuditoria(new Map<string, unknown>([["__proto__", 1n]])) as Record<string, unknown>;
+    expect(Object.getPrototypeOf(r)).toBe(Object.prototype);
+    expect(JSON.stringify(r)).toBe('{"__proto__":"1n"}');
+    const deJson = serializarParaAuditoria(JSON.parse('{"__proto__":{"a":1}}')) as Record<string, unknown>;
+    expect(Object.getPrototypeOf(deJson)).toBe(Object.prototype);
+    expect(JSON.stringify(deJson)).toBe('{"__proto__":{"a":1}}');
   });
 
   it("I3: un Set se convierte a un arreglo, con bigint serializado", () => {
@@ -119,18 +122,15 @@ describe("serializarParaAuditoria", () => {
     expect(() => {
       resultado = serializarParaAuditoria(m);
     }).not.toThrow();
-    expect(resultado).toEqual([
-      ["self", "[ciclo]"],
-      ["total", "1000n"],
-    ]);
+    expect(resultado).toEqual({ self: "[ciclo]", total: "1000n" });
   });
 
-  it("I3: un Map con un valor que serializa a undefined descarta ese PAR (igual que una clave de objeto)", () => {
+  it("I3 (ronda 5): un Map con un valor que serializa a undefined descarta esa CLAVE (igual que una clave de objeto)", () => {
     const m = new Map<string, unknown>([
       ["a", 1],
       ["b", undefined],
     ]);
-    expect(serializarParaAuditoria(m)).toEqual([["a", 1]]);
+    expect(serializarParaAuditoria(m)).toEqual({ a: 1 });
   });
 
   it("I3: un Set que se contiene a sí mismo no tira, esa rama queda \"[ciclo]\"", () => {
@@ -216,7 +216,7 @@ describe("serializarParaAuditoria", () => {
       const claveRota = Object.create(null) as object;
       const m = new Map<unknown, unknown>([[claveRota, "valor"]]);
       expect(() => serializarParaAuditoria(m)).not.toThrow();
-      expect(serializarParaAuditoria(m)).toEqual([["[clave]", "valor"]]);
+      expect(serializarParaAuditoria(m)).toEqual({ "[clave]": "valor" });
     });
 
     it("un Proxy cuya trampa ownKeys tira no tira: el objeto entero queda \"[error]\"", () => {

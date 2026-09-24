@@ -1,4 +1,4 @@
-import { claveComoTexto, clasificar, clavesPropias, intentar, llamarToJSON } from "./tipos-especiales.js";
+import { clasificar, clavesPropias, definirPropiedad, elementosDeSet, entradasDeMap, intentar, llamarToJSON } from "./tipos-especiales.js";
 
 /**
  * Lee `objeto[clave]`, atrapando una excepción si `clave` es un getter que
@@ -66,15 +66,24 @@ function normalizar(valor: unknown, pila: Set<object>): unknown {
     if (pila.has(valor)) return "[ciclo]";
     pila.add(valor);
     try {
-      // Arreglo de pares `[clave, valor]`, igual que `redactar`/
-      // `serializarParaAuditoria` — dos Maps con las MISMAS entradas (en
-      // el mismo orden) normalizan al mismo arreglo, así que `loQueCambio`
-      // los ve iguales.
-      const pares: [string, unknown][] = [];
-      for (const [clave, v] of (valor as Map<unknown, unknown>).entries()) {
-        pares.push([claveComoTexto(clave), normalizar(v, pila)]);
+      // Ronda 5: un OBJETO plano con la clave como texto (desambiguada con
+      // " (2)", " (3)"… si dos claves dan el mismo texto — ver
+      // `entradasDeMap`), NO un arreglo de pares. Con pares, `loQueCambio`
+      // veía el Map como una HOJA (un arreglo) y la ruta del cambio se
+      // cortaba en el Map (`"m"`): una clave sensible del Map
+      // (`"password"`) nunca llegaba a ser un segmento de la ruta, y la
+      // redacción por ruta de `redactarCambios` no la tapaba (C1). Como
+      // objeto, `loQueCambio` baja a sus claves (`"m.password"`). Una
+      // iteración que tira deja el nodo en "[error]" (M2). `undefined` se
+      // descarta, igual que en un objeto.
+      const leidas = entradasDeMap(valor as Map<unknown, unknown>);
+      if (!leidas.ok) return "[error]";
+      const resultado: Record<string, unknown> = {};
+      for (const { clave, valor: v } of leidas.entradas) {
+        const normalizado = normalizar(v, pila);
+        if (normalizado !== undefined) definirPropiedad(resultado, clave, normalizado);
       }
-      return pares;
+      return resultado;
     } finally {
       pila.delete(valor);
     }
@@ -84,7 +93,9 @@ function normalizar(valor: unknown, pila: Set<object>): unknown {
     if (pila.has(valor)) return "[ciclo]";
     pila.add(valor);
     try {
-      return Array.from(valor as Set<unknown>, (v) => normalizar(v, pila));
+      const leidos = elementosDeSet(valor as Set<unknown>);
+      if (!leidos.ok) return "[error]";
+      return leidos.elementos.map((v) => normalizar(v, pila) ?? null);
     } finally {
       pila.delete(valor);
     }
@@ -106,11 +117,11 @@ function normalizar(valor: unknown, pila: Set<object>): unknown {
     for (const clave of clavesLeidas.claves) {
       const leido = leerPropiedad(objeto, clave);
       if (!leido.ok) {
-        resultado[clave] = "[error]";
+        definirPropiedad(resultado, clave, "[error]");
         continue;
       }
       const normalizado = normalizar(leido.valor, pila);
-      if (normalizado !== undefined) resultado[clave] = normalizado;
+      if (normalizado !== undefined) definirPropiedad(resultado, clave, normalizado);
     }
     return resultado;
   } finally {
@@ -124,7 +135,9 @@ function normalizar(valor: unknown, pila: Set<object>): unknown {
  * bytes]"`, `Date` → ISO, `RegExp` → `String(re)`, `URL` → `origin` +
  * `pathname`, `Error` → `{ name }`, cualquier objeto — PLANO o instancia de
  * clase — con un `toJSON` propio → su resultado, recursivamente normalizado;
- * `Map` → arreglo de pares; `Set` → arreglo; `bigint` → string con sufijo
+ * `Map` → OBJETO plano con la clave como texto (colisiones desambiguadas
+ * con `" (2)"`, `" (3)"`…, en orden de inserción); `Set` → arreglo;
+ * `bigint` → string con sufijo
  * `"n"`), pero **sin redactar nada** — a diferencia de `redactar`, esta
  * función no mira nombres de clave ni tapa ningún valor. `undefined`/`null`
  * pasan tal cual en cualquier posición (incluida la raíz), para no romper
@@ -154,8 +167,17 @@ function normalizar(valor: unknown, pila: Set<object>): unknown {
  * // [] (normalizadas, las dos dan "12.50": iguales)
  *
  * normalizarParaDiff(new Map([["a", 1n]]));
- * // [["a", "1n"]]
+ * // { a: "1n" }
+ *
+ * normalizarParaDiff(new Map<unknown, string>([[1, "x"], ["1", "y"]]));
+ * // { "1": "x", "1 (2)": "y" } (dos claves con el mismo texto: la segunda con sufijo)
  * ```
+ *
+ * **Nunca guardes ni loguees el resultado de esta función** (ni el de
+ * `loQueCambio` sobre él): no redacta nada, así que una contraseña, un
+ * token o un CBU salen tal cual. Es solo un paso intermedio para diffear;
+ * lo que se guarda es `redactarCambios(loQueCambio(...))` y
+ * `serializarParaAuditoria(redactar(...))` de las fotos originales.
  */
 export function normalizarParaDiff(v: unknown): unknown {
   return normalizar(v, new Set());
