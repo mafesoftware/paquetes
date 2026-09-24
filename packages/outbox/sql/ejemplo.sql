@@ -34,12 +34,21 @@ CREATE TABLE "outbox" (
 -- `INSERT ... ON CONFLICT DO NOTHING` de `encolar` sea idempotente.
 CREATE UNIQUE INDEX "outbox_tenant_clave_idem_key" ON "outbox" USING btree ("organizacion_id","clave_idempotencia");
 
--- (estado, proximo_intento_en): el que usa la consulta de reclamo de
--- `procesarOutbox` (`SELECT ... FOR UPDATE SKIP LOCKED`) para encontrar
--- rápido las filas "pendiente" que ya les toca, sin recorrer toda la tabla.
-CREATE INDEX "outbox_estado_proximo_idx" ON "outbox" USING btree ("estado","proximo_intento_en");
+-- PARCIAL (WHERE estado in activos): la que usa la consulta de reclamo de
+-- `procesarOutbox` (SELECT ... FOR UPDATE SKIP LOCKED) para encontrar
+-- rápido las filas "pendiente"/"procesando" que ya les toca, sin cargar en
+-- el índice el historial terminado ("enviado"/"descartado"/"fallido") ni
+-- tener que volver a la tabla por programado_para en el ORDER BY.
+CREATE INDEX "outbox_activos_idx" ON "outbox" USING btree ("estado","proximo_intento_en","programado_para") WHERE "outbox"."estado" in ('pendiente', 'procesando');
 
 -- "ultimo_error_categoria"/"ultimo_error_codigo": SOLO la categoría
 -- (ej. "credenciales") y un código corto (ej. "sin_credenciales"), NUNCA el
 -- mensaje de error crudo del proveedor — puede traer el destinatario o el
--- cuerpo del mensaje. `procesarOutbox` nunca escribe otra cosa acá.
+-- cuerpo del mensaje. `procesarOutbox` nunca escribe otra cosa acá, y
+-- recorta "codigo" a 64 caracteres como salvaguarda.
+
+-- "programado_para" DEFAULT now(): red de seguridad para un INSERT que no
+-- pase por `encolar` (SQL a mano, otra herramienta) — `encolar` SIEMPRE
+-- manda un valor explícito calculado con el reloj de la aplicación, nunca
+-- depende de este default. Ver "Reloj: JS, no de Postgres" en el JSDoc de
+-- `tablaOutbox`.

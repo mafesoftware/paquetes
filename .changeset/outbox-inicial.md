@@ -34,8 +34,10 @@ negocio.
     que usa `procesarOutbox`, **sin depender de ninguno de los dos paquetes
     en tiempo de ejecución** — la función real que manda se inyecta.
     `transporteWhatsApp` busca las credenciales POR TENANT
-    (`credencialesDe(tenantId)`, cada uno tiene su propio número); sin
-    credenciales, `categoria: "credenciales"` sin intentar el envío.
+    (`credencialesDe(tenantId)`, cada uno tiene su propio número, puede ser
+    async y siempre se espera); sin credenciales, `categoria: "credenciales"`
+    sin intentar el envío. `render`/`parametrosDe` que tiran se clasifican
+    `{ categoria: "plantilla", codigo: "render" }` (permanente).
   - `ErrorOutbox` (`codigo: "requiere_transaccion" | "opciones_invalidas"`):
     el único error que tira este paquete.
 - **`/drizzle`** (requiere `drizzle-orm >=0.45 <0.46`, peerDependency
@@ -45,8 +47,11 @@ negocio.
     `clave_idempotencia`, `estado`, `intentos`/`max_intentos`,
     `programado_para`, `proximo_intento_en`, `bloqueado_hasta`,
     `ultimo_error_categoria`/`ultimo_error_codigo` — nunca el error crudo
-    del proveedor —, `id_externo`, `enviado_en`). Único índice `(tenant,
-    clave_idempotencia)`; índice `(estado, proximo_intento_en)`.
+    del proveedor, `codigo` recortado a 64 caracteres —, `id_externo`,
+    `enviado_en`). Único índice `(tenant, clave_idempotencia)`; índice
+    PARCIAL `(estado, proximo_intento_en, programado_para) WHERE estado in
+    ('pendiente', 'procesando')` — cubre exactamente la consulta de
+    reclamo, sin crecer con el historial terminado.
   - `encolar(tx, tabla, { tenantId, canal, destino, plantilla, datos?,
     claveIdempotencia, programadoPara?, maxIntentos? })`: **exige
     transacción** (`ErrorOutbox("requiere_transaccion")` si no) e
@@ -60,20 +65,35 @@ negocio.
     contenedor de Postgres de test de esta máquina (Colima), reproducido
     escribiendo los tests de este paquete.
   - `procesarOutbox({ db, tabla, transportes: { correo?, whatsapp? }, lote?,
-    ahora?, leaseMs? })`: reclama hasta `lote` (`20` por defecto) filas
-    debidas con un único `WITH ... SELECT ... FOR UPDATE SKIP LOCKED ...
-    UPDATE ... RETURNING` (transacción corta), llama al `Transporte` de
-    cada canal FUERA de esa transacción, y registra el resultado en su
-    propia transacción corta por fila. Nunca tira por un fallo de
-    `Transporte` (excepción o resultado `{ ok: false }`, tratado como
-    transitorio); sí propaga un fallo de la base (no hay forma segura de
-    "tratar como transitorio" un fallo del que no se sabe si la fila quedó
-    reclamada). Un canal sin `Transporte` configurado descarta sus mensajes
-    con `categoria: "credenciales"` (problema de despliegue, no de
-    reintento). `leaseMs` (`600_000` = 10 min por defecto): una fila
-    `"procesando"` cuyo lease venció (worker caído a mitad de camino) se
-    reclama de nuevo, contando como un intento más. Devuelve `{ reclamados,
-    enviados, reintentar, fallidos, descartados }`.
+    ahora?, leaseMs?, timeoutMs?, concurrencia? })`: reclama hasta `lote`
+    (`20` por defecto) filas debidas con un único `WITH ... SELECT ... FOR
+    UPDATE SKIP LOCKED ... UPDATE ... RETURNING` (transacción corta), llama
+    al `Transporte` de cada canal FUERA de esa transacción (tope de
+    `concurrencia` simultáneos, `5` por defecto; `timeoutMs` por intento,
+    `Math.floor(leaseMs / 2)` por defecto), y registra el resultado en su
+    propia transacción corta por fila — CERROJADA por el lease exacto con
+    el que se reclamó (`estado = 'procesando' and bloqueado_hasta =
+    <lease>`), para que un worker "zombi" nunca pise lo que otro worker ya
+    haya escrito (se cuenta en `perdidos`). **Nunca tira**: ni por un fallo
+    de `Transporte` (excepción o timeout, tratado como transitorio), ni por
+    un fallo de la BASE (reclamo o registro, atrapado y contado en
+    `errores`/`ultimoError`, solo el código de Postgres, nunca mensaje ni
+    parámetros). Un canal sin `Transporte` configurado descarta sus
+    mensajes con `categoria: "credenciales"`. `leaseMs` (`600_000` = 10 min
+    por defecto): una fila `"procesando"` cuyo lease venció se reclama de
+    nuevo, contando como un intento más — salvo que ya agotó `maxIntentos`
+    a fuerza de leases vencidos sucesivos, en cuyo caso se cierra directo a
+    `"fallido"` (`codigo: "lease_agotado"`) sin llamar a ningún `Transporte`.
+    Devuelve `{ reclamados, enviados, reintentar, fallidos, descartados,
+    perdidos, errores, ultimoError? }`. **Entrega al menos una vez, no
+    exactamente una vez** — `MensajeParaEnviar.claveIdempotencia`
+    (`${tenantId}:${claveIdempotencia}`) existe para que el proveedor
+    deduplique; `transporteCorreo` la reenvía como header `Idempotency-Key`
+    de Resend (nuevo en `@mafesoftware/correo`, changeset aparte).
+  - `purgarOutbox({ db, tabla, estados?, antesDe })`: borra filas
+    TERMINALES (`"enviado"`/`"descartado"`/`"fallido"`, los únicos que
+    acepta) con `actualizado_en` anterior a `antesDe`; devuelve
+    `{ eliminadas }`.
 
 Postgres de test compartido con el resto de los paquetes `/drizzle` de este
 monorepo (`tests/lib/postgres-de-prueba.ts`). `tests/drizzle/postgres.test.ts`
@@ -93,3 +113,31 @@ su propio lote a la mitad de los mensajes debidos, así que las DOS
 necesariamente reclaman filas sea cual sea el orden real de ejecución).
 `bun run test:sin-db` excluye `postgres*.test.ts`. Cobertura del núcleo
 ≥95% (statements/branches/functions/lines).
+
+**Ronda de fix 1** (revisión que reprodujo dos bugs de entrega contra
+Postgres real antes de esta tarea considerarse cerrada):
+
+- **Crítico — escrituras sin cerrojo:** un worker "zombi" (lease vencido,
+  `Transporte` lento) podía sobreescribir con datos viejos una fila que
+  OTRO worker ya había cerrado bien (`"enviado"` volvía a `"pendiente"` con
+  intentos ya gastados). Arreglado con fencing por lease (ver
+  `procesarOutbox` arriba) — reproducido primero con el escenario exacto de
+  la revisión, confirmado el bug, después el fix.
+- **Crítico — `credencialesDe` async sin `await`:** una `Promise` sin
+  resolver es un objeto truthy, así que el chequeo de "sin credenciales"
+  nunca disparaba y `enviar` recibía la `Promise` en vez de las
+  credenciales reales. Arreglado (`transporteWhatsApp` arriba).
+- **Importante:** entrega al menos una vez documentada explícitamente (se
+  había afirmado, incorrectamente, que no se duplicaba); `claveIdempotencia`
+  nueva en `MensajeParaEnviar`, threaded a Resend; timeout por intento
+  (`timeoutMs`, `AbortSignal`); `maxIntentos` respetado también en el
+  bucle de reclamos-por-lease-vencido (`"lease_agotado"`, antes crecía sin
+  tope); concurrencia acotada con semántica `allSettled`; `procesarOutbox`
+  nunca tira NI por fallos de la base; reparto entre tenants documentado
+  como ausente (antes se afirmaba, incorrectamente, que estaba
+  documentado); `purgarOutbox` nuevo; índice parcial para la consulta de
+  reclamo (antes no-parcial, crecía con el historial).
+- **Menor:** semántica de reloj documentada (sin referencias a notas de
+  máquina específicas); `ultimo_error_codigo` recortado a 64 caracteres;
+  `render`/`parametrosDe` que tiran se clasifican permanentes
+  (`codigo: "render"`) en vez de transitorios genéricos.

@@ -32,8 +32,21 @@ export interface OpcionesTransporteCorreo {
    * solo remitente). Inyectada para que los tests no salgan a Resend, y
    * para que este paquete no dependa de `@mafesoftware/correo` en tiempo de
    * ejecución (ni siquiera de sus tipos — ver `ResultadoEnvioCorreo`).
+   * `claveIdempotencia` (el `${tenantId}:${claveIdempotencia}` de la fila,
+   * ver `MensajeParaEnviar`) viaja en las opciones que recibe `enviar` —
+   * `@mafesoftware/correo` (desde su changeset de idempotencia) la manda
+   * como header `Idempotency-Key` a Resend si se la pasás: `(o) =>
+   * enviarCorreo({ ...o, apiKey })` ya la reenvía sola, porque `o` (lo que
+   * arma este `Transporte`) ya la incluye.
    */
-  enviar: (opciones: { para: string; asunto: string; html?: string; texto?: string; de: string }) => Promise<ResultadoEnvioCorreo>;
+  enviar: (opciones: {
+    para: string;
+    asunto: string;
+    html?: string;
+    texto?: string;
+    de: string;
+    claveIdempotencia: string;
+  }) => Promise<ResultadoEnvioCorreo>;
   /** El remitente (`"de"`) de cada envío — un mail transaccional de una app suele tener uno solo, no uno por tenant. */
   remitente: string;
   /** Arma `{ asunto, html?, texto? }` a partir de `plantilla`+`datos` del mensaje encolado. */
@@ -44,13 +57,15 @@ export interface OpcionesTransporteCorreo {
  * Adapta `@mafesoftware/correo` a la forma `Transporte` que necesita
  * `procesarOutbox({ transportes: { correo } })`.
  *
- * **No tiene try/catch propio** — si `render` o `enviar` tiran, la promesa
- * que devuelve el `Transporte` rechaza. Eso es a propósito: `procesarOutbox`
- * ya atrapa cualquier excepción de CUALQUIER `Transporte` y la trata como
- * `"transitorio"` (ver su JSDoc) — duplicar ese try/catch acá solo
- * escondería, con otro texto, el mismo caso que ya está cubierto una vez, en
- * un solo lugar. Si usás este `Transporte` FUERA de `procesarOutbox`, manejá
- * el rechazo vos.
+ * **`render` SÍ tiene su propio try/catch, `enviar` NO.** Si `render` tira
+ * (una plantilla desconocida, un dato faltante en `mensaje.datos`), el
+ * problema es del MENSAJE en sí — reintentarlo da el mismo resultado
+ * siempre — así que se clasifica `{ ok: false, categoria: "plantilla",
+ * codigo: "render" }` (PERMANENTE, `procesarOutbox` lo descarta sin gastar
+ * reintentos). Si en cambio `enviar` tira, el problema suele ser de RED o
+ * del proveedor — `procesarOutbox` ya atrapa cualquier excepción de
+ * CUALQUIER `Transporte` y la trata como `"transitorio"` (ver su JSDoc), así
+ * que no hace falta duplicar ese try/catch acá para `enviar`.
  *
  * **Valida las opciones al construirlo** (que `enviar`/`render` sean
  * funciones, que `remitente` no esté vacío) y tira
@@ -69,11 +84,14 @@ export interface OpcionesTransporteCorreo {
  *       const { nombre } = mensaje.datos as { nombre: string };
  *       return { asunto: `Hola, ${nombre}!`, html: `<p>Bienvenido, ${nombre}.</p>` };
  *     }
- *     throw new Error(`plantilla desconocida: ${mensaje.plantilla}`);
+ *     throw new Error(`plantilla desconocida: ${mensaje.plantilla}`); // -> { ok: false, categoria: "plantilla", codigo: "render" }, descartado sin reintentar
  *   },
  * });
  *
- * const resultado = await correo({ id, tenantId, canal: "correo", destino: "socio@mail.com", plantilla: "bienvenida", datos: { nombre: "Ana" } });
+ * const resultado = await correo(
+ *   { id, tenantId, canal: "correo", destino: "socio@mail.com", plantilla: "bienvenida", datos: { nombre: "Ana" }, claveIdempotencia: `${tenantId}:bienvenida-${id}` },
+ *   { señal: new AbortController().signal },
+ * );
  * ```
  */
 export function transporteCorreo(opciones: OpcionesTransporteCorreo): Transporte {
@@ -90,13 +108,22 @@ export function transporteCorreo(opciones: OpcionesTransporteCorreo): Transporte
   const { enviar, remitente, render } = opciones;
 
   return async (mensaje) => {
-    const renderizado = render(mensaje);
+    let renderizado: CorreoRenderizado;
+    try {
+      renderizado = render(mensaje);
+    } catch {
+      // Ver el JSDoc de arriba: un mensaje que no se puede renderizar no se
+      // arregla reintentando — permanente, no transitorio.
+      return { ok: false, categoria: "plantilla", codigo: "render" };
+    }
+
     const resultado = await enviar({
       para: mensaje.destino,
       asunto: renderizado.asunto,
       html: renderizado.html,
       texto: renderizado.texto,
       de: remitente,
+      claveIdempotencia: mensaje.claveIdempotencia,
     });
 
     if (resultado.ok) return { ok: true, idExterno: resultado.id };

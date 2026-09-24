@@ -130,12 +130,13 @@ describe("tablaOutbox (sin Postgres)", () => {
     expect(columnas).toEqual(["organizacion_id", "clave_idempotencia"]);
   });
 
-  it("índice (no único) sobre (estado, proximo_intento_en)", () => {
+  it("índice PARCIAL (no único) sobre (estado, proximo_intento_en, programado_para), WHERE estado in (pendiente, procesando)", () => {
     const config = getTableConfig(tablaOutbox());
     const noUnico = config.indexes.find((i) => !i.config.unique);
     expect(noUnico).toBeDefined();
     const columnas = noUnico!.config.columns.map((c) => ("name" in c ? c.name : undefined));
-    expect(columnas).toEqual(["estado", "proximo_intento_en"]);
+    expect(columnas).toEqual(["estado", "proximo_intento_en", "programado_para"]);
+    expect(noUnico!.config.where).toBeDefined();
   });
 
   it("exactamente dos índices (el único y el de estado/proximo_intento_en)", () => {

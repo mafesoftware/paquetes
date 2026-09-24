@@ -106,6 +106,20 @@ describe("enviarCorreo", () => {
     expect(cuerpo.reply_to).toBe("duenia@bestie.com");
   });
 
+  it("claveIdempotencia viaja como header Idempotency-Key", async () => {
+    const { fn, pedidos } = resendFalso({});
+    await enviarCorreo({ ...BASE, claveIdempotencia: "tenant-1:aviso-42", fetch: fn });
+    const headers = pedidos[0]!.init.headers as Record<string, string>;
+    expect(headers["idempotency-key"]).toBe("tenant-1:aviso-42");
+  });
+
+  it("sin claveIdempotencia, no manda el header (comportamiento de siempre)", async () => {
+    const { fn, pedidos } = resendFalso({});
+    await enviarCorreo({ ...BASE, fetch: fn });
+    const headers = pedidos[0]!.init.headers as Record<string, string>;
+    expect(headers["idempotency-key"]).toBeUndefined();
+  });
+
   it("401 es credenciales: reintentar no arregla una API key mala", async () => {
     const { fn } = resendFalso({
       status: 401,

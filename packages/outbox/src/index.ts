@@ -7,6 +7,13 @@
  * puede colgar ni abortar la operación real), y nunca se pierde un aviso
  * porque el proceso se cayó justo después de confirmar la fila principal.
  *
+ * **Entrega AL MENOS UNA VEZ, no exactamente una vez** — ver "Entrega al
+ * menos una vez" en el JSDoc de `procesarOutbox`
+ * (`@mafesoftware/outbox/drizzle`). `MensajeParaEnviar.claveIdempotencia`
+ * (`${tenantId}:${claveIdempotencia}` de la fila) existe para que el
+ * PROVEEDOR pueda deduplicar un reintento — `transporteCorreo` la pasa como
+ * header `Idempotency-Key` de Resend.
+ *
  * Núcleo puro: sin variables de entorno, sin framework, sin base de datos.
  * - `decidir.ts`: `decidir` — qué corresponde hacer con una fila de la cola
  *   ahora mismo (enviar, esperar, reintentar más tarde, destrabar, o
@@ -39,7 +46,7 @@ export {
   type ClaseResultado,
   type ResultadoTransporte,
 } from "./clasificar-resultado.js";
-export type { MensajeParaEnviar, Transporte } from "./transporte.js";
+export type { ContextoTransporte, MensajeParaEnviar, Transporte } from "./transporte.js";
 export type { CanalOutbox, EstadoOutbox } from "./tipos.js";
 export { ErrorOutbox, type CodigoErrorOutbox } from "./errores.js";
 export {

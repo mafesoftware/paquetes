@@ -9,15 +9,32 @@ de negocio (un proveedor caído no puede colgar ni abortar la operación
 real), y nunca se pierde un aviso porque el proceso se cayó justo después de
 confirmar la fila principal.
 
+**Entrega AL MENOS UNA VEZ, no exactamente una vez.** `FOR UPDATE SKIP
+LOCKED` evita que DOS workers tengan la MISMA fila reclamada (con un lease
+vigente) a la vez — no evita que un worker le pida al proveedor que mande el
+mensaje, se caiga ANTES de registrar el resultado, y que otro worker la
+reclame de nuevo más tarde y la mande OTRA VEZ (justo lo que se espera que
+pase: si no, un worker caído perdería el mensaje para siempre). La única
+defensa real contra ESE duplicado es que el proveedor reconozca una clave de
+idempotencia propia — por eso `transporteCorreo` pasa
+`MensajeParaEnviar.claveIdempotencia` como header `Idempotency-Key` de
+Resend (ver `@mafesoftware/correo`). Ver "Entrega al menos una vez" en el
+JSDoc de `procesarOutbox` para el detalle completo, incluida la protección
+contra que un worker "zombi" pise lo que otro ya escribió (fencing por
+lease).
+
 La entrega usa los paquetes que ya existen en este monorepo — nunca los
 reimplementa:
 
 - `@mafesoftware/correo` (Resend): nunca tira, devuelve resultados
-  categorizados (`credenciales`, `rechazado`, `limite`, `red`).
+  categorizados (`credenciales`, `rechazado`, `limite`, `red`), y acepta
+  `claveIdempotencia` (header `Idempotency-Key`).
 - `@mafesoftware/kapso-wa` (WhatsApp): credenciales POR LLAMADA (cada
   tenant/desarrollador tiene su propio número), categorías propias
   (`credenciales`, `rechazado`, `facturacion`, `plantilla`, `numero`,
-  `ventana`, además de `red`/`limite`).
+  `ventana`, además de `red`/`limite`). **No tiene clave de idempotencia
+  propia** — un reintento de WhatsApp puede llegarle dos veces al
+  destinatario; ver el JSDoc de `transporteWhatsApp`.
 
 `transporteCorreo`/`transporteWhatsApp` los adaptan a la forma `Transporte`
 que usa `procesarOutbox` — **sin depender de ninguno de los dos paquetes en
@@ -25,10 +42,10 @@ tiempo de ejecución**: la función real que manda (`enviarCorreo`,
 `enviarPlantilla`) se inyecta, así que este paquete ni siquiera los importa.
 
 Núcleo **puro**: sin variables de entorno, sin framework, sin base de
-datos. Lo específico de Drizzle (la tabla y las dos operaciones que la
-usan) vive en el subpath `/drizzle` (`drizzle-orm` como peerDependency
-opcional, `>=0.45 <0.46`), y usa `@mafesoftware/tenant/drizzle` para la
-columna de tenant.
+datos. Lo específico de Drizzle (la tabla y las operaciones que la usan)
+vive en el subpath `/drizzle` (`drizzle-orm` como peerDependency opcional,
+`>=0.45 <0.46`), y usa `@mafesoftware/tenant/drizzle` para la columna de
+tenant.
 
 ```bash
 bun add @mafesoftware/outbox
@@ -37,8 +54,8 @@ bun add @mafesoftware/outbox
 La documentación de cada función está en `src/`, con el motivo de cada
 decisión al lado. Los tests (`tests/`) son la otra mitad de la
 documentación — en particular `tests/drizzle/postgres.test.ts`, que prueba
-las garantías de concurrencia (`FOR UPDATE SKIP LOCKED`, dos `procesarOutbox`
-a la vez) contra Postgres real.
+las garantías de concurrencia (`FOR UPDATE SKIP LOCKED`, fencing por lease,
+dos `procesarOutbox` a la vez) contra Postgres real.
 
 ## API
 
@@ -49,7 +66,8 @@ a la vez) contra Postgres real.
 Qué corresponde hacer con una fila de la cola en `ahora`:
 `"enviar" | "reintentar_luego" | "descartar" | "destrabar" | "esperar"` — la
 misma regla, en JS puro, que implementa en SQL la consulta de reclamo de
-`procesarOutbox`. Nunca tira.
+`procesarOutbox` (misma comparación `<=` inclusive para el lease vencido en
+las dos). Nunca tira.
 
 ```ts
 import { decidir } from "@mafesoftware/outbox";
@@ -109,9 +127,14 @@ son las listas que usa por dentro — públicas para quien quiera iterarlas
 
 Adapta `@mafesoftware/correo` a `Transporte`. `{ enviar, remitente, render
 }`: `enviar` es la función que de verdad manda (normalmente `enviarCorreo`
-con la `apiKey` ya aplicada por closure), `render` arma `{ asunto, html?,
-texto? }` a partir de `plantilla`/`datos` del mensaje. Valida las opciones
-al construirlo.
+con la `apiKey` ya aplicada por closure — recibe `claveIdempotencia`, que
+`enviarCorreo` reenvía como header `Idempotency-Key` a Resend), `render`
+arma `{ asunto, html?, texto? }` a partir de `plantilla`/`datos` del
+mensaje. Si `render` tira, se clasifica `{ ok: false, categoria: "plantilla",
+codigo: "render" }` (PERMANENTE: el mismo mensaje mal armado no se arregla
+reintentando) — `enviar`, en cambio, no tiene try/catch propio, porque
+`procesarOutbox` ya atrapa cualquier excepción de un `Transporte` como
+transitorio. Valida las opciones al construirlo.
 
 ```ts
 import { transporteCorreo } from "@mafesoftware/outbox";
@@ -119,42 +142,62 @@ import { enviarCorreo } from "@mafesoftware/correo";
 
 const correo = transporteCorreo({
   remitente: "Mi Club <no-reply@miclub.com.ar>",
-  enviar: (o) => enviarCorreo({ ...o, apiKey: process.env.RESEND_API_KEY! }),
+  enviar: (o) => enviarCorreo({ ...o, apiKey: apiKeyDeResend }), // apiKeyDeResend: leída de la config de la app
   render: (mensaje) => {
-    const { nombre } = mensaje.datos as { nombre: string };
-    return { asunto: `Hola, ${nombre}!`, html: `<p>Bienvenido, ${nombre}.</p>` };
+    if (mensaje.plantilla === "bienvenida") {
+      const { nombre } = mensaje.datos as { nombre: string };
+      return { asunto: `Hola, ${nombre}!`, html: `<p>Bienvenido, ${nombre}.</p>` };
+    }
+    throw new Error(`plantilla desconocida: ${mensaje.plantilla}`); // -> descartado sin reintentar
   },
 });
 
-const resultado = await correo({ id, tenantId, canal: "correo", destino: "socio@mail.com", plantilla: "bienvenida", datos: { nombre: "Ana" } });
+const resultado = await correo(
+  { id, tenantId, canal: "correo", destino: "socio@mail.com", plantilla: "bienvenida", datos: { nombre: "Ana" }, claveIdempotencia: `${tenantId}:bienvenida-${id}` },
+  { señal: new AbortController().signal },
+);
 ```
 
 #### `transporteWhatsApp(opciones: OpcionesTransporteWhatsApp): Transporte`
 
 Adapta `@mafesoftware/kapso-wa` a `Transporte`. `{ credencialesDe, enviar,
 parametrosDe? }`: `credencialesDe(tenantId)` busca las credenciales DEL
-TENANT (cada uno tiene su propio número) — `null`/`undefined` da
-`categoria: "credenciales"` sin intentar el envío. `enviar` siempre manda
-una PLANTILLA (nunca texto libre: la ventana de 24h no se puede garantizar
-para un mensaje que se procesa minutos u horas después).
+TENANT (cada uno tiene su propio número) — **puede ser async**, y SIEMPRE
+se espera (`await`) antes de usarla (una versión anterior de este paquete
+tenía el bug de no esperarla: una `Promise` sin resolver es un objeto
+TRUTHY, así que el chequeo de "sin credenciales" nunca disparaba). `null`/
+`undefined` (resuelto) da `categoria: "credenciales"` sin intentar el
+envío; si `credencialesDe` RECHAZA, se trata como `"transitorio"` (`codigo:
+"credenciales_excepcion"`). `enviar` siempre manda una PLANTILLA (nunca
+texto libre: la ventana de 24h no se puede garantizar para un mensaje que
+se procesa minutos u horas después) y recibe `claveIdempotencia` como
+quinto argumento — `kapso-wa` hoy no hace nada con ella (no tiene
+mecanismo de idempotencia propio). Si `parametrosDe` tira, se clasifica
+igual que `render` en `transporteCorreo` (`{ ok: false, categoria:
+"plantilla", codigo: "render" }`, permanente).
 
 ```ts
 import { transporteWhatsApp } from "@mafesoftware/outbox";
 import { enviarPlantilla, type Credenciales } from "@mafesoftware/kapso-wa";
 
 const whatsapp = transporteWhatsApp({
-  credencialesDe: (tenantId) => buscarCredencialesDelTenant(tenantId), // undefined si el tenant no configuró WhatsApp
+  credencialesDe: (tenantId) => buscarCredencialesDelTenant(tenantId), // async: undefined si el tenant no configuró WhatsApp
   enviar: (cred, destino, plantilla, parametros) => enviarPlantilla(cred as Credenciales, destino, plantilla, parametros as string[]),
   parametrosDe: (mensaje) => [(mensaje.datos as { turno: string }).turno],
 });
 
-const resultado = await whatsapp({ id, tenantId, canal: "whatsapp", destino: "5491122334455", plantilla: "gf_turno_manana", datos: { turno: "10:00" } });
+const resultado = await whatsapp(
+  { id, tenantId, canal: "whatsapp", destino: "5491122334455", plantilla: "gf_turno_manana", datos: { turno: "10:00" }, claveIdempotencia: `${tenantId}:turno-${id}` },
+  { señal: new AbortController().signal },
+);
 ```
 
 #### `ErrorOutbox`
 
 El único error que tira este paquete (siempre por un error de
 PROGRAMACIÓN): `codigo: "requiere_transaccion" | "opciones_invalidas"`.
+`procesarOutbox` es la excepción: nunca tira, ni siquiera esto — ver su
+entrada más abajo.
 
 ```ts
 import { encolar, ErrorOutbox } from "@mafesoftware/outbox/drizzle";
@@ -177,9 +220,18 @@ trae migraciones — ver `sql/ejemplo.sql` para el DDL equivalente.
 La tabla de la cola: `id`, la columna de tenant, `canal`, `destino`,
 `plantilla`, `datos` (`jsonb`), `clave_idempotencia`, `estado`, `intentos`/
 `max_intentos`, `programado_para`, `proximo_intento_en`, `bloqueado_hasta`,
-`ultimo_error_categoria`/`ultimo_error_codigo` (nunca el error crudo),
-`id_externo`, `enviado_en`, `creado_en`/`actualizado_en`. Único índice
-`(tenant, clave_idempotencia)`; índice `(estado, proximo_intento_en)`.
+`ultimo_error_categoria`/`ultimo_error_codigo` (nunca el error crudo,
+`codigo` recortado a 64 caracteres), `id_externo`, `enviado_en`,
+`creado_en`/`actualizado_en`. Único índice `(tenant, clave_idempotencia)`;
+índice PARCIAL `(estado, proximo_intento_en, programado_para) WHERE estado
+in ('pendiente', 'procesando')` — cubre exactamente el `WHERE`/`ORDER BY`
+de la consulta de reclamo de `procesarOutbox`, sin crecer con el historial
+terminado (`purgarOutbox` lo borra).
+
+**No filtra por tenant al reclamar** — dos tenants/productos que comparten
+la MISMA tabla compiten por el mismo `lote` en cada corrida, sin reparto
+justo garantizado. Si eso importa, usá tablas separadas
+(`tablaOutbox({ nombre })`) por tenant/producto.
 
 ```ts
 import { tablaOutbox } from "@mafesoftware/outbox/drizzle";
@@ -198,7 +250,9 @@ Encola un mensaje. **Exige transacción** (tira
 encolar si la transacción del hecho de negocio que lo dispara confirma.
 **Idempotente** por `(tenantId, claveIdempotencia)`: `INSERT ... ON
 CONFLICT DO NOTHING`; devuelve `{ id, nuevo: false }` con el id de la fila
-EXISTENTE si ya había una.
+EXISTENTE si ya había una. `programadoPara` (si no se pasa) se calcula con
+el reloj de JS, no `now()` de Postgres — ver "Reloj: JS, no de Postgres" en
+el JSDoc de `tablaOutbox`.
 
 ```ts
 import { encolar } from "@mafesoftware/outbox/drizzle";
@@ -221,14 +275,29 @@ await db.transaction(async (tx) => {
 #### `procesarOutbox(opciones: OpcionesProcesarOutbox): Promise<ResumenProcesarOutbox>`
 
 Procesa hasta `lote` (`20` por defecto) mensajes debidos: los reclama de
-forma atómica (`FOR UPDATE SKIP LOCKED`, a salvo de que otro
-`procesarOutbox` concurrente mande el mismo mensaje dos veces), llama al
-`Transporte` de cada canal, y registra el resultado (`enviado`, agenda un
-reintento con `backoff`, `fallido` al agotar `maxIntentos`, o `descartado`
-sin gastar reintentos si el error es permanente). Nunca tira por un fallo
-de `Transporte` (se trata como transitorio); sí propaga un fallo de la
-base. `leaseMs` (`600_000` = 10 min por defecto): pasado ese tiempo, una
-fila `"procesando"` colgada (worker caído) se reclama de nuevo.
+forma atómica (`FOR UPDATE SKIP LOCKED`), llama al `Transporte` de cada
+canal (con un tope de `concurrencia` simultáneos, `5` por defecto, y un
+`timeoutMs` por intento, `Math.floor(leaseMs / 2)` por defecto), y registra
+el resultado — CERROJADO por el lease con el que se reclamó (ver "Entrega
+al menos una vez" arriba): si otro worker ya reclamó la fila de nuevo, el
+registro se descarta sin pisar nada (`perdidos`), nunca vuelve la fila a un
+estado anterior.
+
+**Nunca tira** — ni por un fallo de `Transporte` (excepción, o que no
+responda en `timeoutMs`: los dos se tratan como `"transitorio"`), NI por un
+fallo de la BASE (el reclamo del lote, o el registro de un resultado): se
+atrapan, se cuentan en `errores`, y el código de Postgres (nunca el mensaje
+ni los parámetros) queda en `ultimoError`.
+
+Una fila `"procesando"` cuyo lease venció (`bloqueado_hasta <= ahora`,
+inclusive) se reclama de nuevo (`"destrabar"`) — salvo que ya agotó
+`maxIntentos` a fuerza de leases vencidos sucesivos (un worker que SIEMPRE
+se cae, o SIEMPRE tarda más que el lease): ahí se cierra directo a
+`"fallido"` (`codigo: "lease_agotado"`) sin llamar a ningún `Transporte` de
+nuevo — sin este chequeo, `maxIntentos` no significaría nada para ese caso.
+
+Devuelve `{ reclamados, enviados, reintentar, fallidos, descartados,
+perdidos, errores, ultimoError? }`.
 
 ```ts
 import { procesarOutbox, transporteCorreo, transporteWhatsApp } from "@mafesoftware/outbox/drizzle";
@@ -241,6 +310,31 @@ const resumen = await procesarOutbox({
     whatsapp: transporteWhatsApp({ credencialesDe, enviar: enviarPlantillaAdaptado }),
   },
   lote: 50,
+  concurrencia: 10,
 });
-// { reclamados: 12, enviados: 10, reintentar: 1, fallidos: 0, descartados: 1 }
+// { reclamados: 12, enviados: 10, reintentar: 1, fallidos: 0, descartados: 1, perdidos: 0, errores: 0 }
+```
+
+#### `purgarOutbox(opciones: OpcionesPurgarOutbox): Promise<ResultadoPurgarOutbox>`
+
+Borra filas TERMINALES (`"enviado"`/`"descartado"`/`"fallido"`, los únicos
+estados que acepta) cuyo `actualizado_en` sea anterior a `antesDe` — para
+que la cola no crezca sin límite. Este paquete no purga solo: hay que
+correrla vos (un cron aparte, o al final del que corre `procesarOutbox`).
+Pasar `"pendiente"`/`"procesando"` en `estados` tira
+`ErrorOutbox("opciones_invalidas")` — purgar trabajo activo borraría un
+mensaje real sin haberlo mandado.
+
+```ts
+import { purgarOutbox } from "@mafesoftware/outbox/drizzle";
+
+// Borra lo terminado hace más de 30 días.
+const { eliminadas } = await purgarOutbox({
+  db,
+  tabla: outbox,
+  antesDe: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000),
+});
+
+// Solo lo enviado con éxito (conserva descartado/fallido para diagnóstico):
+await purgarOutbox({ db, tabla: outbox, estados: ["enviado"], antesDe: haceUnaSemana });
 ```

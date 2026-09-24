@@ -29,7 +29,15 @@ if (!r.ok) console.error(r.categoria, r.error);
   `{ ok: true, id }` o `{ ok: false, categoria, error }`. La categoría dice si
   reintentar sirve: `red` y `limite` sí; `credenciales` y `rechazado` no.
   Soporta varios destinatarios, `responderA` (reply-to) y adjuntos (los bytes
-  se codifican a base64 acá). Ejemplo arriba.
+  se codifican a base64 acá). `claveIdempotencia` (opcional) se manda como
+  header `Idempotency-Key`: con la misma clave, un segundo envío no duplica el
+  mail — Resend devuelve el resultado del primero.
+
+  ```ts
+  await enviarCorreo({ ...opciones, claveIdempotencia: "tenant-1:confirmacion-pedido-42" });
+  ```
+
+  Ejemplo completo arriba.
 - **`plantillaCorreo({ marca, cuerpoHtml, pie })`** — la cáscara HTML con la
   marca del producto: encabezado con color propio, ancho fijo, estilos en
   línea (los clientes de correo ignoran `<style>`). El `cuerpoHtml` lo arma la

@@ -1,3 +1,4 @@
+import { sql } from "drizzle-orm";
 import {
   index,
   integer,
@@ -79,8 +80,16 @@ export type TablaOutbox = PgTable & ColumnasOutbox;
  * - `intentos` (`integer`, `NOT NULL`, default `0`) / `max_intentos`
  *   (`integer`, `NOT NULL`, default `5`).
  * - `programado_para` (`timestamptz`, `NOT NULL`, `defaultNow()`): no se
- *   manda antes de este momento — `defaultNow()` para un envío inmediato,
- *   o un valor futuro para uno agendado (`encolar({ ..., programadoPara })`).
+ *   manda antes de este momento — un valor futuro para uno agendado
+ *   (`encolar({ ..., programadoPara })`). **El default de la COLUMNA
+ *   (`defaultNow()`, el reloj de POSTGRES) es una red de seguridad para un
+ *   `INSERT` que no pase por `encolar`** (SQL a mano, otra herramienta):
+ *   `encolar` en cambio SIEMPRE manda un valor explícito, calculado con el
+ *   reloj de JS (ver "Reloj: JS, no de Postgres" más abajo) — así que en el
+ *   camino normal (`encolar`) este default nunca se usa. Si insertás filas
+ *   sin pasar por `encolar`, fijate que tu reloj y el de Postgres no
+ *   difieran por más que el margen que tolere tu `procesarOutbox` (ver esa
+ *   nota).
  * - `proximo_intento_en` (`timestamptz`, nullable): cuándo corresponde el
  *   PRÓXIMO intento tras un fallo transitorio — `null` hasta el primer fallo.
  * - `bloqueado_hasta` (`timestamptz`, nullable): vencimiento del lease de
@@ -96,10 +105,46 @@ export type TablaOutbox = PgTable & ColumnasOutbox;
  *   (`timestamptz`, `NOT NULL`, `defaultNow()`).
  *
  * **Único índice** `(tenant, clave_idempotencia)`: es lo que hace que el
- * `INSERT ... ON CONFLICT DO NOTHING` de `encolar` sea idempotente. **Índice**
- * (no único) `(estado, proximo_intento_en)`: el que usa la consulta de
- * reclamo de `procesarOutbox` para encontrar rápido las filas
- * `"pendiente"` que ya les toca.
+ * `INSERT ... ON CONFLICT DO NOTHING` de `encolar` sea idempotente.
+ *
+ * **Índice PARCIAL** `(estado, proximo_intento_en, programado_para) WHERE
+ * estado in ('pendiente', 'procesando')`: el que usa la consulta de
+ * reclamo de `procesarOutbox` (mismas columnas que su `WHERE`/`ORDER BY` —
+ * ver su JSDoc). Parcial a propósito: filtra por `estado` DE ANTEMANO, en
+ * la definición del índice, no en cada consulta — una cola con historial
+ * (mucho `"enviado"`/`"descartado"`/`"fallido"` acumulado, sobre todo antes
+ * de correr `purgarOutbox`) tendría un índice no-parcial cada vez más
+ * grande con filas que la consulta de reclamo NUNCA toca (nunca busca un
+ * `"enviado"`). El índice parcial se queda del tamaño de la cola ACTIVA,
+ * sin importar cuánto historial se acumule.
+ *
+ * **Reparto entre tenants: no lo resuelve este índice, ni `procesarOutbox`
+ * en general.** La consulta de reclamo no filtra por tenant (reclama de
+ * TODA la tabla) — si dos tenants/productos comparten la MISMA tabla
+ * física, compiten por el mismo `lote` en cada corrida, sin ninguna
+ * garantía de reparto justo entre ellos (uno con mucho volumen puede
+ * "tapar" a otro con poco, sobre todo si el reparto es por
+ * `coalesce(proximo_intento_en, programado_para)` — orden de llegada, no
+ * de tenant). Si eso es un problema real para tu app, la solución no está
+ * en este paquete: usá tablas SEPARADAS por tenant/producto
+ * (`tablaOutbox({ nombre })`) o corré `procesarOutbox` con un `lote` más
+ * chico y más seguido para acotar cuánto puede acaparar un tenant ruidoso
+ * en una sola corrida.
+ *
+ * **Reloj: JS, no de Postgres.** `programado_para` (si no se pasa
+ * explícito), `proximo_intento_en` y `bloqueado_hasta` los calcula
+ * `encolar`/`procesarOutbox` con `new Date()` (o el `ahora()` inyectado),
+ * nunca con `now()` de Postgres — a propósito, para que las comparaciones
+ * de la consulta de reclamo (`programado_para <= ahora`,
+ * `bloqueado_hasta <= ahora`) usen SIEMPRE el mismo reloj de los dos lados.
+ * Si tu app y tu Postgres corren en máquinas/contenedores distintos (algo
+ * común: la app en un runtime serverless, Postgres en otro lado), sus
+ * relojes pueden diferir por milisegundos incluso con NTP — mezclar
+ * `now()` de Postgres con `Date.now()` de la app en la misma comparación
+ * puede hacer que un mensaje "debido" tarde un poco más (o menos) de lo
+ * esperado en reclamarse, dependiendo de hacia qué lado esté el
+ * desfasaje. Con las dos puntas en el reloj de la APP, el comportamiento
+ * es consistente sin importar qué tan alineado esté el reloj de Postgres.
  *
  * ```ts
  * import { tablaOutbox } from "@mafesoftware/outbox/drizzle";
@@ -141,7 +186,13 @@ export function tablaOutbox(opciones: OpcionesTablaOutbox = {}): TablaOutbox {
     },
     (t) => [
       uniqueIndex(`${nombre}_tenant_clave_idem_key`).on(t.tenantId, t.claveIdempotencia),
-      index(`${nombre}_estado_proximo_idx`).on(t.estado, t.proximoIntentoEn),
+      // Parcial: ver "Índice PARCIAL" en el JSDoc de arriba. `programadoPara`
+      // va al final (no siempre se usa para el ORDER BY — solo cuando
+      // proximoIntentoEn es NULL — pero igual queda cubierta para que
+      // Postgres no necesite volver a la tabla por esa columna).
+      index(`${nombre}_activos_idx`)
+        .on(t.estado, t.proximoIntentoEn, t.programadoPara)
+        .where(sql`${t.estado} in ('pendiente', 'procesando')`),
     ],
   );
 

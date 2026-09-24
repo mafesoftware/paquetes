@@ -49,6 +49,18 @@ export type OpcionesEnvio = {
   /** A dónde va la respuesta si quien recibe aprieta "responder". */
   responderA?: string;
   adjuntos?: Adjunto[];
+  /**
+   * Se manda como header `Idempotency-Key` a Resend. Con la MISMA clave,
+   * un segundo POST (un reintento de red, o un caller que perdió la
+   * respuesta del primero y no sabe si salió) no crea un segundo mail —
+   * Resend devuelve el resultado del primero. Pensada para un caller que
+   * reintenta un envío que ya pudo haber salido (ej.
+   * `@mafesoftware/outbox`, cuyo `procesarOutbox` puede reintentar un
+   * mensaje si el worker se cae ANTES de registrar que ya se mandó — ver
+   * "Entrega al menos una vez" en su documentación). Sin esta clave (no se
+   * pasa), cada llamada es un envío nuevo para Resend, como hasta ahora.
+   */
+  claveIdempotencia?: string;
   /** Inyectable para los tests: no salen a hablar con Resend de verdad. */
   fetch?: Fetch;
 };
@@ -136,6 +148,7 @@ export async function enviarCorreo(
       headers: {
         authorization: `Bearer ${opciones.apiKey}`,
         "content-type": "application/json",
+        ...(opciones.claveIdempotencia ? { "idempotency-key": opciones.claveIdempotencia } : {}),
       },
       body: JSON.stringify(cuerpo),
     });

@@ -12,7 +12,9 @@
  * - `encolar.ts`: `encolar` (exige transacción, idempotente por
  *   `(tenant, claveIdempotencia)`).
  * - `procesar.ts`: `procesarOutbox` (reclama con `FOR UPDATE SKIP LOCKED`,
- *   llama a los `Transporte` de cada canal, registra el resultado).
+ *   llama a los `Transporte` de cada canal, registra el resultado —
+ *   entrega AL MENOS UNA VEZ, ver su JSDoc).
+ * - `purgar.ts`: `purgarOutbox` (borra filas terminales viejas).
  * - `cliente.ts` / `transaccion.ts`: internos (el tipo `DbCliente` y la
  *   detección de transacción), no se re-exportan acá.
  *
@@ -40,4 +42,5 @@
 export { tablaOutbox, type ColumnasOutbox, type OpcionesTablaOutbox, type TablaOutbox } from "./tabla.js";
 export { encolar, type OpcionesEncolar, type ResultadoEncolar } from "./encolar.js";
 export { procesarOutbox, type OpcionesProcesarOutbox, type ResumenProcesarOutbox } from "./procesar.js";
+export { purgarOutbox, type OpcionesPurgarOutbox, type ResultadoPurgarOutbox } from "./purgar.js";
 export type { DbCliente } from "./cliente.js";

@@ -6,6 +6,7 @@ import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { DATABASE_URL_TEST, poolDePrueba } from "../../../../tests/lib/postgres-de-prueba.js";
 import { encolar } from "../../src/drizzle/encolar.js";
 import { procesarOutbox } from "../../src/drizzle/procesar.js";
+import { purgarOutbox } from "../../src/drizzle/purgar.js";
 import type { Transporte } from "../../src/transporte.js";
 import type { ResultadoTransporte } from "../../src/clasificar-resultado.js";
 import { crearEsquemaDePrueba, ddlDeEsquemaDePrueba } from "./esquema.js";
@@ -241,7 +242,7 @@ describe("procesarOutbox (Postgres)", () => {
 
     const resumen = await procesarOutbox({ db, tabla, transportes: { correo: transporteFijo({ ok: true, idExterno: "resend_abc" }) } });
 
-    expect(resumen).toEqual({ reclamados: 1, enviados: 1, reintentar: 0, fallidos: 0, descartados: 0 });
+    expect(resumen).toEqual({ reclamados: 1, enviados: 1, reintentar: 0, fallidos: 0, descartados: 0, perdidos: 0, errores: 0 });
     const fila = await filaPorId(nombre, id);
     expect(fila?.estado).toBe("enviado");
     expect(fila?.id_externo).toBe("resend_abc");
@@ -257,7 +258,7 @@ describe("procesarOutbox (Postgres)", () => {
 
     const resumen = await procesarOutbox({ db, tabla, transportes: { correo: transporteFijo({ ok: true }) } });
 
-    expect(resumen).toEqual({ reclamados: 1, enviados: 1, reintentar: 0, fallidos: 0, descartados: 0 });
+    expect(resumen).toEqual({ reclamados: 1, enviados: 1, reintentar: 0, fallidos: 0, descartados: 0, perdidos: 0, errores: 0 });
     const fila = await filaPorId(nombre, id);
     expect(fila?.estado).toBe("enviado");
     expect(fila?.id_externo).toBeNull();
@@ -298,7 +299,7 @@ describe("procesarOutbox (Postgres)", () => {
       ahora: () => antes,
     });
 
-    expect(resumen).toEqual({ reclamados: 1, enviados: 0, reintentar: 1, fallidos: 0, descartados: 0 });
+    expect(resumen).toEqual({ reclamados: 1, enviados: 0, reintentar: 1, fallidos: 0, descartados: 0, perdidos: 0, errores: 0 });
     const fila = await filaPorId(nombre, id);
     expect(fila?.estado).toBe("pendiente");
     expect(fila?.intentos).toBe(1);
@@ -327,7 +328,7 @@ describe("procesarOutbox (Postgres)", () => {
 
     // Intento 1 de 2: falla transitorio -> "pendiente", agenda proximo_intento_en.
     const r1 = await procesarOutbox({ db, tabla, transportes: { correo: transporteFijo({ ok: false, categoria: "limite" }) }, ahora: () => momento });
-    expect(r1).toEqual({ reclamados: 1, enviados: 0, reintentar: 1, fallidos: 0, descartados: 0 });
+    expect(r1).toEqual({ reclamados: 1, enviados: 0, reintentar: 1, fallidos: 0, descartados: 0, perdidos: 0, errores: 0 });
     expect((await filaPorId(nombre, id))?.estado).toBe("pendiente");
 
     // Avanza el reloj bien después de proximo_intento_en (backoff nunca pasa 1h+20%).
@@ -335,7 +336,7 @@ describe("procesarOutbox (Postgres)", () => {
 
     // Intento 2 de 2: vuelve a fallar transitorio, ya sin intentos -> "fallido".
     const r2 = await procesarOutbox({ db, tabla, transportes: { correo: transporteFijo({ ok: false, categoria: "limite" }) }, ahora: () => momento });
-    expect(r2).toEqual({ reclamados: 1, enviados: 0, reintentar: 0, fallidos: 1, descartados: 0 });
+    expect(r2).toEqual({ reclamados: 1, enviados: 0, reintentar: 0, fallidos: 1, descartados: 0, perdidos: 0, errores: 0 });
 
     const fila = await filaPorId(nombre, id);
     expect(fila?.estado).toBe("fallido");
@@ -362,7 +363,7 @@ describe("procesarOutbox (Postgres)", () => {
 
     const resumen = await procesarOutbox({ db, tabla, transportes: { whatsapp: transporteFijo({ ok: false, categoria, codigo: "detalle" }) } });
 
-    expect(resumen).toEqual({ reclamados: 1, enviados: 0, reintentar: 0, fallidos: 0, descartados: 1 });
+    expect(resumen).toEqual({ reclamados: 1, enviados: 0, reintentar: 0, fallidos: 0, descartados: 1, perdidos: 0, errores: 0 });
     const fila = await filaPorId(nombre, id);
     expect(fila?.estado).toBe("descartado");
     expect(fila?.ultimo_error_categoria).toBe(categoria);
@@ -386,7 +387,7 @@ describe("procesarOutbox (Postgres)", () => {
 
     const resumen = await procesarOutbox({ db, tabla, transportes: { correo: transporteFijo({ ok: true, idExterno: "recuperado" }) } });
 
-    expect(resumen).toEqual({ reclamados: 1, enviados: 1, reintentar: 0, fallidos: 0, descartados: 0 });
+    expect(resumen).toEqual({ reclamados: 1, enviados: 1, reintentar: 0, fallidos: 0, descartados: 0, perdidos: 0, errores: 0 });
     const fila = await filaPorId(nombre, id);
     expect(fila?.estado).toBe("enviado");
     expect(fila?.intentos).toBe(2); // el intento original + este reclamo
@@ -422,7 +423,7 @@ describe("procesarOutbox (Postgres)", () => {
 
     const resumen = await procesarOutbox({ db, tabla, transportes: { correo: transporteFijo("tira") } });
 
-    expect(resumen).toEqual({ reclamados: 1, enviados: 0, reintentar: 1, fallidos: 0, descartados: 0 });
+    expect(resumen).toEqual({ reclamados: 1, enviados: 0, reintentar: 1, fallidos: 0, descartados: 0, perdidos: 0, errores: 0 });
     const fila = await filaPorId(nombre, id);
     expect(fila?.estado).toBe("pendiente");
     expect(fila?.ultimo_error_categoria).toBe("red");
@@ -440,7 +441,7 @@ describe("procesarOutbox (Postgres)", () => {
 
     const resumen = await procesarOutbox({ db, tabla, transportes: {} }); // sin "whatsapp"
 
-    expect(resumen).toEqual({ reclamados: 1, enviados: 0, reintentar: 0, fallidos: 0, descartados: 1 });
+    expect(resumen).toEqual({ reclamados: 1, enviados: 0, reintentar: 0, fallidos: 0, descartados: 1, perdidos: 0, errores: 0 });
     const fila = await filaPorId(nombre, id);
     expect(fila?.estado).toBe("descartado");
     expect(fila?.ultimo_error_categoria).toBe("credenciales");
@@ -543,4 +544,407 @@ describe("procesarOutbox: concurrencia real, dos corridas a la vez (Postgres)", 
     },
     30_000,
   );
+});
+
+
+describe("procesarOutbox: fencing por lease — C1, reproducción del bug real (Postgres)", () => {
+  it(
+    'un worker "zombi" (lease vencido, transporte lento) nunca pisa lo que otro worker ya escribió: su intento tardío se cuenta en "perdidos", nunca vuelve la fila a "pendiente"',
+    async () => {
+      const { tabla, nombre } = await tablaFresca();
+      const tenantId = randomUUID();
+      const { id } = await db.transaction((tx) =>
+        encolar(tx, tabla, { tenantId, canal: "correo", destino: "a@b.com", plantilla: "p", claveIdempotencia: randomUUID() }),
+      );
+
+      let soltarA!: () => void;
+      const esperaDeA = new Promise<void>((resolve) => (soltarA = resolve));
+      const envios: string[] = [];
+
+      // A reclama la fila y queda "colgado" adentro del Transporte hasta que el test lo suelte.
+      const promesaA = procesarOutbox({
+        db,
+        tabla,
+        leaseMs: 5000,
+        transportes: {
+          correo: async () => {
+            envios.push("A");
+            await esperaDeA;
+            // Cuando por fin "termina", A cree que el envío falló transitorio — si esto
+            // pisara la fila, la dejaría "pendiente" de nuevo con un backoff agendado
+            // (un tercer envío esperando a la vuelta de la esquina).
+            return { ok: false, categoria: "red" };
+          },
+        },
+      });
+
+      await sleep(150); // A ya reclamó y está "en vuelo" adentro del Transporte.
+
+      // B reclama la MISMA fila con "ahora" adelantado más allá del lease de A -> "destrabar".
+      const resumenB = await procesarOutbox({
+        db,
+        tabla,
+        ahora: () => new Date(Date.now() + 60_000),
+        transportes: {
+          correo: async () => {
+            envios.push("B");
+            return { ok: true, idExterno: "x" };
+          },
+        },
+      });
+
+      const trasB = await filaPorId(nombre, id);
+      expect(resumenB.enviados).toBe(1);
+      expect(trasB?.estado).toBe("enviado");
+      expect(trasB?.id_externo).toBe("x");
+
+      // Recién ACÁ "termina" A — después de que B ya cerró la fila.
+      soltarA();
+      const resumenA = await promesaA;
+
+      expect(envios).toEqual(["A", "B"]);
+      // El resultado tardío de A no encontró la fila con SU lease (B ya la reclamó de
+      // nuevo con uno propio): se cuenta en "perdidos", NUNCA en "reintentar".
+      expect(resumenA).toEqual({ reclamados: 1, enviados: 0, reintentar: 0, fallidos: 0, descartados: 0, perdidos: 1, errores: 0 });
+
+      const final = await filaPorId(nombre, id);
+      expect(final?.estado).toBe("enviado"); // sigue "enviado": A nunca la volvió a "pendiente"
+      expect(final?.id_externo).toBe("x");
+      expect(final?.proximo_intento_en).toBeNull();
+    },
+    15_000,
+  );
+});
+
+describe("procesarOutbox: bucle de caídas respeta maxIntentos — I5 (Postgres)", () => {
+  it(
+    'un lease vencido repetidamente, con intentos ya agotados, cierra la fila a "fallido" (codigo lease_agotado) SIN llamar al Transporte de nuevo',
+    async () => {
+      const { tabla, nombre } = await tablaFresca();
+      const tenantId = randomUUID();
+      const { id } = await db.transaction((tx) =>
+        encolar(tx, tabla, { tenantId, canal: "correo", destino: "a@b.com", plantilla: "p", claveIdempotencia: randomUUID(), maxIntentos: 2 }),
+      );
+
+      const llamadoAlTransporte: boolean[] = [];
+      const reclamadosPorCorrida: number[] = [];
+      const fallidosPorCorrida: number[] = [];
+
+      for (let i = 0; i < 4; i++) {
+        // Simula un worker que se cae SIEMPRE a mitad de camino: la fila queda
+        // "procesando" con el lease ya vencido, pase lo que pase en la corrida anterior.
+        await poolChequeo.query(`update "${nombre}" set estado = 'procesando', bloqueado_hasta = now() - interval '1 hour'`);
+
+        let entro = false;
+        const r = await procesarOutbox({
+          db,
+          tabla,
+          transportes: { correo: async () => { entro = true; return { ok: true }; } },
+        });
+        llamadoAlTransporte.push(entro);
+        reclamadosPorCorrida.push(r.reclamados);
+        fallidosPorCorrida.push(r.fallidos);
+      }
+
+      // Los primeros dos reclamos todavía tienen intentos disponibles (0->1, 1->2) y
+      // SÍ llaman al Transporte; el tercero y el cuarto ya están agotados (intentos=2
+      // >= maxIntentos=2) y se cierran solos, sin llamar a nada.
+      expect(llamadoAlTransporte).toEqual([true, true, false, false]);
+      expect(reclamadosPorCorrida).toEqual([1, 1, 1, 1]); // las 4 corridas SÍ reclaman la fila
+      expect(fallidosPorCorrida).toEqual([0, 0, 1, 1]); // pero solo las últimas 2 la cuentan como "fallido"
+
+      const fila = await filaPorId(nombre, id);
+      expect(fila?.estado).toBe("fallido");
+      expect(fila?.intentos).toBe(2); // nunca pasó de 2 (maxIntentos) aunque se reclamó 4 veces
+      expect(fila?.ultimo_error_categoria).toBe("red");
+      expect(fila?.ultimo_error_codigo).toBe("lease_agotado");
+      expect(fila?.bloqueado_hasta).toBeNull();
+    },
+    15_000,
+  );
+
+  it("bloqueado_hasta EXACTAMENTE igual a ahora se considera vencido (<=, alineado con decidir del núcleo)", async () => {
+    const { tabla, nombre } = await tablaFresca();
+    const tenantId = randomUUID();
+    const momento = new Date();
+    const id = await insertarFilaCruda(nombre, {
+      tenantId,
+      canal: "correo",
+      claveIdempotencia: randomUUID(),
+      estado: "procesando",
+      intentos: 1,
+      maxIntentos: 5,
+      bloqueadoHasta: momento,
+    });
+
+    const resumen = await procesarOutbox({ db, tabla, ahora: () => momento, transportes: { correo: transporteFijo({ ok: true, idExterno: "x" }) } });
+
+    expect(resumen.reclamados).toBe(1);
+    const fila = await filaPorId(nombre, id);
+    expect(fila?.estado).toBe("enviado");
+  });
+});
+
+describe("procesarOutbox: timeout por intento — I4 (Postgres)", () => {
+  it(
+    "un Transporte que nunca resuelve se trata como timeout (transitorio, categoria red, codigo timeout) pasado timeoutMs",
+    async () => {
+      const { tabla, nombre } = await tablaFresca();
+      const tenantId = randomUUID();
+      const { id } = await db.transaction((tx) =>
+        encolar(tx, tabla, { tenantId, canal: "correo", destino: "a@b.com", plantilla: "p", claveIdempotencia: randomUUID(), maxIntentos: 5 }),
+      );
+
+      const resumen = await procesarOutbox({
+        db,
+        tabla,
+        leaseMs: 2000,
+        timeoutMs: 150,
+        transportes: { correo: () => new Promise(() => {}) }, // cuelga para siempre
+      });
+
+      expect(resumen).toEqual({ reclamados: 1, enviados: 0, reintentar: 1, fallidos: 0, descartados: 0, perdidos: 0, errores: 0 });
+      const fila = await filaPorId(nombre, id);
+      expect(fila?.estado).toBe("pendiente");
+      expect(fila?.ultimo_error_categoria).toBe("red");
+      expect(fila?.ultimo_error_codigo).toBe("timeout");
+    },
+    10_000,
+  );
+
+  it('"timeoutMs" >= "leaseMs" tira ErrorOutbox("opciones_invalidas")', async () => {
+    const { tabla } = await tablaFresca();
+    await expect(procesarOutbox({ db, tabla, leaseMs: 1000, timeoutMs: 1000, transportes: {} })).rejects.toMatchObject({
+      name: "ErrorOutbox",
+      codigo: "opciones_invalidas",
+    });
+  });
+});
+
+describe("procesarOutbox: concurrencia acotada — I6 (Postgres)", () => {
+  it("concurrencia limita cuántas filas se procesan (llaman al Transporte) al mismo tiempo", async () => {
+    const { tabla } = await tablaFresca();
+    const tenantId = randomUUID();
+    const CANTIDAD = 9;
+    for (let i = 0; i < CANTIDAD; i++) {
+      await db.transaction((tx) => encolar(tx, tabla, { tenantId, canal: "correo", destino: `d${i}@b.com`, plantilla: "p", claveIdempotencia: randomUUID() }));
+    }
+
+    let enVuelo = 0;
+    let maxEnVuelo = 0;
+    const transporte: Transporte = async () => {
+      enVuelo++;
+      maxEnVuelo = Math.max(maxEnVuelo, enVuelo);
+      await sleep(60);
+      enVuelo--;
+      return { ok: true, idExterno: "x" };
+    };
+
+    const resumen = await procesarOutbox({ db, tabla, transportes: { correo: transporte }, lote: CANTIDAD, concurrencia: 3 });
+
+    expect(resumen.reclamados).toBe(CANTIDAD);
+    expect(resumen.enviados).toBe(CANTIDAD);
+    expect(maxEnVuelo).toBeLessThanOrEqual(3); // nunca más de "concurrencia" a la vez
+    expect(maxEnVuelo).toBeGreaterThan(1); // pero sí corrió en paralelo, no una por una
+  });
+
+  it("un fallo en el registro de UNA fila (allSettled) no pierde el resultado de las demás", async () => {
+    const { tabla, nombre } = await tablaFresca();
+    const tenantId = randomUUID();
+    const ids: string[] = [];
+    for (let i = 0; i < 3; i++) {
+      const { id } = await db.transaction((tx) => encolar(tx, tabla, { tenantId, canal: "correo", destino: `d${i}@b.com`, plantilla: "p", claveIdempotencia: randomUUID() }));
+      ids.push(id);
+    }
+
+    // Envuelve `db` para que el registro (db.execute fuera de una transacción,
+    // que es como escribe registrarResultado) falle en la llamada número 2
+    // exacta — la del reclamo (db.transaction) nunca pasa por este `execute`
+    // envuelto, así que el reclamo de las 3 filas sale bien.
+    let llamadasAExecute = 0;
+    const dbConFalloEnUnaFila = {
+      transaction: (fn: Parameters<NodePgDatabase["transaction"]>[0]) => db.transaction(fn),
+      execute: async (query: Parameters<NodePgDatabase["execute"]>[0]) => {
+        llamadasAExecute++;
+        if (llamadasAExecute === 2) {
+          const error = new Error("boom (nunca debería verse este mensaje)") as Error & { cause?: unknown };
+          error.cause = { code: "40001" };
+          throw error;
+        }
+        return db.execute(query);
+      },
+    } as unknown as NodePgDatabase;
+
+    const resumen = await procesarOutbox({
+      db: dbConFalloEnUnaFila,
+      tabla,
+      concurrencia: 1, // procesa una fila a la vez -> orden determinístico de las llamadas a execute
+      transportes: { correo: transporteFijo({ ok: true, idExterno: "x" }) },
+    });
+
+    expect(resumen.reclamados).toBe(3);
+    expect(resumen.enviados).toBe(2); // las otras dos SÍ se registraron
+    expect(resumen.errores).toBe(1);
+    expect(resumen.ultimoError).toEqual({ codigo: "40001" });
+    expect(JSON.stringify(resumen)).not.toContain("nunca debería verse este mensaje");
+
+    const filas = await Promise.all(ids.map((id) => filaPorId(nombre, id)));
+    const estados = filas.map((f) => f?.estado).sort();
+    // Una de las tres quedó "procesando" (colgada: el Transporte SÍ se llamó y
+    // devolvió ok, pero el registro tiró) — las otras dos, "enviado".
+    expect(estados).toEqual(["enviado", "enviado", "procesando"]);
+  });
+});
+
+describe("procesarOutbox: nunca tira por un fallo de la base — I6/controller ruling (Postgres)", () => {
+  it("un fallo de la base durante el RECLAMO no propaga: resumen.errores lo refleja, con el código de Postgres (nunca el mensaje)", async () => {
+    const { tabla } = await tablaFresca();
+    const dbRoto = {
+      transaction: async () => {
+        const error = new Error("conexión perdida (nunca debería verse este mensaje)") as Error & { cause?: unknown };
+        error.cause = { code: "57P01" };
+        throw error;
+      },
+    } as unknown as NodePgDatabase;
+
+    const resumen = await procesarOutbox({ db: dbRoto, tabla, transportes: {} });
+
+    expect(resumen.reclamados).toBe(0);
+    expect(resumen.errores).toBe(1);
+    expect(resumen.ultimoError).toEqual({ codigo: "57P01" });
+    expect(JSON.stringify(resumen)).not.toContain("nunca debería verse este mensaje");
+  });
+});
+
+describe("procesarOutbox: MensajeParaEnviar.claveIdempotencia — I3 (Postgres)", () => {
+  it('el Transporte recibe claveIdempotencia como "${tenantId}:${claveIdempotencia}"', async () => {
+    const { tabla } = await tablaFresca();
+    const tenantId = randomUUID();
+    const clave = randomUUID();
+    await db.transaction((tx) => encolar(tx, tabla, { tenantId, canal: "correo", destino: "a@b.com", plantilla: "p", claveIdempotencia: clave }));
+
+    let recibido: string | undefined;
+    await procesarOutbox({
+      db,
+      tabla,
+      transportes: {
+        correo: async (mensaje) => {
+          recibido = mensaje.claveIdempotencia;
+          return { ok: true, idExterno: "x" };
+        },
+      },
+    });
+
+    expect(recibido).toBe(`${tenantId}:${clave}`);
+  });
+});
+
+describe("procesarOutbox: ultimo_error_codigo se recorta a 64 caracteres — M9 (Postgres)", () => {
+  it("un codigo de más de 64 caracteres se guarda recortado", async () => {
+    const { tabla, nombre } = await tablaFresca();
+    const tenantId = randomUUID();
+    const { id } = await db.transaction((tx) =>
+      encolar(tx, tabla, { tenantId, canal: "correo", destino: "a@b.com", plantilla: "p", claveIdempotencia: randomUUID() }),
+    );
+    const codigoLargo = "x".repeat(200);
+
+    await procesarOutbox({ db, tabla, transportes: { correo: transporteFijo({ ok: false, categoria: "credenciales", codigo: codigoLargo }) } });
+
+    const fila = await filaPorId(nombre, id);
+    expect((fila!.ultimo_error_codigo as string).length).toBe(64);
+    expect(fila!.ultimo_error_codigo).toBe("x".repeat(64));
+  });
+});
+
+describe("purgarOutbox (Postgres)", () => {
+  it('borra filas TERMINALES (enviado/descartado/fallido) con actualizado_en anterior a "antesDe", y ninguna otra', async () => {
+    const { tabla, nombre } = await tablaFresca();
+    const tenantId = randomUUID();
+
+    const idViejoEnviado = await insertarFilaCruda(nombre, { tenantId, canal: "correo", claveIdempotencia: randomUUID(), estado: "enviado" });
+    await poolChequeo.query(`update "${nombre}" set actualizado_en = now() - interval '40 days' where id = $1`, [idViejoEnviado]);
+
+    const idNuevoEnviado = await insertarFilaCruda(nombre, { tenantId, canal: "correo", claveIdempotencia: randomUUID(), estado: "enviado" });
+
+    const idPendiente = await insertarFilaCruda(nombre, { tenantId, canal: "correo", claveIdempotencia: randomUUID(), estado: "pendiente" });
+    await poolChequeo.query(`update "${nombre}" set actualizado_en = now() - interval '40 days' where id = $1`, [idPendiente]);
+
+    const idViejoDescartado = await insertarFilaCruda(nombre, { tenantId, canal: "whatsapp", claveIdempotencia: randomUUID(), estado: "descartado" });
+    await poolChequeo.query(`update "${nombre}" set actualizado_en = now() - interval '40 days' where id = $1`, [idViejoDescartado]);
+
+    const { eliminadas } = await purgarOutbox({ db, tabla, antesDe: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000) });
+
+    expect(eliminadas).toBe(2);
+    expect(await filaPorId(nombre, idViejoEnviado)).toBeUndefined();
+    expect(await filaPorId(nombre, idViejoDescartado)).toBeUndefined();
+    expect(await filaPorId(nombre, idNuevoEnviado)).toBeDefined(); // terminal pero reciente: se queda
+    expect(await filaPorId(nombre, idPendiente)).toBeDefined(); // vieja pero NO terminal: se queda
+  });
+
+  it("estados custom: solo purga lo que se le pide", async () => {
+    const { tabla, nombre } = await tablaFresca();
+    const tenantId = randomUUID();
+    const idEnviado = await insertarFilaCruda(nombre, { tenantId, canal: "correo", claveIdempotencia: randomUUID(), estado: "enviado" });
+    const idFallido = await insertarFilaCruda(nombre, { tenantId, canal: "correo", claveIdempotencia: randomUUID(), estado: "fallido" });
+    await poolChequeo.query(`update "${nombre}" set actualizado_en = now() - interval '1 day'`);
+
+    const { eliminadas } = await purgarOutbox({ db, tabla, estados: ["enviado"], antesDe: new Date() });
+
+    expect(eliminadas).toBe(1);
+    expect(await filaPorId(nombre, idEnviado)).toBeUndefined();
+    expect(await filaPorId(nombre, idFallido)).toBeDefined(); // no se pidió purgar "fallido"
+  });
+
+  it('rechaza estados NO terminales ("pendiente"/"procesando") ANTES de tocar la base', async () => {
+    const { tabla, nombre } = await tablaFresca();
+    const tenantId = randomUUID();
+    const idPendiente = await insertarFilaCruda(nombre, { tenantId, canal: "correo", claveIdempotencia: randomUUID(), estado: "pendiente" });
+
+    await expect(purgarOutbox({ db, tabla, estados: ["pendiente"], antesDe: new Date() })).rejects.toMatchObject({
+      name: "ErrorOutbox",
+      codigo: "opciones_invalidas",
+    });
+    // Y no tocó nada.
+    expect(await filaPorId(nombre, idPendiente)).toBeDefined();
+  });
+});
+
+describe("procesarOutbox: la consulta de reclamo usa el índice parcial — I7 (Postgres)", () => {
+  it("EXPLAIN (con seqscan apagado) usa outbox_activos_idx para el WHERE/ORDER de la consulta de reclamo", async () => {
+    const { nombre } = await tablaFresca();
+    const tenantId = randomUUID();
+    for (let i = 0; i < 5; i++) {
+      await poolChequeo.query(
+        `insert into "${nombre}" (organizacion_id, canal, destino, plantilla, datos, clave_idempotencia) values ($1, 'correo', 'd@b.com', 'p', '{}', $2)`,
+        [tenantId, randomUUID()],
+      );
+    }
+
+    const cliente = await poolChequeo.connect();
+    try {
+      await cliente.query("begin");
+      // Apaga seq scan para esta transacción: en una tabla tan chica Postgres
+      // preferiría un seq scan de cualquier forma (más barato que un índice
+      // para pocas filas) — esto confirma que el índice PODRÍA usarse
+      // (está bien formado, cubre las columnas correctas), no que el
+      // planner lo elija siempre en producción con una tabla chica.
+      await cliente.query("set local enable_seqscan = off");
+      const explicacion = await cliente.query(
+        `explain select id from "${nombre}"
+         where (estado = 'pendiente' and programado_para <= now() and (proximo_intento_en is null or proximo_intento_en <= now()))
+            or (estado = 'procesando' and bloqueado_hasta is not null and bloqueado_hasta <= now())
+         order by coalesce(proximo_intento_en, programado_para) asc
+         limit 20
+         for update skip locked`,
+      );
+      const plan = explicacion.rows.map((r: { "QUERY PLAN": string }) => r["QUERY PLAN"]).join("\n");
+      // El nombre real lleva el prefijo de la tabla de test (`${nombre}_activos_idx`,
+      // no literalmente "outbox_activos_idx" — la tabla de este test no se llama "outbox").
+      expect(plan).toContain(`${nombre}_activos_idx`);
+      expect(plan).toContain("Index Scan"); // confirma que el plan usa un índice, no un seq scan
+      await cliente.query("rollback");
+    } finally {
+      cliente.release();
+    }
+  });
 });

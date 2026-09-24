@@ -133,18 +133,16 @@ export async function encolar(tx: DbCliente, tabla: TablaOutbox, opciones: Opcio
   const maxIntentosParametro: number | null = opciones.maxIntentos ?? null;
   // A diferencia de `maxIntentos`, acá NO se deja que Postgres ponga el
   // default (`now()` del lado del servidor) cuando no se pasa: se calcula
-  // en JS (`new Date()`) ANTES de armar la consulta. Es a propósito —
-  // `procesarOutbox` compara `programado_para` contra su propio `ahora()`
-  // (también JS, inyectable), y las dos DB de test de este monorepo corren
-  // en un contenedor Docker cuyo reloj puede estar desalineado unos
-  // milisegundos respecto del reloj del host (drift de la VM de Colima,
-  // documentado en `~/.claude/CLAUDE.md` como una fuente real de sorpresas
-  // en esta máquina) — mezclar `now()` de Postgres con `Date.now()` de JS
-  // en la MISMA comparación (`programado_para <= momento`) puede fallar por
-  // esos milisegundos de diferencia de reloj, no por un bug de lógica.
-  // Calculando acá con el reloj de JS, `encolar`/`procesarOutbox` quedan
-  // consistentes entre sí sin importar qué tan sincronizados estén los
-  // relojes de la app y de Postgres.
+  // en JS (`new Date()`) ANTES de armar la consulta. Es a propósito — ver
+  // "Reloj: JS, no de Postgres" en el JSDoc de `tablaOutbox`: la consulta
+  // de reclamo de `procesarOutbox` compara `programado_para` contra su
+  // propio `ahora()` (también JS, inyectable), y la app y Postgres pueden
+  // correr en máquinas/contenedores con relojes que no están
+  // perfectamente alineados entre sí (incluso con NTP, la sincronización
+  // nunca es exacta). Calculando `programado_para` acá con el reloj de JS,
+  // la comparación de `procesarOutbox` (`programado_para <= ahora`) usa el
+  // MISMO reloj de los dos lados, sin importar qué tan sincronizado esté
+  // el reloj de Postgres.
   const programadoParaParametro: Date = opciones.programadoPara ?? new Date();
 
   const insercion = sql`
