@@ -113,6 +113,29 @@ describe("loQueCambio", () => {
     expect(() => loQueCambio(antes, despues)).not.toThrow();
   });
 
+  it("M12: loQueCambio(o, o) con o autoreferencial da [] (misma referencia = sin cambio), no \"[ciclo]\"", () => {
+    const o: Record<string, unknown> = { a: 1 };
+    o.self = o;
+    expect(() => loQueCambio(o, o)).not.toThrow();
+    expect(loQueCambio(o, o)).toEqual([]);
+  });
+
+  it("M12: loQueCambio(o, o) con un ciclo más profundo (o.a.b = o) también da []", () => {
+    const o: Record<string, unknown> = { a: { b: null } };
+    (o.a as Record<string, unknown>).b = o;
+    expect(() => loQueCambio(o, o)).not.toThrow();
+    expect(loQueCambio(o, o)).toEqual([]);
+  });
+
+  it("M12: dos objetos autoreferenciales DISTINTOS (no la misma referencia) siguen reportando \"[ciclo]\" — el fix de M12 es solo para la MISMA referencia", () => {
+    const objA: Record<string, unknown> = { a: 1 };
+    objA.self = objA;
+    const objB: Record<string, unknown> = { a: 1 };
+    objB.self = objB;
+    const resultado = loQueCambio(objA, objB);
+    expect(resultado.some((c) => c.campo === "self" && c.antes === "[ciclo]" && c.despues === "[ciclo]")).toBe(true);
+  });
+
   it("no confunde un valor compartido (mismo objeto referenciado dos veces, sin ciclo) con un ciclo", () => {
     const compartido = { x: 1 };
     const antes = { a: compartido, b: compartido };
@@ -141,6 +164,32 @@ describe("loQueCambio", () => {
       { campo: "direccion.calle", antes: undefined, despues: "X" },
       { campo: "direccion.ciudad", antes: undefined, despues: "Y" },
     ]);
+  });
+
+  it('M11: "null" cuenta como ausente igual que "undefined" — loQueCambio(null, objeto) se expande campo a campo', () => {
+    expect(loQueCambio(null, { nombre: "Silla", precio: 100 })).toEqual([
+      { campo: "nombre", antes: undefined, despues: "Silla" },
+      { campo: "precio", antes: undefined, despues: 100 },
+    ]);
+  });
+
+  it('M11: al revés, loQueCambio(objeto, null) también se expande campo a campo', () => {
+    expect(loQueCambio({ nombre: "Silla", precio: 100 }, null)).toEqual([
+      { campo: "nombre", antes: "Silla", despues: undefined },
+      { campo: "precio", antes: 100, despues: undefined },
+    ]);
+  });
+
+  it('M11: null se expande también DENTRO de objetos anidados (mismo criterio que undefined)', () => {
+    const antes = { a: 1, direccion: null };
+    const despues = { a: 1, direccion: { calle: "X" } };
+    expect(loQueCambio(antes, despues)).toEqual([{ campo: "direccion.calle", antes: undefined, despues: "X" }]);
+  });
+
+  it('M11 NO cambia que null y undefined sigan siendo valores DISTINTOS entre sí en una comparación directa', () => {
+    expect(loQueCambio(null, undefined)).toEqual([{ campo: "(raiz)", antes: null, despues: undefined }]);
+    expect(loQueCambio({ nota: null }, {})).toEqual([{ campo: "nota", antes: null, despues: undefined }]);
+    expect(loQueCambio(null, null)).toEqual([]); // misma "referencia" (M12): sin cambio
   });
 
   it('un lado ausente contra algo que NO es un objeto plano (string, arreglo, Date) sigue siendo un solo cambio de valor entero', () => {
@@ -194,9 +243,16 @@ describe("loQueCambio", () => {
     expect(resultado.every((c) => c.campo === "x.b")).toBe(true);
   });
 
-  it("un objeto reemplazado por un valor no-objeto (o viceversa) se reporta entero, sin recursar", () => {
-    expect(loQueCambio({ direccion: { calle: "X" } }, { direccion: null })).toEqual([
-      { campo: "direccion", antes: { calle: "X" }, despues: null },
+  it("un objeto reemplazado por un valor no-objeto QUE NO ES null/undefined (ej. un string) se reporta entero, sin recursar", () => {
+    expect(loQueCambio({ direccion: { calle: "X" } }, { direccion: "mudado" })).toEqual([
+      { campo: "direccion", antes: { calle: "X" }, despues: "mudado" },
+    ]);
+  });
+
+  it("un objeto reemplazado por null (M11: null cuenta como ausente) SÍ se expande campo a campo, igual que undefined", () => {
+    expect(loQueCambio({ direccion: { calle: "X", ciudad: "Y" } }, { direccion: null })).toEqual([
+      { campo: "direccion.calle", antes: "X", despues: undefined },
+      { campo: "direccion.ciudad", antes: "Y", despues: undefined },
     ]);
   });
 });

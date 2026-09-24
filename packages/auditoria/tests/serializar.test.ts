@@ -73,4 +73,79 @@ describe("serializarParaAuditoria", () => {
     const sym = Symbol("x");
     expect(serializarParaAuditoria(sym)).toBe(sym.toString());
   });
+
+  it("I3: una instancia de clase propia se serializa por sus campos de instancia (bigint incluido)", () => {
+    class Factura {
+      total: bigint;
+      constructor(total: bigint) {
+        this.total = total;
+      }
+    }
+    expect(serializarParaAuditoria(new Factura(1000n))).toEqual({ total: "1000n" });
+  });
+
+  it("I3: un Map se convierte a un objeto de entradas (clave String(clave)), con bigint/Date serializados", () => {
+    const m = new Map<string, unknown>([
+      ["total", 1000n],
+      ["vence", new Date("2026-01-01T00:00:00.000Z")],
+    ]);
+    expect(serializarParaAuditoria(m)).toEqual({ total: "1000n", vence: "2026-01-01T00:00:00.000Z" });
+  });
+
+  it("I3: un Set se convierte a un arreglo, con bigint serializado", () => {
+    const s = new Set<unknown>([1n, 2n]);
+    expect(serializarParaAuditoria(s)).toEqual(["1n", "2n"]);
+  });
+
+  it("I3: un Map cíclico (se referencia a sí mismo como valor) no tira, esa rama queda \"[ciclo]\"", () => {
+    const m = new Map<string, unknown>();
+    m.set("self", m);
+    m.set("total", 1000n);
+    let resultado: unknown;
+    expect(() => {
+      resultado = serializarParaAuditoria(m);
+    }).not.toThrow();
+    const r = resultado as Record<string, unknown>;
+    expect(r.self).toBe("[ciclo]");
+    expect(r.total).toBe("1000n");
+  });
+
+  it("I3: un Map con un valor que serializa a undefined descarta esa entrada (igual que un objeto)", () => {
+    const m = new Map<string, unknown>([
+      ["a", 1],
+      ["b", undefined],
+    ]);
+    expect(serializarParaAuditoria(m)).toEqual({ a: 1 });
+  });
+
+  it("I3: un Set que se contiene a sí mismo no tira, esa rama queda \"[ciclo]\"", () => {
+    const s = new Set<unknown>();
+    s.add(s);
+    s.add(1n);
+    let resultado: unknown;
+    expect(() => {
+      resultado = serializarParaAuditoria(s);
+    }).not.toThrow();
+    expect(resultado).toEqual(["[ciclo]", "1n"]);
+  });
+
+  it("I3: un Set con un elemento undefined lo convierte a null (igual que un arreglo)", () => {
+    const s = new Set<unknown>([undefined, 1n]);
+    expect(serializarParaAuditoria(s)).toEqual([null, "1n"]);
+  });
+
+  it("M10: una clave con un getter que tira no propaga la excepción, queda como \"[error]\"", () => {
+    const obj = {
+      a: 1,
+      get roto(): string {
+        throw new Error("getter roto a propósito");
+      },
+    };
+    let resultado: unknown;
+    expect(() => {
+      resultado = serializarParaAuditoria(obj);
+    }).not.toThrow();
+    expect((resultado as Record<string, unknown>).a).toBe(1);
+    expect((resultado as Record<string, unknown>).roto).toBe("[error]");
+  });
 });

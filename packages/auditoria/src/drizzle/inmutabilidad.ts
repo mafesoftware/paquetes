@@ -1,5 +1,4 @@
-/** Mismo patrón que un identificador de Postgres sin comillas: minúsculas, empieza con letra o `_`, el resto letras/dígitos/`_`. */
-const NOMBRE_TABLA_VALIDO = /^[a-z_][a-z0-9_]*$/;
+import { validarNombreTabla } from "./nombre-tabla.js";
 
 /**
  * El SQL (función `plpgsql` + triggers) que hace INMUTABLE la tabla
@@ -34,12 +33,42 @@ const NOMBRE_TABLA_VALIDO = /^[a-z_][a-z0-9_]*$/;
  *
  * **`nombreTabla` se interpola directo en el SQL** (no hay forma de
  * parametrizar un nombre de tabla/función/trigger con un placeholder de
- * consulta en DDL de Postgres), así que se valida contra
- * `^[a-z_][a-z0-9_]*$` — el mismo patrón que un identificador de Postgres
- * sin comillas — y esta función TIRA si no matchea, antes de armar
- * cualquier string. No es una limitación cosmética: sin esta validación,
- * un `nombreTabla` que viniera de una fuente no confiable sería una
- * inyección SQL directa a esta función.
+ * consulta en DDL de Postgres), así que se valida con `validarNombreTabla`
+ * (mismo patrón `^[a-z_][a-z0-9_]*$` y mismo tope de 40 caracteres que
+ * `tablaAuditoria` — ver `nombre-tabla.ts`) y esta función TIRA si no pasa,
+ * antes de armar cualquier string. No es una limitación cosmética: sin esta
+ * validación, un `nombreTabla` que viniera de una fuente no confiable sería
+ * una inyección SQL directa a esta función.
+ *
+ * **Este trigger frena errores de la APP, no al dueño de la base.** Un rol
+ * con privilegios suficientes puede saltearlo igual — no es una barrera de
+ * seguridad contra un atacante con esos privilegios o contra un error de
+ * operación a ese nivel, es una red contra un bug/`UPDATE` manual accidental
+ * desde el rol con el que corre la aplicación:
+ *
+ * - `SET session_replication_role = replica;` desactiva TODOS los triggers
+ *   normales de la sesión (Postgres lo usa para replicación lógica, pero
+ *   cualquier rol con privilegio para setearlo puede usarlo para esto).
+ * - El DUEÑO de la tabla (o un superusuario) puede `ALTER TABLE ...
+ *   DISABLE TRIGGER ALL` (o el trigger por nombre), corre el `UPDATE`/
+ *   `DELETE`, y lo vuelve a habilitar — sin que el trigger se entere.
+ * - `DROP TABLE` (o `DROP TABLE ... CASCADE`) se lleva el trigger puesto:
+ *   no hay nada que "inmutabilizar" si la tabla entera desaparece.
+ * - Un superusuario de Postgres puede, en general, saltear cualquier
+ *   restricción a nivel de base (RLS incluido) salvo que se configure
+ *   explícitamente lo contrario.
+ *
+ * **Recomendación**: el rol con el que corre la APP (el que usa
+ * `auditar`/`listarAuditoria` en producción) NO debería ser el DUEÑO de la
+ * tabla de auditoría — si lo es, `DISABLE TRIGGER` queda a un `ALTER TABLE`
+ * de distancia de ese mismo rol, y el trigger deja de proteger ni siquiera
+ * contra un bug de la propia app (una migración mal escrita que corra con
+ * ese rol, por ejemplo). Crear la tabla (y agregar este trigger) con un rol
+ * de migraciones separado, y dar al rol de la app solo `SELECT`/`INSERT` —
+ * ni `UPDATE`/`DELETE`/`TRUNCATE` a nivel de PERMISOS de Postgres, ni
+ * `ALTER TABLE`, es una capa adicional (independiente de este trigger, y
+ * más fuerte: un permiso de Postgres denegado no se puede "desactivar"
+ * desde una sesión que no lo tiene) que sí vale la pena sumar.
  *
  * ```ts
  * import { sqlInmutabilidad } from "@mafesoftware/auditoria/drizzle";
@@ -51,14 +80,11 @@ const NOMBRE_TABLA_VALIDO = /^[a-z_][a-z0-9_]*$/;
  * // error: La tabla "auditoria" es de solo lectura (auditoría inmutable): no se permite UPDATE en esta tabla.
  *
  * sqlInmutabilidad("Auditoria; DROP TABLE x --"); // tira: nombre inválido
+ * sqlInmutabilidad("a".repeat(41)); // tira: nombre demasiado largo
  * ```
  */
 export function sqlInmutabilidad(nombreTabla: string): string {
-  if (!NOMBRE_TABLA_VALIDO.test(nombreTabla)) {
-    throw new Error(
-      `sqlInmutabilidad: nombre de tabla inválido: "${nombreTabla}". Tiene que matchear ${NOMBRE_TABLA_VALIDO} (minúsculas, empieza con letra o "_") — se interpola directo en el DDL, sin placeholders posibles.`,
-    );
-  }
+  validarNombreTabla(nombreTabla, "sqlInmutabilidad");
 
   const funcion = `${nombreTabla}_bloquear_escritura`;
 
@@ -67,6 +93,12 @@ export function sqlInmutabilidad(nombreTabla: string): string {
 -- sqlInmutabilidad de @mafesoftware/auditoria/drizzle). Agregar como
 -- migración A MANO, después de la que generó drizzle-kit para esta tabla.
 -- Idempotente: se puede correr más de una vez sin fallar.
+--
+-- Frena errores de la APP, no al dueño de la base: session_replication_role
+-- = replica, un ALTER TABLE ... DISABLE TRIGGER del dueño de la tabla, un
+-- DROP TABLE, o un superusuario, lo saltean igual — ver el JSDoc de
+-- sqlInmutabilidad en el paquete @mafesoftware/auditoria para el detalle y
+-- la recomendación de que el rol de la app no sea dueño de esta tabla.
 
 CREATE OR REPLACE FUNCTION "${funcion}"() RETURNS trigger AS $$
 BEGIN

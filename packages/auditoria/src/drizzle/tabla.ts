@@ -10,6 +10,7 @@ import {
   type PgTable,
 } from "drizzle-orm/pg-core";
 import { columnaTenant, type TipoColumnaTenant } from "@mafesoftware/tenant/drizzle";
+import { validarNombreTabla } from "./nombre-tabla.js";
 
 /** Opciones de `tablaAuditoria`. */
 export interface OpcionesTablaAuditoria {
@@ -87,6 +88,11 @@ export type TablaAuditoria = PgTable & ColumnasAuditoria;
  * `tablaAuditoria` solo arma la forma de la tabla, drizzle-kit no genera
  * triggers.
  *
+ * **Valida `nombre`** contra el mismo patrón y tope de largo que
+ * `sqlInmutabilidad` (`^[a-z_][a-z0-9_]*$`, máximo 40 caracteres — ver
+ * `nombre-tabla.ts`) y TIRA si no pasa: así una tabla que esta función deja
+ * crear siempre puede recibir después el trigger de `sqlInmutabilidad`.
+ *
  * ```ts
  * import { tablaAuditoria } from "@mafesoftware/auditoria/drizzle";
  *
@@ -98,10 +104,18 @@ export type TablaAuditoria = PgTable & ColumnasAuditoria;
  *   tenant: { columna: "club_id", tipo: "text" },
  *   nombre: "auditoria_facturacion",
  * });
+ *
+ * tablaAuditoria({ nombre: "Auditoria" }); // tira: nombre inválido (mayúscula)
  * ```
  */
 export function tablaAuditoria(opciones: OpcionesTablaAuditoria = {}): TablaAuditoria {
   const nombre = opciones.nombre ?? "auditoria";
+  // Misma validación (regex + tope de 40 caracteres) que `sqlInmutabilidad`
+  // — ver `nombre-tabla.ts` — para que una tabla que `tablaAuditoria` deja
+  // crear pueda recibir después el trigger de `sqlInmutabilidad` sin que
+  // ESE la rechace por separado (antes de esto, `tablaAuditoria` no
+  // validaba `nombre` en absoluto).
+  validarNombreTabla(nombre, "tablaAuditoria");
   const columnasExtra = opciones.columnasExtra ?? {};
 
   const tabla = pgTable(

@@ -40,6 +40,37 @@ describe("redactar", () => {
     });
   });
 
+  it("regla de matching: IGUAL o TERMINA CON un término (no \"contiene\") — los 5 ejemplos que SÍ se redactan", () => {
+    const obj = {
+      passwordHash: "h1",
+      password_hash: "h2",
+      accessToken: "t1",
+      refresh_token: "t2",
+      clientSecret: "s1",
+      "x-api-key": "k1",
+    };
+    expect(redactar(obj)).toEqual({
+      passwordHash: "[redactado]",
+      password_hash: "[redactado]",
+      accessToken: "[redactado]",
+      refresh_token: "[redactado]",
+      clientSecret: "[redactado]",
+      "x-api-key": "[redactado]",
+    });
+  });
+
+  it("regla de matching: passwordHint y tokenizer NO se redactan (el término sensible es un PREFIJO, no un sufijo)", () => {
+    expect(redactar({ passwordHint: "el nombre de tu mascota", tokenizer: "spacy" })).toEqual({
+      passwordHint: "el nombre de tu mascota",
+      tokenizer: "spacy",
+    });
+  });
+
+  it("límite documentado: un secreto bajo una clave NO sensible no se detecta (matching por clave, no por valor)", () => {
+    const obj = { notas: "la clave temporal es Xy9$zK" };
+    expect(redactar(obj)).toEqual(obj); // "notas" no es sensible, así que no se toca aunque el VALOR "parezca" un secreto
+  });
+
   it("una lista de campos sensibles propia reemplaza la default", () => {
     expect(redactar({ token: "t1", extra: "visible" }, ["token"])).toEqual({ token: "[redactado]", extra: "visible" });
     // "extra" no está en la lista propia, así que no se toca aunque no sea
@@ -112,5 +143,87 @@ describe("redactar", () => {
     }).not.toThrow();
     expect((resultado as Record<string, unknown>).contrasena).toBe("[redactado]");
     expect((resultado as Record<string, unknown>).self).toBe("[ciclo]");
+  });
+
+  it("I3: una instancia de clase propia se recorre por sus campos de instancia (this.password incluido)", () => {
+    class Usuario {
+      nombre: string;
+      password: string;
+      constructor(nombre: string, password: string) {
+        this.nombre = nombre;
+        this.password = password;
+      }
+      // Un método del prototipo NO es una clave propia enumerable: no
+      // tiene que aparecer en el resultado (Object.keys de una instancia no
+      // incluye métodos del prototipo).
+      saludar(): string {
+        return `Hola, ${this.nombre}`;
+      }
+    }
+    const u = new Usuario("ana", "hunter2");
+    expect(redactar(u)).toEqual({ nombre: "ana", password: "[redactado]" });
+  });
+
+  it("I3: un Map se convierte a un objeto de entradas (clave String(clave)) y se redacta igual", () => {
+    const m = new Map<string, unknown>([
+      ["usuario", "ana"],
+      ["contrasena", "hunter2"],
+    ]);
+    expect(redactar(m)).toEqual({ usuario: "ana", contrasena: "[redactado]" });
+  });
+
+  it("I3: un Map con clave sensible en profundidad (Map de Map)", () => {
+    const interno = new Map<string, unknown>([["password", "hunter2"]]);
+    const externo = new Map<string, unknown>([["credenciales", interno]]);
+    expect(redactar(externo)).toEqual({ credenciales: { password: "[redactado]" } });
+  });
+
+  it("I3: un Set se convierte a un arreglo (sin claves, así que sus elementos no se tapan por nombre, igual que un arreglo)", () => {
+    const s = new Set(["a", "b", "c"]);
+    expect(redactar(s)).toEqual(["a", "b", "c"]);
+  });
+
+  it("I3: un Set de objetos con clave sensible sí tapa esas claves (cada elemento se redacta)", () => {
+    const s = new Set([{ password: "hunter2" }, { password: "hunter3" }]);
+    expect(redactar(s)).toEqual([{ password: "[redactado]" }, { password: "[redactado]" }]);
+  });
+
+  it("I3: un Map cíclico (se referencia a sí mismo como valor) no tira, esa rama queda como \"[ciclo]\"", () => {
+    const m = new Map<string, unknown>();
+    m.set("self", m);
+    m.set("contrasena", "hunter2");
+    let resultado: unknown;
+    expect(() => {
+      resultado = redactar(m);
+    }).not.toThrow();
+    const r = resultado as Record<string, unknown>;
+    expect(r.self).toBe("[ciclo]");
+    expect(r.contrasena).toBe("[redactado]");
+  });
+
+  it("I3: un Set que se contiene a sí mismo no tira, esa rama queda como \"[ciclo]\"", () => {
+    const s = new Set<unknown>();
+    s.add(s);
+    s.add("x");
+    let resultado: unknown;
+    expect(() => {
+      resultado = redactar(s);
+    }).not.toThrow();
+    expect(resultado).toEqual(["[ciclo]", "x"]);
+  });
+
+  it("M10 (defensivo, redactar): una clave con un getter que tira no propaga la excepción, queda como \"[error]\"", () => {
+    const obj = {
+      contrasena: "hunter2",
+      get roto(): string {
+        throw new Error("getter roto a propósito");
+      },
+    };
+    let resultado: unknown;
+    expect(() => {
+      resultado = redactar(obj);
+    }).not.toThrow();
+    expect((resultado as Record<string, unknown>).contrasena).toBe("[redactado]");
+    expect((resultado as Record<string, unknown>).roto).toBe("[error]");
   });
 });

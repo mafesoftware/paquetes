@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { Pool } from "pg";
 import { Pool as PgPool } from "pg";
+import { sql } from "drizzle-orm";
 import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { DATABASE_URL_TEST, poolDePrueba } from "../../../../tests/lib/postgres-de-prueba.js";
 import { auditar } from "../../src/drizzle/auditar.js";
@@ -28,6 +29,13 @@ import { crearEsquemaDePrueba, ddlDeEsquemaDePrueba } from "./esquema.js";
  * test:sin-db`).
  */
 const NOMBRE_TABLA = `au_${randomUUID().replace(/-/g, "").slice(0, 16)}`;
+// M14: una tabla de "negocio" SEPARADA (no otra fila de auditoría) para
+// probar que el SAVEPOINT deja viva la tx externa — insertar acá adentro de
+// la misma tx que un `auditar` forzado a fallar, y confirmar que esta fila
+// SÍ persiste, es una prueba más convincente que insertar otra fila de
+// auditoría (que podría, en teoría, quedar en un estado especial por ser la
+// misma tabla con el trigger).
+const NOMBRE_TABLA_NEGOCIO = `au_negocio_${randomUUID().replace(/-/g, "").slice(0, 12)}`;
 
 let poolChequeo: Pool;
 let poolGrande: PgPool;
@@ -52,6 +60,11 @@ beforeAll(async () => {
   // desde el tipo de `EntradaAuditoria` (que no impide un string vacío).
   await poolChequeo.query(`alter table "${NOMBRE_TABLA}" add constraint accion_no_vacia check (accion <> '')`);
 
+  // Tabla de "negocio" de mentira para el test del SAVEPOINT (M14): una
+  // tabla real de la app, sin relación con auditoría, sin trigger de
+  // inmutabilidad (una app real SÍ puede actualizarla/borrarla).
+  await poolChequeo.query(`create table "${NOMBRE_TABLA_NEGOCIO}" (id uuid primary key, nombre text not null)`);
+
   poolGrande = new PgPool({ connectionString: DATABASE_URL_TEST, max: 10 });
   db = drizzle(poolGrande);
 });
@@ -66,6 +79,7 @@ afterAll(async () => {
   // que se salte el resto de la limpieza.
   await poolGrande?.end().catch(() => {});
   await poolChequeo.query(`drop table if exists "${NOMBRE_TABLA}" cascade`).catch(() => {});
+  await poolChequeo.query(`drop table if exists "${NOMBRE_TABLA_NEGOCIO}" cascade`).catch(() => {});
   await poolChequeo.end();
 });
 
@@ -143,76 +157,198 @@ describe("auditar (Postgres real)", () => {
   });
 
   it(
-    "dentro de una tx: un fallo forzado del insert de auditoría (check constraint) NO aborta la tx externa — " +
-      "sigue viva y commitea el resto de su trabajo (SAVEPOINT)",
+    "M14: dentro de una tx, un fallo forzado del insert de auditoría (check constraint) NO aborta la tx externa — " +
+      "una escritura de NEGOCIO REAL (tabla separada, no otra fila de auditoría) en la MISMA tx SÍ commitea (SAVEPOINT)",
     async () => {
-      const tenantId = randomUUID();
-      const entidadIdValida = randomUUID();
+      // M7: silenciar el console.error esperado (el segundo auditar de acá
+      // abajo falla a propósito) para no ensuciar la salida de test — se
+      // restaura en el finally.
+      const spyError = vi.spyOn(console, "error").mockImplementation(() => {});
+      try {
+        const tenantId = randomUUID();
+        const idNegocio = randomUUID();
 
-      const resultadoDelSegundo = await db.transaction(async (tx) => {
-        // Trabajo de negocio real DENTRO de la misma tx: una auditoría
-        // válida que tiene que sobrevivir aunque la llamada de más abajo
-        // falle.
-        const primero = await auditar(tx, auditoria, {
-          tenantId,
-          entidad: "producto",
-          entidadId: entidadIdValida,
-          accion: "crear",
-          actor: { tipo: "usuario" },
+        const resultadoDelSegundo = await db.transaction(async (tx) => {
+          // Trabajo de NEGOCIO real DENTRO de la misma tx — una tabla propia
+          // de la app, sin relación con auditoría — que tiene que sobrevivir
+          // aunque la llamada a `auditar` de más abajo falle. Usar una tabla
+          // separada (no otra fila de auditoría) es una prueba más
+          // convincente: confirma que el SAVEPOINT protege CUALQUIER trabajo
+          // previo de la tx, no solo otro insert en la misma tabla con el
+          // mismo trigger.
+          await tx.execute(
+            sql`insert into ${sql.identifier(NOMBRE_TABLA_NEGOCIO)} (id, nombre) values (${idNegocio}, 'trabajo de negocio real')`,
+          );
+
+          // Fuerza un 23514 (check_violation): "accion_no_vacia" no permite
+          // accion = "". Sin el SAVEPOINT que arma `auditar`, esto dejaría la
+          // tx externa ABORTADA y CUALQUIER sentencia posterior (incluido el
+          // COMMIT implícito al salir del callback, que se hubiera llevado
+          // puesta la fila de negocio de arriba) fallaría con "current
+          // transaction is aborted".
+          const segundo = await auditar(tx, auditoria, {
+            tenantId,
+            entidad: "producto",
+            entidadId: randomUUID(),
+            accion: "",
+            actor: { tipo: "usuario" },
+          });
+
+          // auditar NUNCA tira: llegar hasta acá (y poder seguir usando `tx`,
+          // incluido el COMMIT implícito al volver) ES la prueba de que el
+          // SAVEPOINT funcionó.
+          return segundo;
         });
-        expect(primero.ok).toBe(true);
 
-        // Fuerza un 23514 (check_violation): "accion_no_vacia" no permite
-        // accion = "". Sin el SAVEPOINT que arma `auditar`, esto dejaría la
-        // tx externa ABORTADA y CUALQUIER sentencia posterior (incluido el
-        // COMMIT implícito al salir del callback) fallaría con "current
-        // transaction is aborted".
-        const segundo = await auditar(tx, auditoria, {
-          tenantId,
-          entidad: "producto",
-          entidadId: randomUUID(),
-          accion: "",
-          actor: { tipo: "usuario" },
-        });
+        expect(resultadoDelSegundo.ok).toBe(false);
+        if (resultadoDelSegundo.ok) throw new Error("no debería pasar");
+        expect(resultadoDelSegundo.error).toBeDefined();
+        expect(spyError).toHaveBeenCalled();
 
-        // auditar NUNCA tira: llegar hasta acá (y poder seguir usando `tx`)
-        // ES la prueba de que el SAVEPOINT funcionó.
-        return segundo;
-      });
+        // La tx externa COMMITEÓ: la fila de NEGOCIO (tabla separada) está
+        // en la base.
+        const negocio = await poolChequeo.query(`select nombre from "${NOMBRE_TABLA_NEGOCIO}" where id = $1`, [
+          idNegocio,
+        ]);
+        expect(negocio.rows).toHaveLength(1);
+        expect(negocio.rows[0].nombre).toBe("trabajo de negocio real");
 
-      expect(resultadoDelSegundo.ok).toBe(false);
-      if (resultadoDelSegundo.ok) throw new Error("no debería pasar");
-      expect(resultadoDelSegundo.error).toBeDefined();
-
-      // La tx externa COMMITEÓ: la primera fila (válida) está en la base.
-      const { rows } = await poolChequeo.query(
-        `select count(*)::int as n from "${NOMBRE_TABLA}" where organizacion_id = $1 and entidad_id = $2`,
-        [tenantId, entidadIdValida],
-      );
-      expect(rows[0].n).toBe(1);
-
-      // Y la segunda (la que forzó el check constraint) NO dejó fila.
-      const total = await poolChequeo.query(
-        `select count(*)::int as n from "${NOMBRE_TABLA}" where organizacion_id = $1`,
-        [tenantId],
-      );
-      expect(total.rows[0].n).toBe(1);
+        // Y la auditoría que forzó el check constraint NO dejó fila.
+        const auditoriaFallida = await poolChequeo.query(
+          `select count(*)::int as n from "${NOMBRE_TABLA}" where organizacion_id = $1`,
+          [tenantId],
+        );
+        expect(auditoriaFallida.rows[0].n).toBe(0);
+      } finally {
+        spyError.mockRestore();
+      }
     },
   );
 
   it('sin transacción explícita (db directo, no tx): un fallo forzado también da { ok: false }, nunca tira', async () => {
-    const tenantId = randomUUID();
-    const resultado = await auditar(db, auditoria, {
-      tenantId,
-      entidad: "producto",
-      entidadId: randomUUID(),
-      accion: "", // check constraint
-      actor: { tipo: "sistema" },
-    });
-    expect(resultado.ok).toBe(false);
+    const spyError = vi.spyOn(console, "error").mockImplementation(() => {}); // M7: silenciar
+    try {
+      const tenantId = randomUUID();
+      const resultado = await auditar(db, auditoria, {
+        tenantId,
+        entidad: "producto",
+        entidadId: randomUUID(),
+        accion: "", // check constraint
+        actor: { tipo: "sistema" },
+      });
+      expect(resultado.ok).toBe(false);
+      expect(spyError).toHaveBeenCalled();
+    } finally {
+      spyError.mockRestore();
+    }
   });
 
-  it("la redacción se aplica ANTES de llegar a la base: el jsonb crudo no tiene el valor sensible", async () => {
+  it("I2: el console.error de un fallo NUNCA incluye el objeto de error completo ni valores de la entrada (secretos/emails) — solo entidad/entidadId/accion y code/message de Postgres", async () => {
+    const spyError = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const tenantId = randomUUID();
+      const entidadId = randomUUID();
+      const emailSecreto = "no-deberia-aparecer-en-el-log@ejemplo.com";
+      const passwordSecreto = "hunter2-no-deberia-aparecer-en-el-log";
+
+      const resultado = await auditar(db, auditoria, {
+        tenantId,
+        entidad: "usuario",
+        entidadId,
+        accion: "", // check constraint: fuerza el fallo
+        actor: { tipo: "usuario" },
+        antes: { email: emailSecreto, contrasena: passwordSecreto },
+        despues: { email: emailSecreto, contrasena: "otro-secreto-tampoco-deberia-aparecer" },
+      });
+      expect(resultado.ok).toBe(false);
+
+      expect(spyError).toHaveBeenCalledTimes(1);
+      const textoLogueado = spyError.mock.calls
+        .flat()
+        .map((arg) => (typeof arg === "string" ? arg : JSON.stringify(arg)))
+        .join(" ");
+
+      // Nunca el valor sensible (ni siquiera el ya "redactado" — el punto es
+      // que el error/params del driver JAMÁS se loguean, con o sin
+      // redacción de por medio).
+      expect(textoLogueado).not.toContain(emailSecreto);
+      expect(textoLogueado).not.toContain(passwordSecreto);
+      expect(textoLogueado).not.toContain("otro-secreto-tampoco-deberia-aparecer");
+      // Nunca el error completo: ni el SQL armado ni el arreglo de params
+      // que trae un DrizzleQueryError como propiedades propias.
+      expect(textoLogueado).not.toContain("insert into");
+      expect(textoLogueado).not.toContain("params:");
+
+      // SÍ tiene el contexto útil para debuggear (sin datos sensibles).
+      expect(textoLogueado).toContain("usuario"); // entidad
+      expect(textoLogueado).toContain(entidadId);
+      // Algún rastro del motivo real de Postgres (code 23514 o el nombre de
+      // la constraint en el message) para que no sea un mensaje ciego.
+      expect(textoLogueado.includes("23514") || textoLogueado.toLowerCase().includes("constraint")).toBe(true);
+    } finally {
+      spyError.mockRestore();
+    }
+  });
+
+  it("I4: pagina/porPagina con NaN o Infinity caen a los defaults en vez de romper la consulta", async () => {
+    const tenantId = randomUUID();
+    await auditar(db, auditoria, { tenantId, entidad: "x", entidadId: randomUUID(), accion: "crear", actor: { tipo: "sistema" } });
+
+    await expect(listarAuditoria(db, auditoria, { tenantId, pagina: Number.NaN })).resolves.toMatchObject({ total: 1 });
+    await expect(listarAuditoria(db, auditoria, { tenantId, porPagina: Number.NaN })).resolves.toMatchObject({ total: 1 });
+    await expect(listarAuditoria(db, auditoria, { tenantId, pagina: Number.POSITIVE_INFINITY })).resolves.toMatchObject({
+      total: 1,
+    });
+    await expect(listarAuditoria(db, auditoria, { tenantId, porPagina: Number.POSITIVE_INFINITY })).resolves.toMatchObject({
+      total: 1,
+    });
+    await expect(listarAuditoria(db, auditoria, { tenantId, porPagina: Number.NEGATIVE_INFINITY })).resolves.toMatchObject({
+      total: 1,
+    });
+
+    // Y da EXACTAMENTE el mismo resultado que no pasar la opción (el default real).
+    const conNaN = await listarAuditoria(db, auditoria, { tenantId, pagina: Number.NaN, porPagina: Number.NaN });
+    const sinOpciones = await listarAuditoria(db, auditoria, { tenantId });
+    expect(conNaN.filas.map((f) => f.id)).toEqual(sinOpciones.filas.map((f) => f.id));
+  });
+
+  it("C1 (Postgres real): un secreto ANIDADO bajo una clave ancestro sensible no aparece en el jsonb crudo (antes/despues/cambios) ni siquiera con ::text", async () => {
+    const tenantId = randomUUID();
+    const entidadId = randomUUID();
+    const secretoAntes = "AAA-secreto-anidado-antes";
+    const secretoDespues = "BBB-secreto-anidado-despues";
+
+    const resultado = await auditar(db, auditoria, {
+      tenantId,
+      entidad: "integracion",
+      entidadId,
+      accion: "rotar_token",
+      actor: { tipo: "sistema" },
+      antes: { token: { access: secretoAntes }, nombre: "visible" },
+      despues: { token: { access: secretoDespues }, nombre: "visible" },
+    });
+    expect(resultado.ok).toBe(true);
+    if (!resultado.ok) throw new Error("no debería pasar");
+
+    // Casteo explícito a ::text de las tres columnas, tal como jsonb las
+    // guarda CRUDAS en la base — no vía el parseo automático de "pg" (que
+    // ya devuelve un objeto JS), para confirmar que el secreto no está ni
+    // siquiera en el texto serializado tal cual vive en el disco.
+    const { rows } = await poolChequeo.query<{ antes: string; despues: string; cambios: string }>(
+      `select antes::text as antes, despues::text as despues, cambios::text as cambios from "${NOMBRE_TABLA}" where id = $1`,
+      [resultado.id],
+    );
+    const fila = rows[0]!;
+    expect(fila.antes).not.toContain(secretoAntes);
+    expect(fila.despues).not.toContain(secretoDespues);
+    expect(fila.cambios).not.toContain(secretoAntes);
+    expect(fila.cambios).not.toContain(secretoDespues);
+    // Lo no sensible SÍ queda legible (confirma que la redacción es
+    // selectiva, no un borrado de toda la fila).
+    expect(fila.antes).toContain("visible");
+  });
+
+  it("la redacción se aplica ANTES de llegar a la base: el jsonb crudo no tiene el valor sensible (ni en antes/despues ni en cambios)", async () => {
     const tenantId = randomUUID();
     const entidadId = randomUUID();
     const resultado = await auditar(db, auditoria, {
@@ -221,8 +357,11 @@ describe("auditar (Postgres real)", () => {
       entidadId,
       accion: "actualizar",
       actor: { tipo: "usuario" },
+      // "contrasena" CAMBIA (hunter2 -> hunter3) y "email" también CAMBIA
+      // (para confirmar que un cambio real en un campo NO sensible sigue
+      // apareciendo en "cambios" con total normalidad).
       antes: { email: "ana@x.com", contrasena: "hunter2" },
-      despues: { email: "ana@x.com", contrasena: "hunter3" },
+      despues: { email: "ana2@x.com", contrasena: "hunter3" },
     });
     expect(resultado.ok).toBe(true);
     if (!resultado.ok) throw new Error("no debería pasar");
@@ -237,12 +376,20 @@ describe("auditar (Postgres real)", () => {
     expect(rows[0].antes.contrasena).toBe("[redactado]");
     expect(rows[0].despues.contrasena).toBe("[redactado]");
     expect(rows[0].antes.email).toBe("ana@x.com"); // lo no sensible queda legible
+    expect(rows[0].despues.email).toBe("ana2@x.com");
 
-    const cambioContrasena = (rows[0].cambios as { campo: string; antes: unknown; despues: unknown }[]).find(
-      (c) => c.campo === "contrasena",
-    );
-    expect(cambioContrasena?.antes).toBe("[redactado]");
-    expect(cambioContrasena?.despues).toBe("[redactado]");
+    // C1 (fix estructural, ver el JSDoc de auditar): "contrasena" NO
+    // aparece en "cambios" en absoluto — antes/despues se redactan ANTES de
+    // diffear, así que los dos lados llegan a loQueCambio como el MISMO
+    // string "[redactado]" y no se ve ninguna diferencia ahí. Es el
+    // trade-off documentado: se prioriza no filtrar el secreto por sobre
+    // mostrar que un campo sensible cambió. "email" (no sensible) SÍ
+    // aparece, con total normalidad.
+    const cambios = rows[0].cambios as { campo: string; antes: unknown; despues: unknown }[];
+    expect(cambios.some((c) => c.campo === "contrasena")).toBe(false);
+    const cambioEmail = cambios.find((c) => c.campo === "email");
+    expect(cambioEmail?.antes).toBe("ana@x.com");
+    expect(cambioEmail?.despues).toBe("ana2@x.com");
   });
 
   it("bigint/Date en antes/despues llegan serializados (no tira insertando)", async () => {

@@ -65,20 +65,44 @@ function diff(
   pilaAntes: Set<object>,
   pilaDespues: Set<object>,
 ): void {
-  // Un lado AUSENTE (`undefined`) contra un objeto plano del otro lado se
+  // Misma REFERENCIA (o mismo primitivo) de los dos lados: no hay nada que
+  // reportar. Además de ser el caso obvio (`loQueCambio(x, x)` con `x` lo
+  // que sea), es lo que evita un falso `"[ciclo]"` cuando `x` es un objeto
+  // AUTOREFERENCIAL (`x.self = x`) pasado literalmente igual de los dos
+  // lados: sin este corte, bajar a la clave `"self"` encontraría a `x` como
+  // ancestro de sí mismo (ver la pila más abajo) y lo reportaría como un
+  // cambio, aunque los dos lados sean EXACTAMENTE el mismo objeto — nunca
+  // hubo ninguna edición. Los ancestros DISTINTOS-pero-cíclicos (dos
+  // objetos autoreferenciales diferentes, `objA !== objB`) siguen
+  // detectándose más abajo y reportándose como `"[ciclo]"`: acá solo se
+  // corta el caso en el que literalmente no hay diferencia posible.
+  if (antesEntrada === despuesEntrada) return;
+
+  // Un lado AUSENTE (`undefined` O `null` — los dos cuentan como "no hay
+  // nada de este lado" para esto) contra un objeto plano del otro lado se
   // trata como si el lado ausente fuera `{}`, para poder expandir el diff
   // CAMPO A CAMPO en vez de reportar el objeto entero como un solo cambio.
   // Es el caso típico de `auditar` con una entidad recién CREADA (`antes`
-  // ausente, `despues` la entidad completa) o BORRADA (al revés): cada
-  // campo aparece como agregado/quitado por separado, que es más útil que
-  // un único blob — y consistente con "una clave agregada o quitada se ve
-  // como su valor pasando desde/hacia `undefined`" aplicado también al
-  // nivel más externo, no solo a las claves de un objeto ya emparejado.
-  // Con los DOS lados ausentes (o un lado ausente contra algo que NO es un
-  // objeto plano, ej. un string) no aplica: eso sigue siendo una
-  // comparación de valor normal, más abajo.
-  const antes = antesEntrada === undefined && esObjetoPlano(despuesEntrada) ? {} : antesEntrada;
-  const despues = despuesEntrada === undefined && esObjetoPlano(antesEntrada) ? {} : despuesEntrada;
+  // ausente, `despues` la entidad completa — al alta, algunas apps pasan
+  // `antes: undefined` y otras `antes: null`, las dos tienen que dar el
+  // mismo resultado) o BORRADA (al revés): cada campo aparece como
+  // agregado/quitado por separado, que es más útil que un único blob — y
+  // consistente con "una clave agregada o quitada se ve como su valor
+  // pasando desde/hacia `undefined`" aplicado también al nivel más externo,
+  // no solo a las claves de un objeto ya emparejado. Con los DOS lados
+  // ausentes (o un lado ausente contra algo que NO es un objeto plano, ej.
+  // un string) no aplica: eso sigue siendo una comparación de valor normal,
+  // más abajo. Esto NO cambia que `null` y `undefined` sigan siendo
+  // valores DISTINTOS entre sí en una comparación directa (ver el JSDoc de
+  // `loQueCambio`): una clave con `null` explícito contra la MISMA clave
+  // ausente en el otro lado sigue siendo un cambio (`antes: null, despues:
+  // undefined`), porque ninguno de los dos es, ahí, "un objeto plano del
+  // otro lado" — la sustitución de acá solo dispara cuando el OTRO lado sí
+  // es un objeto plano.
+  const antesAusente = antesEntrada === undefined || antesEntrada === null;
+  const despuesAusente = despuesEntrada === undefined || despuesEntrada === null;
+  const antes = antesAusente && esObjetoPlano(despuesEntrada) ? {} : antesEntrada;
+  const despues = despuesAusente && esObjetoPlano(antesEntrada) ? {} : despuesEntrada;
 
   const antesEsObjeto = typeof antes === "object" && antes !== null;
   const despuesEsObjeto = typeof despues === "object" && despues !== null;
@@ -147,22 +171,34 @@ function diff(
  * cambio); una clave agregada o quitada entre `antes` y `despues` se ve
  * como su valor pasando desde/hacia `undefined`.
  *
- * **Nunca tira por un ciclo.** Si `antes` o `despues` tienen una referencia
- * circular (`obj.self = obj`), esa rama se detecta y se reporta con
- * `antes`/`despues` en el string `"[ciclo]"`, sin recursión infinita — ver
- * el detalle en `diff` (interno).
+ * **Nunca tira por un ciclo, y `loQueCambio(x, x)` con `x` autoreferencial
+ * da `[]`, no `"[ciclo]"`.** Los dos lados EXACTAMENTE el mismo valor
+ * (misma referencia) se cortan antes de recorrer nada — no hay ninguna
+ * diferencia posible, así que no se reporta nada, sin importar si `x` tiene
+ * una referencia circular adentro. Cuando `antes` y `despues` SÍ son
+ * objetos autoreferenciales DISTINTOS (`objA !== objB`, cada uno con su
+ * propio ciclo, ej. `objA.self = objA` y `objB.self = objB`), esa rama no
+ * se puede resolver sin recursión infinita y se reporta con `antes`/
+ * `despues` en el string `"[ciclo]"` — ver el detalle en `diff` (interno).
  *
- * Con `antes` y `despues` ausentes (`undefined` los dos, el caso de
- * `auditar` sin `antes` ni `despues`), devuelve `[]`.
+ * Con `antes` y `despues` ausentes (`undefined` o `null`, los dos — el
+ * caso de `auditar` sin `antes` ni `despues`), devuelve `[]`.
  *
- * **Un lado ausente contra un objeto plano del otro lado se expande CAMPO A
- * CAMPO**, no como un solo cambio con el objeto entero: `loQueCambio(undefined,
- * { nombre: "Silla", precio: 100 })` (el caso típico de auditar una entidad
- * recién CREADA, sin "antes") da DOS cambios — `"nombre"` y `"precio"`, cada
- * uno con `antes: undefined` — no uno solo en `"(raiz)"`. Mismo criterio al
- * revés para una entidad BORRADA (`despues` ausente). Si el lado presente NO
- * es un objeto plano (un string, un número, ...), no aplica: ahí sí es un
- * solo cambio de valor entero (ver el ejemplo de abajo).
+ * **Un lado ausente (`undefined` O `null`) contra un objeto plano del otro
+ * lado se expande CAMPO A CAMPO**, no como un solo cambio con el objeto
+ * entero: `loQueCambio(undefined, { nombre: "Silla", precio: 100 })` (el
+ * caso típico de auditar una entidad recién CREADA, sin "antes" — algunas
+ * apps pasan `antes: undefined`, otras `antes: null`, las dos dan el mismo
+ * resultado) da DOS cambios — `"nombre"` y `"precio"`, cada uno con `antes:
+ * undefined` — no uno solo en `"(raiz)"`. Mismo criterio al revés para una
+ * entidad BORRADA (`despues` ausente). Si el lado presente NO es un objeto
+ * plano (un string, un número, ...), no aplica: ahí sí es un solo cambio de
+ * valor entero (ver el ejemplo de abajo). **Esto no cambia que `null` y
+ * `undefined` sigan siendo valores DISTINTOS entre sí** en una comparación
+ * directa: una clave con `null` explícito contra la MISMA clave ausente en
+ * el otro lado sigue siendo un cambio (`antes: null, despues: undefined`) —
+ * la expansión de acá solo dispara cuando el OTRO lado es un objeto plano,
+ * no cuando los dos son ausentes o cuando el otro lado es otro primitivo.
  *
  * ```ts
  * import { loQueCambio } from "@mafesoftware/auditoria";
@@ -187,6 +223,13 @@ function diff(
  * // ("antes" ausente contra un objeto plano se expande campo a campo, no un solo cambio en "(raiz)")
  *
  * loQueCambio(undefined, "texto"); // [{ campo: "(raiz)", antes: undefined, despues: "texto" }] (el lado presente no es un objeto: un solo cambio)
+ *
+ * loQueCambio(null, { nombre: "Silla" }); // [{ campo: "nombre", antes: undefined, despues: "Silla" }] (null se trata igual que undefined acá)
+ *
+ * loQueCambio({ nota: null }, {}); // [{ campo: "nota", antes: null, despues: undefined }] (null y undefined siguen siendo DISTINTOS entre sí)
+ *
+ * const x: any = { a: 1 }; x.self = x;
+ * loQueCambio(x, x); // [] (misma referencia de los dos lados: sin diferencia posible, aunque x sea autoreferencial)
  * ```
  */
 export function loQueCambio(antes: unknown, despues: unknown): CambioAuditoria[] {

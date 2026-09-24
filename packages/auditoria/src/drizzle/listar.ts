@@ -13,9 +13,9 @@ export interface OpcionesListarAuditoria {
   desde?: Date;
   /** Filtra `creado_en <= hasta` (inclusive). */
   hasta?: Date;
-  /** Base 1. Por defecto `1`. Un valor `< 1` se trata como `1`. */
+  /** Base 1. Por defecto `1`. Un valor `< 1` se trata como `1`; `NaN`/`Infinity`/`-Infinity` (ej. un query param sin validar) caen al default, no rompen la consulta. */
   pagina?: number;
-  /** Por defecto `50`. Se cap-ea a `200` aunque se pida más. */
+  /** Por defecto `50`. Se cap-ea a `200` aunque se pida más; `NaN`/`Infinity`/`-Infinity` caen al default. */
   porPagina?: number;
 }
 
@@ -48,6 +48,21 @@ const POR_PAGINA_POR_DEFECTO = 50;
 const POR_PAGINA_MAXIMO = 200;
 
 /**
+ * `v` si es un número FINITO (ni `undefined`, ni `NaN`, ni `Infinity`/
+ * `-Infinity`), si no `porDefecto`. Sin este chequeo, `Math.trunc(NaN)` da
+ * `NaN` y `Math.max(1, NaN)` da `NaN` — un `pagina`/`porPagina` que llegara
+ * `NaN` (ej. `Number(query.pagina)` sobre un string no numérico de la URL,
+ * sin validar antes) terminaba armando `LIMIT NaN OFFSET NaN` en el SQL,
+ * que Postgres rechaza con un error de sintaxis en vez de simplemente
+ * paginar con los defaults. `Infinity` tenía el mismo problema
+ * (`Math.trunc(Infinity)` es `Infinity`, no finito, mismo resultado en el
+ * SQL).
+ */
+function numeroFinito(v: number | undefined, porDefecto: number): number {
+  return v !== undefined && Number.isFinite(v) ? v : porDefecto;
+}
+
+/**
  * Lista filas de auditoría de UN tenant (siempre filtrado por `tenantId`,
  * nunca opcional — no hay "listar de todos los tenants"), con filtros
  * opcionales por entidad/actor/rango de fechas, paginado.
@@ -59,6 +74,12 @@ const POR_PAGINA_MAXIMO = 200;
  *
  * `porPagina` se cap-ea a `200` aunque se pida más (ver `POR_PAGINA_MAXIMO`
  * más arriba); `pagina` es base 1 y un valor `< 1` se trata como `1`.
+ * **`pagina`/`porPagina` que lleguen `NaN`/`Infinity`/`-Infinity` (típico de
+ * `Number(queryParam)` sobre un string no numérico, sin validar antes) caen
+ * a sus defaults** en vez de armar un `LIMIT`/`OFFSET` inválido — antes de
+ * este chequeo, un `pagina: NaN` llegaba tal cual hasta el SQL
+ * (`Math.trunc(NaN)` es `NaN`) y Postgres rechazaba la consulta entera con
+ * un error de sintaxis.
  *
  * SQL crudo (no `.select().from(tabla)` del query builder), mismo motivo
  * que `auditar`: el tipo público `TablaAuditoria` es un cast ancho para
@@ -94,8 +115,8 @@ export async function listarAuditoria(
   tabla: TablaAuditoria,
   opciones: OpcionesListarAuditoria,
 ): Promise<ResultadoListarAuditoria> {
-  const pagina = Math.max(1, Math.trunc(opciones.pagina ?? PAGINA_POR_DEFECTO));
-  const porPagina = Math.min(POR_PAGINA_MAXIMO, Math.max(1, Math.trunc(opciones.porPagina ?? POR_PAGINA_POR_DEFECTO)));
+  const pagina = Math.max(1, Math.trunc(numeroFinito(opciones.pagina, PAGINA_POR_DEFECTO)));
+  const porPagina = Math.min(POR_PAGINA_MAXIMO, Math.max(1, Math.trunc(numeroFinito(opciones.porPagina, POR_PAGINA_POR_DEFECTO))));
   const offset = (pagina - 1) * porPagina;
 
   const colId = sql.identifier(tabla.id.name);

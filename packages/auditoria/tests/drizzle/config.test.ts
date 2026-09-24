@@ -105,6 +105,19 @@ describe("tablaAuditoria (sin Postgres)", () => {
     const config = getTableConfig(tabla);
     expect(config.columns.some((c) => c.name === "correlation_id")).toBe(true);
   });
+
+  it("M9: valida \"nombre\" con el MISMO patrón que sqlInmutabilidad y tira si no matchea", () => {
+    expect(() => tablaAuditoria({ nombre: "Auditoria" })).toThrow(); // mayúscula
+    expect(() => tablaAuditoria({ nombre: "2auditoria" })).toThrow(); // empieza con dígito
+    expect(() => tablaAuditoria({ nombre: "con espacio" })).toThrow();
+    expect(() => tablaAuditoria({ nombre: "" })).toThrow();
+    expect(() => tablaAuditoria({ nombre: "auditoria_valida" })).not.toThrow();
+  });
+
+  it("M8/M9: tira si \"nombre\" supera el largo máximo (mismo tope que sqlInmutabilidad)", () => {
+    expect(() => tablaAuditoria({ nombre: "a".repeat(41) })).toThrow();
+    expect(() => tablaAuditoria({ nombre: "a".repeat(40) })).not.toThrow();
+  });
 });
 
 describe("sqlInmutabilidad (sin Postgres)", () => {
@@ -133,5 +146,35 @@ describe("sqlInmutabilidad (sin Postgres)", () => {
     expect(() => sqlInmutabilidad("2auditoria")).toThrow();
     expect(() => sqlInmutabilidad("con espacio")).toThrow();
     expect(() => sqlInmutabilidad("")).toThrow();
+  });
+
+  it("M8: tira si el nombre de tabla supera el largo máximo (40 caracteres), para que los identificadores derivados queden bajo el límite de 63 de Postgres", () => {
+    const nombreLargo = "a".repeat(41);
+    expect(() => sqlInmutabilidad(nombreLargo)).toThrow();
+
+    const nombreLimite = "a".repeat(40);
+    expect(() => sqlInmutabilidad(nombreLimite)).not.toThrow();
+    // El identificador más largo que arma (la función) queda bajo 63.
+    const funcionMasLarga = `${nombreLimite}_bloquear_escritura`;
+    expect(funcionMasLarga.length).toBeLessThanOrEqual(63);
+  });
+
+  it("M9: tablaAuditoria y sqlInmutabilidad aceptan/rechazan EXACTAMENTE los mismos nombres", () => {
+    const nombres = ["auditoria", "Auditoria", "2x", "a".repeat(40), "a".repeat(41), "con espacio", "_ok_"];
+    for (const nombre of nombres) {
+      let tablaTira = false;
+      let inmutabilidadTira = false;
+      try {
+        tablaAuditoria({ nombre });
+      } catch {
+        tablaTira = true;
+      }
+      try {
+        sqlInmutabilidad(nombre);
+      } catch {
+        inmutabilidadTira = true;
+      }
+      expect(tablaTira, nombre).toBe(inmutabilidadTira);
+    }
   });
 });

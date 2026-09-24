@@ -1,6 +1,7 @@
 import { sql } from "drizzle-orm";
 import { loQueCambio, type CambioAuditoria } from "../lo-que-cambio.js";
 import { CAMPOS_SENSIBLES_POR_DEFECTO, redactar } from "../redactar.js";
+import { esClaveSensible, normalizarTerminos } from "../coincidencia-sensible.js";
 import { serializarParaAuditoria } from "../serializar.js";
 import type { DbCliente } from "./cliente.js";
 import type { ActorTipo, TablaAuditoria } from "./tabla.js";
@@ -25,36 +26,34 @@ export interface EntradaAuditoria {
 
 export type ResultadoAuditar = { ok: true; id: string } | { ok: false; error: unknown };
 
-/** El último segmento de una ruta con puntos (`"direccion.cbu"` -> `"cbu"`) — el nombre de campo real que hay que chequear contra la lista de sensibles. */
-function ultimoSegmento(ruta: string): string {
-  const i = ruta.lastIndexOf(".");
-  return i === -1 ? ruta : ruta.slice(i + 1);
-}
-
-function normalizarClave(clave: string): string {
-  return clave.toLowerCase().replace(/[_-]/g, "");
-}
-
 /**
- * Redacta el resultado de `loQueCambio` — a diferencia de `redactar`, que
- * tapa por NOMBRE DE CLAVE de un objeto, acá el nombre del campo sensible
- * vive como VALOR de `campo` (ej. `{ campo: "contrasena", antes: "abc",
- * despues: "xyz" }`), no como clave — así que correr `redactar` sobre el
- * arreglo TAL CUAL no alcanzaría: las claves de cada entrada son `"campo"`,
- * `"antes"`, `"despues"`, ninguna sensible por sí misma, y el VALOR
- * sensible de verdad quedaría sin tapar bajo la clave `"antes"`/`"despues"`.
+ * Defensa EN PROFUNDIDAD sobre `cambios` (el resultado de `loQueCambio`),
+ * DESPUÉS de que `auditar` ya corrió `redactar` sobre `antes`/`despues`
+ * ANTES de diffearlos (ver el JSDoc de `auditar`, sección "Cómo se evita
+ * que un secreto anidado llegue a `cambios`"). En el flujo normal, esto casi
+ * nunca encuentra nada que tapar — `antes`/`despues` ya llegan redactados
+ * acá, así que cualquier valor bajo una clave sensible YA es
+ * `"[redactado]"` antes de que `loQueCambio` lo vea. Se mantiene igual como
+ * red de seguridad ante cualquier hueco no anticipado (ej. si algún día
+ * `loQueCambio` cambia y deja de operar sobre el resultado de `redactar`).
  *
- * Si el ÚLTIMO segmento de la ruta (`"direccion.cbu"` -> `"cbu"`) matchea
- * la lista, se reemplaza el valor entero por `"[redactado]"` (conservando
- * `undefined` si el campo estaba ausente de ese lado). Si no matchea, igual
- * se corre `redactar` sobre `antes`/`despues` por si son objetos con
- * alguna clave sensible ADENTRO — ej. un campo `"direccion"` reemplazado
- * entero por un objeto nuevo que tiene un `token` propio.
+ * A diferencia de `redactar` (que tapa por NOMBRE DE CLAVE de un objeto),
+ * acá el nombre del campo sensible vive como VALOR de `campo` (ej.
+ * `{ campo: "token.access", antes: "abc", despues: "xyz" }`), no como
+ * clave — así que correr `redactar` sobre el arreglo TAL CUAL no
+ * alcanzaría: las claves de cada entrada son `"campo"`, `"antes"`,
+ * `"despues"`, ninguna sensible por sí misma.
+ *
+ * Chequea CUALQUIER segmento de la ruta con puntos (no solo el último): si
+ * `"token.access"` matchea porque `"token"` es sensible (aunque `"access"`
+ * no lo sea), igual se tapa — la fuga original de este paquete (C1) era
+ * justo eso, un ancestro sensible con un hijo de nombre inocuo.
  */
-function redactarCambios(cambios: CambioAuditoria[], camposSensibles: readonly string[]): CambioAuditoria[] {
-  const sensibles = new Set(camposSensibles.map(normalizarClave));
+function redactarCambiosDefensaEnProfundidad(cambios: CambioAuditoria[], camposSensibles: readonly string[]): CambioAuditoria[] {
+  const sensibles = normalizarTerminos(camposSensibles);
   return cambios.map((cambio) => {
-    if (sensibles.has(normalizarClave(ultimoSegmento(cambio.campo)))) {
+    const tieneSegmentoSensible = cambio.campo.split(".").some((segmento) => esClaveSensible(segmento, sensibles));
+    if (tieneSegmentoSensible) {
       return {
         campo: cambio.campo,
         antes: cambio.antes === undefined ? undefined : "[redactado]",
@@ -70,13 +69,65 @@ function redactarCambios(cambios: CambioAuditoria[], camposSensibles: readonly s
 }
 
 /**
- * Escribe una fila de auditoría: calcula `cambios` con `loQueCambio(antes,
- * despues)`, redacta y serializa `antes`/`despues`/`cambios`, e inserta.
+ * Un resumen SEGURO de `error` para loguear: nunca el objeto de error
+ * completo (que para un fallo de Postgres vía Drizzle es un
+ * `DrizzleQueryError` que trae, como propiedades PROPIAS del objeto, el SQL
+ * armado Y los PARÁMETROS bindeados — `console.error(mensaje, error)`
+ * terminaría imprimiendo cada valor que se intentó insertar, secretos
+ * redactados o sin redactar incluidos, en el log de la app). Solo
+ * `code`/`message` del error de POSTGRES (`error.cause`, donde Drizzle deja
+ * el error original del driver `pg` — nunca `error.query`/`error.params`
+ * del wrapper, que ni siquiera se leen acá). El `message` de un error de
+ * Postgres (`null value in column ... violates not-null constraint`, `new
+ * row for relation ... violates check constraint ...`) describe la
+ * RESTRICCIÓN que falló, nunca el VALOR que la violó (eso vive en
+ * `DETAIL`, que tampoco se lee acá) — por eso es seguro de loguear.
+ */
+function resumenDeError(error: unknown): string {
+  const causa = error && typeof error === "object" && "cause" in error ? (error as { cause?: unknown }).cause : undefined;
+  const origen = causa && typeof causa === "object" ? causa : error && typeof error === "object" ? error : undefined;
+  if (origen) {
+    const code = "code" in origen ? (origen as { code?: unknown }).code : undefined;
+    const message = "message" in origen ? (origen as { message?: unknown }).message : undefined;
+    const partes = [
+      typeof code === "string" || typeof code === "number" ? `code=${String(code)}` : undefined,
+      typeof message === "string" ? `message=${message}` : undefined,
+    ].filter((p): p is string => p !== undefined);
+    if (partes.length > 0) return partes.join(", ");
+  }
+  return "error desconocido (sin code/message legibles)";
+}
+
+/**
+ * Escribe una fila de auditoría: redacta `antes`/`despues`, calcula
+ * `cambios` con `loQueCambio` SOBRE LO YA REDACTADO, serializa los tres, e
+ * inserta.
  *
  * **Nunca tira.** Devuelve `{ ok: true, id } | { ok: false, error }` y, si
- * falla, además loguea con `console.error` — una falla de auditoría NO
- * tiene que tirar abajo la operación de negocio que la disparó (crear el
- * pedido, cobrar la factura, ...).
+ * falla, además loguea un RESUMEN seguro con `console.error` (ver
+ * `resumenDeError`: nunca el objeto de error completo, nunca sus
+ * parámetros bindeados) — una falla de auditoría NO tiene que tirar abajo
+ * la operación de negocio que la disparó (crear el pedido, cobrar la
+ * factura, ...).
+ *
+ * **Cómo se evita que un secreto anidado llegue a `cambios`.** La primera
+ * versión de esta función calculaba `cambios = loQueCambio(entrada.antes,
+ * entrada.despues)` (los valores CRUDOS) y redactaba recién DESPUÉS, mirando
+ * el último segmento de cada ruta (`"token.access"` → `"access"`, que no es
+ * sensible) — un secreto ANIDADO bajo una clave ancestro sensible
+ * (`{ token: { access: "AAA1" } }`, donde `"token"` sí es sensible pero
+ * `"access"` no) llegaba a la base SIN TAPAR, con la ruta completa
+ * `"token.access"` y el valor real. Fix estructural: ahora se redacta
+ * `antes`/`despues` ENTEROS con `redactar` (que sí mira TODOS los
+ * ancestros de la ruta, no solo el nombre final) ANTES de calcular
+ * `cambios` — `loQueCambio` corre sobre los valores YA redactados, así que
+ * nunca ve el secreto. La consecuencia (documentada, aceptada): si un
+ * secreto CAMBIÓ de valor (`"AAA1"` → `"AAA2"`), como los dos quedan
+ * `"[redactado]"` antes de diffear, `cambios` **no muestra que hubo un
+ * cambio en absoluto** ahí — se prioriza no filtrar el secreto por sobre
+ * mostrar que existió un cambio en un campo sensible. `redactarCambiosDefensaEnProfundidad`
+ * (interna) queda como red de seguridad adicional sobre el resultado, por
+ * si algún día `loQueCambio` deja de operar sobre lo ya redactado.
  *
  * **El trade-off de "nunca tira" adentro de una transacción.** Si `dbOTx`
  * es la `tx` de un `db.transaction(async (tx) => ...)` en curso, un
@@ -99,6 +150,25 @@ function redactarCambios(cambios: CambioAuditoria[], camposSensibles: readonly s
  * simplemente abre una transacción normal para el insert, con el mismo
  * resultado (nada persiste si falla).
  *
+ * **Si tu app llama a `auditar` más de una vez DENTRO de la misma
+ * transacción, hacelo con `await` secuencial, nunca `Promise.all`.** Cada
+ * llamada abre su propio `SAVEPOINT` sobre la MISMA conexión/transacción
+ * subyacente — dos `SAVEPOINT`/`RELEASE SAVEPOINT` concurrentes en la misma
+ * sesión de Postgres (que es lo que produce un `Promise.all([auditar(tx,
+ * ...), auditar(tx, ...)])`) pisan el estado de transacción del otro
+ * (Postgres serializa comandos de UNA sesión, pero el `SAVEPOINT`
+ * anidado que arma Drizzle no está pensado para dos llamadas en vuelo a la
+ * vez sobre la misma `tx`) y el resultado es indefinido — puede tirar, o
+ * peor, confundir qué `SAVEPOINT` libera cada una. `await` una antes de
+ * llamar a la siguiente.
+ *
+ * **No soporta el driver `neon-http`** (`drizzle-orm/neon-http`, HTTP sin
+ * estado, sin conexión persistente): ese driver no implementa
+ * `db.transaction()` en absoluto (cada `execute` es su propio request HTTP
+ * sin relación con el anterior), así que no hay SAVEPOINT posible — usar
+ * `neon-serverless` (WebSocket, con conexión real) o `node-postgres` si tu
+ * app necesita `auditar` dentro de una transacción.
+ *
  * Con `antes` y `despues` ausentes, `cambios` queda `[]`.
  *
  * ```ts
@@ -114,11 +184,11 @@ function redactarCambios(cambios: CambioAuditoria[], camposSensibles: readonly s
  *   despues: productoNuevo,
  * });
  * if (!resultado.ok) {
- *   // resultado.error ya se logueó con console.error; seguir igual, no relanzar.
+ *   // resultado.error ya se logueó (resumen seguro) con console.error; seguir igual, no relanzar.
  * }
  *
  * // Adentro de una transacción de negocio: si auditar falla, la tx externa
- * // sigue viva (SAVEPOINT).
+ * // sigue viva (SAVEPOINT). Más de una llamada: SIEMPRE con await secuencial.
  * await db.transaction(async (tx) => {
  *   await tx.update(productos).set({ precio: nuevoPrecio }).where(eq(productos.id, id));
  *   await auditar(tx, auditoria, { tenantId, entidad: "producto", entidadId: id, accion: "actualizar", actor: { tipo: "usuario", id: usuarioId } });
@@ -132,16 +202,21 @@ export async function auditar(
   entrada: EntradaAuditoria,
 ): Promise<ResultadoAuditar> {
   try {
-    const camposSensibles = entrada.camposSensibles;
-    const cambiosCrudos = loQueCambio(entrada.antes, entrada.despues);
+    const camposSensibles = entrada.camposSensibles ?? CAMPOS_SENSIBLES_POR_DEFECTO;
 
-    const antesListo =
-      entrada.antes === undefined ? null : serializarParaAuditoria(redactar(entrada.antes, camposSensibles));
-    const despuesListo =
-      entrada.despues === undefined ? null : serializarParaAuditoria(redactar(entrada.despues, camposSensibles));
-    const cambiosListos = serializarParaAuditoria(
-      redactarCambios(cambiosCrudos, camposSensibles ?? CAMPOS_SENSIBLES_POR_DEFECTO),
-    );
+    // C1: redactar ANTES de diffear — ver el JSDoc de esta función, sección
+    // "Cómo se evita que un secreto anidado llegue a cambios". `redactar`
+    // ya devuelve `undefined` tal cual si `entrada.antes`/`entrada.despues`
+    // son `undefined` (no hace falta un ternario acá).
+    const antesRedactado = redactar(entrada.antes, camposSensibles);
+    const despuesRedactado = redactar(entrada.despues, camposSensibles);
+
+    const cambiosCrudos = loQueCambio(antesRedactado, despuesRedactado);
+    const cambiosRedactados = redactarCambiosDefensaEnProfundidad(cambiosCrudos, camposSensibles);
+
+    const antesListo = antesRedactado === undefined ? null : serializarParaAuditoria(antesRedactado);
+    const despuesListo = despuesRedactado === undefined ? null : serializarParaAuditoria(despuesRedactado);
+    const cambiosListos = serializarParaAuditoria(cambiosRedactados);
 
     // Los tres valores para las columnas `jsonb` se pasan como TEXTO
     // (`JSON.stringify`), nunca como el objeto/arreglo JS crudo. Dos
@@ -214,9 +289,14 @@ export async function auditar(
     }
     return { ok: true, id: fila.id };
   } catch (error) {
+    // NUNCA `console.error(mensaje, error)`: `error` (o su `.cause`, si es
+    // un `DrizzleQueryError`) puede traer, como propiedades PROPIAS, el SQL
+    // armado y los PARÁMETROS bindeados — que incluyen cualquier dato que
+    // se intentó insertar, redactado o no. Solo un resumen seguro
+    // (`entidad`/`entidadId`/`accion` de la propia `entrada`, más
+    // `code`/`message` de `resumenDeError`) va al log.
     console.error(
-      `auditar: no se pudo escribir el registro de auditoría (${entrada.entidad} ${entrada.entidadId}, accion=${entrada.accion}):`,
-      error,
+      `auditar: no se pudo escribir el registro de auditoría (entidad=${entrada.entidad}, entidadId=${entrada.entidadId}, accion=${entrada.accion}): ${resumenDeError(error)}`,
     );
     return { ok: false, error };
   }

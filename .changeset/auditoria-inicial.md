@@ -18,13 +18,18 @@ de Postgres bloquea `UPDATE`/`DELETE`/`TRUNCATE` sobre la tabla.
   creada o borrada). Nunca tira por un ciclo: esa rama queda como
   `"[ciclo]"`.
 - `redactar(obj, camposSensibles?)` / `CAMPOS_SENSIBLES_POR_DEFECTO`: copia
-  profunda con cualquier CLAVE sensible (minúsculas, sin `_`/`-`) tapada
-  con `"[redactado]"`, a cualquier profundidad. Lista default:
-  `contrasena`, `password`, `hash`, `token`, `secreto`, `secret`, `cbu`,
-  `cvu`, `clave`, `api_key`, `apikey`, `totp`, `authorization`.
+  profunda con cualquier CLAVE sensible tapada con `"[redactado]"`, a
+  cualquier profundidad, adentro de arreglos, `Map`s, `Set`s e instancias
+  de clase propia incluido. Matching por nombre normalizado (minúsculas,
+  sin `_`/`-`) que IGUALA o TERMINA CON un término de la lista (no
+  "contiene": `passwordHash`/`accessToken`/`clientSecret`/`x-api-key` se
+  redactan, `passwordHint`/`tokenizer` no). Lista default: `contrasena`,
+  `password`, `hash`, `token`, `secreto`, `secret`, `cbu`, `cvu`, `clave`,
+  `api_key`, `apikey`, `totp`, `authorization`.
 - `serializarParaAuditoria(v)`: deja un valor listo para `jsonb` —
   `bigint` → string con sufijo `"n"`, `Date` → ISO, `undefined` se
-  descarta — sin tirar nunca.
+  descarta, `Map`/`Set`/instancias de clase se recorren igual que un
+  objeto plano — sin tirar nunca, ni con una clave cuyo `get` tira.
 - `/drizzle` (requiere `drizzle-orm >=0.45 <0.46`, peerDependency opcional;
   usa `@mafesoftware/tenant/drizzle` para la columna de tenant):
   - `tablaAuditoria({ tenant?, nombre?, columnasExtra? })`: `id`, columna
@@ -34,28 +39,51 @@ de Postgres bloquea `UPDATE`/`DELETE`/`TRUNCATE` sobre la tabla.
     entidad, entidad_id, creado_en)` y `(tenant, creado_en)`.
   - `sqlInmutabilidad(nombreTabla)`: el SQL (función `plpgsql` + triggers)
     que bloquea `UPDATE`/`DELETE`/`TRUNCATE` con un mensaje claro.
-    Idempotente; valida `nombreTabla` contra `^[a-z_][a-z0-9_]*$` y TIRA si
-    no matchea (se interpola en el DDL). Se agrega como migración escrita a
-    mano, después de la que genera drizzle-kit — este paquete no trae
-    migraciones.
-  - `auditar(dbOTx, tabla, entrada)`: calcula `cambios`, redacta y
-    serializa `antes`/`despues`/`cambios`, e inserta. **Nunca tira**:
-    devuelve `{ ok, id } | { ok: false, error }` y loguea con
-    `console.error` si falla. Dentro de una transacción, envuelve el
-    insert en un `SAVEPOINT` (`tx.transaction()` anidado de Drizzle) para
-    que un fallo del insert de auditoría no aborte la transacción externa
-    — probado forzando un fallo (check constraint) y verificando que el
-    resto del trabajo de la tx sigue commiteando.
+    Idempotente; valida `nombreTabla` contra `^[a-z_][a-z0-9_]*$` y contra
+    un tope de 40 caracteres, TIRA si no pasa (se interpola en el DDL, y
+    los identificadores derivados tienen que quedar bajo el límite de 63
+    de Postgres). Documentado que frena errores de la app, no al dueño de
+    la base (`session_replication_role`, `DISABLE TRIGGER`, `DROP TABLE`,
+    un superusuario lo saltean). Se agrega como migración escrita a mano,
+    después de la que genera drizzle-kit — este paquete no trae
+    migraciones. `tablaAuditoria` valida `nombre` con la misma regla.
+  - `auditar(dbOTx, tabla, entrada)`: redacta `antes`/`despues` ANTES de
+    calcular `cambios` con `loQueCambio` (fix de seguridad: la versión
+    original diffeaba los valores crudos y redactaba después mirando solo
+    el último segmento de cada ruta, así que un secreto ANIDADO bajo una
+    clave ancestro sensible — ej. `token.access` con `token` sensible —
+    llegaba SIN TAPAR a `cambios`), serializa los tres, e inserta. **Nunca
+    tira**: devuelve `{ ok, id } | { ok: false, error }` y loguea un
+    RESUMEN seguro (`entidad`/`entidadId`/`accion` + `code`/`message` de
+    Postgres) con `console.error` si falla — nunca el objeto de error
+    completo, que para un `DrizzleQueryError` trae el SQL y los parámetros
+    bindeados como propiedades propias. Dentro de una transacción, envuelve
+    el insert en un `SAVEPOINT` (`tx.transaction()` anidado de Drizzle)
+    para que un fallo del insert de auditoría no aborte la transacción
+    externa — probado forzando un fallo (check constraint) y verificando
+    que una escritura de NEGOCIO en una tabla SEPARADA, en la misma tx,
+    sigue commiteando. Documentado que las llamadas dentro de una misma tx
+    tienen que ser secuenciales (nunca `Promise.all`) y que no soporta el
+    driver `neon-http` (sin `db.transaction()`).
   - `listarAuditoria(db, tabla, { tenantId, entidad?, entidadId?, actorId?,
     desde?, hasta?, pagina?, porPagina? })`: siempre filtrado por
     `tenantId`, ordenado por `creado_en DESC, id DESC`, `porPagina`
-    cap-eado a `200`.
+    cap-eado a `200`; `pagina`/`porPagina` con `NaN`/`Infinity` caen a los
+    defaults en vez de romper la consulta.
+
+`loQueCambio`: `null` cuenta como ausente igual que `undefined` para la
+expansión campo a campo (sin dejar de ser un valor distinto de `undefined`
+en una comparación directa), y `loQueCambio(x, x)` con `x` autoreferencial
+da `[]` en vez de `"[ciclo]"` (misma referencia = sin diferencia posible).
 
 Postgres de test compartido con `packages/tenant`/`packages/numeradores`
 vía el helper de la raíz `tests/lib/postgres-de-prueba.ts`.
 `tests/drizzle/postgres.test.ts` y `tests/drizzle/postgres-inmutabilidad.test.ts`
-prueban contra Postgres real (rollback, SAVEPOINT, redacción aplicada
-antes de llegar a la base, el trigger de inmutabilidad, aislamiento entre
-tenants, paginación); `bun run test:sin-db` ahora excluye el glob
-`postgres*.test.ts` (antes solo `postgres.test.ts`) para cubrir los dos
-archivos.
+prueban contra Postgres real (rollback, SAVEPOINT con tabla de negocio
+separada, redacción aplicada antes de llegar a la base — incluido un
+secreto anidado, verificado con `::text` sobre el jsonb crudo —, que
+`console.error` no filtra secretos, `NaN`/`Infinity` en la paginación, el
+trigger de inmutabilidad, aislamiento entre tenants, paginación); `bun run
+test:sin-db` excluye el glob `postgres*.test.ts` (no solo
+`postgres.test.ts`) para cubrir los dos archivos de Postgres de este
+paquete.

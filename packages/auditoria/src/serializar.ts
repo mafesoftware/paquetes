@@ -1,7 +1,14 @@
-function esObjetoPlano(v: unknown): v is Record<string, unknown> {
-  if (typeof v !== "object" || v === null || Array.isArray(v) || v instanceof Date) return false;
-  const proto = Object.getPrototypeOf(v);
-  return proto === Object.prototype || proto === null;
+/**
+ * Lee `objeto[clave]`, atrapando una excepción si `clave` es un getter que
+ * tira — para que una lectura rota de UNA clave no tire toda la
+ * serialización. Devuelve `{ ok: true, valor }` o `{ ok: false }`.
+ */
+function leerPropiedad(objeto: Record<string, unknown>, clave: string): { ok: true; valor: unknown } | { ok: false } {
+  try {
+    return { ok: true, valor: objeto[clave] };
+  } catch {
+    return { ok: false };
+  }
 }
 
 function serializar(valor: unknown, pila: Set<object>): unknown {
@@ -27,13 +34,50 @@ function serializar(valor: unknown, pila: Set<object>): unknown {
       pila.delete(valor);
     }
   }
-  if (esObjetoPlano(valor)) {
+  if (valor instanceof Map) {
     if (pila.has(valor)) return "[ciclo]";
     pila.add(valor);
     try {
       const resultado: Record<string, unknown> = {};
-      for (const [clave, v] of Object.entries(valor)) {
+      for (const [clave, v] of valor.entries()) {
         const serializado = serializar(v, pila);
+        if (serializado !== undefined) resultado[String(clave)] = serializado;
+      }
+      return resultado;
+    } finally {
+      pila.delete(valor);
+    }
+  }
+  if (valor instanceof Set) {
+    if (pila.has(valor)) return "[ciclo]";
+    pila.add(valor);
+    try {
+      return Array.from(valor).map((v) => serializar(v, pila) ?? null);
+    } finally {
+      pila.delete(valor);
+    }
+  }
+  if (typeof valor === "object" && valor !== null) {
+    // CUALQUIER objeto que no sea arreglo/Date/Map/Set — objeto plano,
+    // instancia de una clase propia, lo que sea — se recorre por sus
+    // claves propias ENUMERABLES. Antes de este cambio solo se recorrían
+    // objetos con `Object.prototype`/sin prototipo; una instancia de clase
+    // (`this.password = ...`) quedaba sin serializar sus bigint/Date
+    // internos y se devolvía tal cual (la instancia entera, no JSON-safe).
+    if (pila.has(valor)) return "[ciclo]";
+    pila.add(valor);
+    try {
+      const objeto = valor as Record<string, unknown>;
+      const resultado: Record<string, unknown> = {};
+      for (const clave of Object.keys(objeto)) {
+        const leido = leerPropiedad(objeto, clave);
+        if (!leido.ok) {
+          // Un getter que tira: no se propaga — "nunca tira" es la garantía
+          // de esta función, incluso si el DATO que le pasan está roto.
+          resultado[clave] = "[error]";
+          continue;
+        }
+        const serializado = serializar(leido.valor, pila);
         // Acá sí se saca la clave entera (no se deja en `null`): "undefined
         // se descarta" es la regla pedida, y en un objeto (a diferencia de
         // un arreglo) sacar una clave no mueve a ninguna otra.
@@ -44,18 +88,15 @@ function serializar(valor: unknown, pila: Set<object>): unknown {
       pila.delete(valor);
     }
   }
-  // string, number, boolean, null, o una instancia que no es un objeto
-  // plano (Map, Set, clase propia, ...): se devuelve tal cual. No es
-  // estrictamente JSON-safe en todos los casos (una clase propia con
-  // métodos, por ejemplo), pero tampoco tira — es responsabilidad de quien
-  // arma `antes`/`despues` no meter ahí algo así; el resto de la función sí
-  // cubre los casos documentados (bigint, Date, undefined).
+  // string, number, boolean, null: se devuelven tal cual.
   return valor;
 }
 
 /**
  * Convierte `v` a algo seguro para guardar como JSON (una columna `jsonb`,
- * en particular): **nunca tira**, sin importar qué le pasen.
+ * en particular): **nunca tira**, sin importar qué le pasen — incluida una
+ * clave cuyo `get` tira (esa clave queda como el string `"[error]"` en vez
+ * de propagar la excepción).
  *
  * - `bigint` se convierte a un STRING con sufijo `"n"` (`123n` → `"123n"`),
  *   no a un `number` — un `bigint` puede superar `Number.MAX_SAFE_INTEGER`
@@ -65,7 +106,9 @@ function serializar(valor: unknown, pila: Set<object>): unknown {
  *   convención de este paquete (no un formato estándar): quien lea el
  *   registro de auditoría más adelante tiene que saber sacarlo para
  *   recuperar el valor numérico.
- * - `Date` se convierte a su ISO string (`.toISOString()`).
+ * - `Date` se convierte a su ISO string (`.toISOString()`); una `Date`
+ *   inválida (`new Date("no es una fecha")`) da `"[fecha-invalida]"` en vez
+ *   de tirar (`.toISOString()` de una Invalid Date tira `RangeError`).
  * - `undefined` se DESCARTA: si es el valor de una clave de un objeto, esa
  *   clave desaparece del resultado (igual que hace `JSON.stringify`);
  *   adentro de un arreglo se convierte a `null` en vez de sacar el índice
@@ -74,9 +117,13 @@ function serializar(valor: unknown, pila: Set<object>): unknown {
  *   string `"[ciclo]"`.
  * - `function`/`symbol` (no deberían aparecer en datos de negocio, pero
  *   pueden colarse) se convierten a un string en vez de tirar.
+ * - `Map` se convierte a un objeto de entradas (clave `String(clave)`);
+ *   `Set` se convierte a un arreglo. Cualquier otro objeto — plano o
+ *   instancia de una clase propia — se recorre por sus claves propias
+ *   enumerables, igual que un objeto plano.
  *
- * Recorre arreglos y objetos planos recursivamente aplicando las mismas
- * reglas a cada valor.
+ * Recorre arreglos y objetos recursivamente aplicando las mismas reglas a
+ * cada valor.
  *
  * ```ts
  * import { serializarParaAuditoria } from "@mafesoftware/auditoria";
@@ -86,6 +133,12 @@ function serializar(valor: unknown, pila: Set<object>): unknown {
  *
  * serializarParaAuditoria([1n, undefined, 3n]);
  * // ["1n", null, "3n"]
+ *
+ * serializarParaAuditoria(new Map([["a", 1n]]));
+ * // { a: "1n" }
+ *
+ * serializarParaAuditoria(new Set([1n, 2n]));
+ * // ["1n", "2n"]
  * ```
  */
 export function serializarParaAuditoria(v: unknown): unknown {
