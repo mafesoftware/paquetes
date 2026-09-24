@@ -54,14 +54,22 @@ jobs:
 
   changeset:
     name: changeset (PRs que tocan packages/)
-    if: github.event_name == 'pull_request'
+    # El PR automático "Version Packages" que abre changesets/action (rama
+    # `changeset-release/main`, actor `github-actions[bot]`) toca packages/
+    # (bumpea version en cada package.json y CHANGELOG.md) pero por
+    # definición no trae changesets nuevos propios — los está consumiendo,
+    # no agregando. Sin esta excepción, este job se auto-bloquearía siempre.
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.head_ref != 'changeset-release/main' &&
+      github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
           # 0 = toda la historia de todas las ramas y tags (necesario para que
-          # `origin/main` exista y `changeset status --since` pueda diffear).
+          # `origin/<base>` exista y `changeset status --since` pueda diffear).
           fetch-depth: 0
 
       - name: Instalar bun
@@ -74,9 +82,10 @@ jobs:
 
       - name: Verificar changeset si el PR toca packages/
         run: |
-          if git diff --name-only "origin/${{ github.base_ref }}...HEAD" | grep -q '^packages/'; then
+          BASE="origin/${{ github.base_ref }}"
+          if git diff --name-only "${BASE}...HEAD" | grep -q '^packages/'; then
             echo "El PR toca packages/; exigiendo changeset."
-            bunx changeset status --since=origin/main
+            bunx changeset status --since="${BASE}"
           else
             echo "El PR no toca packages/; no se exige changeset."
           fi
