@@ -1,0 +1,26 @@
+{
+  "name": "@mafesoftware/paquetes",
+  "version": "0.0.0",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "workspaces": ["packages/*"],
+  "scripts": {
+    "build": "bun scripts/correr-en-paquetes.ts build",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit && bun scripts/correr-en-paquetes.ts typecheck",
+    "lint:paquetes": "bun scripts/lint-paquetes.ts",
+    "changeset": "changeset",
+    "release": "bun run build && changeset publish"
+  },
+  "devDependencies": {
+    "@arethetypeswrong/cli": "^0.18.5",
+    "@changesets/cli": "^3.0.3",
+    "@types/node": "^26.6.2",
+    "@vitest/coverage-v8": "^5.0.1",
+    "fast-check": "^4.10.2",
+    "publint": "^0.3.24",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.1"
+  }
+}
