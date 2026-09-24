@@ -34,6 +34,10 @@ describe("parsearImporte", () => {
       expect(parsearImporte("1.50", { decimalConPunto: true })).toEqual({ ok: true, centavos: 150n });
     });
 
+    it("decimalConPunto:true sin punto es un entero simple", () => {
+      expect(parsearImporte("500", { decimalConPunto: true })).toEqual({ ok: true, centavos: 50_000n });
+    });
+
     it("decimalConPunto:true no acepta coma", () => {
       expect(parsearImporte("1,234", { decimalConPunto: true }).ok).toBe(false);
     });
@@ -74,6 +78,31 @@ describe("parsearImporte", () => {
       expect(parsearImporte("USD 1.234,56")).toEqual({ ok: true, centavos: 123_456n });
       expect(parsearImporte("EUR 1.234,56")).toEqual({ ok: true, centavos: 123_456n });
       expect(parsearImporte("€1.234,56")).toEqual({ ok: true, centavos: 123_456n });
+    });
+  });
+
+  describe("N1: el token de moneda y el signo solo valen como prefijo/sufijo alrededor del número, nunca adentro", () => {
+    it("token metido en el medio de los dígitos -> error", () => {
+      for (const texto of ["1$2", "1usd2", "12 ARS 34"]) {
+        expect(parsearImporte(texto).ok, `"${texto}"`).toBe(false);
+      }
+    });
+
+    it("dos grupos de dígitos separados por espacio (sin token) -> error", () => {
+      for (const texto of ["2 3", "10 50"]) {
+        expect(parsearImporte(texto).ok, `"${texto}"`).toBe(false);
+      }
+    });
+
+    it("token y signo como prefijo, en cualquier orden y con espacios sueltos, siguen valiendo", () => {
+      expect(parsearImporte("$ -1.000")).toEqual({ ok: true, centavos: -100_000n });
+      expect(parsearImporte("- 5")).toEqual({ ok: true, centavos: -500n });
+      expect(parsearImporte("-$ 5")).toEqual({ ok: true, centavos: -500n });
+      expect(parsearImporte("US$1.000,5")).toEqual({ ok: true, centavos: 100_050n });
+    });
+
+    it("token como sufijo (con espacio antes) sigue valiendo", () => {
+      expect(parsearImporte("1.000,50 ARS")).toEqual({ ok: true, centavos: 100_050n });
     });
   });
 

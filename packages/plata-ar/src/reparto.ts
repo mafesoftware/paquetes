@@ -23,21 +23,30 @@ function expandirNotacionExponencial(texto: string): string {
   const coincidencia = /^(-?)(\d+)(?:\.(\d+))?e([+-]\d+)$/i.exec(texto);
   if (!coincidencia) return texto;
 
-  const signo = coincidencia[1] ?? "";
+  // El grupo 1 (`-?`) siempre matchea (a "" o a "-") si `coincidencia` no
+  // es null; solo el grupo 3 (decimales de la mantisa) es opcional de
+  // verdad.
+  const signo = coincidencia[1]!;
   const parteEntera = coincidencia[2]!;
   const parteDecimal = coincidencia[3] ?? "";
   const exponente = Number(coincidencia[4]!);
 
   const digitos = parteEntera + parteDecimal;
+  // `parteEntera` es SIEMPRE 1 dígito acá: el propio `Number::toString` de
+  // ECMA-262 normaliza la notación exponencial como "d.ddd...e±NN", un solo
+  // dígito antes del punto. Con eso, y con los umbrales de exponente que
+  // hacen falta para que `toString` use notación exponencial en primer
+  // lugar (exponente <= -7 o >= 21 — fuera del rango [1e-6, 1e21)), el
+  // punto reubicado (`puntoNuevo`) siempre cae ANTES del primer dígito o
+  // DESPUÉS del último: nunca en el medio de `digitos` (que tiene, como
+  // mucho, ~17 dígitos — la precisión de un double).
   const puntoNuevo = parteEntera.length + exponente;
 
   let cuerpo: string;
   if (puntoNuevo <= 0) {
     cuerpo = `0.${"0".repeat(-puntoNuevo)}${digitos}`;
-  } else if (puntoNuevo >= digitos.length) {
-    cuerpo = digitos + "0".repeat(puntoNuevo - digitos.length);
   } else {
-    cuerpo = `${digitos.slice(0, puntoNuevo)}.${digitos.slice(puntoNuevo)}`;
+    cuerpo = digitos + "0".repeat(puntoNuevo - digitos.length);
   }
   if (cuerpo.includes(".")) {
     cuerpo = cuerpo.replace(/0+$/, "").replace(/\.$/, "");

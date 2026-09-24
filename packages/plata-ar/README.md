@@ -110,6 +110,7 @@ try {
     e.codigo; // "pesos_vacio" | "peso_invalido" | "peso_negativo" | "pesos_todo_cero"
               // | "factor_invalido" | "division_por_cero" | "moneda_mezclada"
               // | "sumar_sin_importes" | "tc_no_positivo" | "tc_identidad"
+              // | "indice_invalido"
   }
 }
 ```
@@ -130,17 +131,28 @@ redondearComercial(-5n, 2n); // -3n  (-2,5 -> -3, "hacia arriba" en valor absolu
 ```ts
 import { aplicarFactor, factorEntre } from "@mafesoftware/plata-ar";
 
-// factor = índice_referencia / índice_base, como string decimal de hasta 8
-// decimales (spec 02 §3.2). Todo en bigint: nunca pasa por un float.
+// aplicarFactor toma un FACTOR ya calculado (la razón índice_referencia /
+// índice_base), como string decimal de HASTA 8 decimales (spec 02 §3.2).
+// Todo en bigint: nunca pasa por un float.
 aplicarFactor(10_000_000n, "1.06203057"); // 10_620_306n
 // 10_000_000 x 1,06203057 = 10_620_305,7 -> redondeo comercial -> 10_620_306
 
-// factorEntre calcula ese factor a partir de los dos valores del índice
-// (redondeo comercial a 8 decimales, bigint puro). Tira ErrorPlata
-// (tc_no_positivo) si el valor base no es mayor a 0.
+// factorEntre calcula ESE factor a partir de dos valores de ÍNDICE (no
+// factores): a diferencia de aplicarFactor, valorRef/valorBase aceptan
+// CUALQUIER cantidad de decimales (un índice publicado puede traer más de
+// 8) -- el redondeo a 8 decimales pasa una sola vez, al final, sobre el
+// resultado. Los índices son positivos: tira ErrorPlata (indice_invalido)
+// si valorRef o valorBase no son mayores a 0, o no son un decimal válido.
 factorEntre("3662.2", "3448.3"); // "1.06203057"
 aplicarFactor(10_000_000n, factorEntre("3662.2", "3448.3")); // 10_620_306n
+factorEntre("3662.123456789", "3448.3"); // "1.06200837" (más de 8 decimales de entrada, sin problema)
+factorEntre("-100", "50"); // tira ErrorPlata (indice_invalido): los índices no son negativos
 ```
+
+`factorAEscala`/`ESCALA_FACTOR` (el detalle interno de escala ×10⁸ que usan
+`aplicarFactor`/`convertir`) son internos y **no** forman parte de la API
+pública — viven en `src/escala-factor.ts`, sin re-exportar desde
+`index.ts`.
 
 ### Reparto por mayor resto (`reparto.ts`)
 
@@ -223,11 +235,25 @@ parsearImporte("-500", { permitirNegativo: false });    // { ok: false, error: "
 parsearImporte("44000.5", { decimalConPunto: true });   // { ok: true, centavos: 4_400_050n } (convención en inglés)
 
 // Solo tolera dígitos, un "-" inicial, ".", ",", espacios y símbolos/códigos
-// de moneda ($, US$, U$S, ARS, USD, EUR, €); cualquier otro caracter es
+// de moneda ($, US$, U$S, ARS, USD, EUR, €) -- y el signo/token SOLO como
+// prefijo o sufijo alrededor del número con signo, nunca metidos adentro de
+// los dígitos: cualquier otro caracter, o un token/espacio en el medio, es
 // inválido, no se descarta en silencio.
-parsearImporte("1e3");    // { ok: false, error: "..." }  (no es "1300")
-parsearImporte("(500)");  // { ok: false, error: "..." }  (no es "500")
+parsearImporte("1e3");      // { ok: false, error: "..." }  (no es "1300")
+parsearImporte("(500)");    // { ok: false, error: "..." }  (no es "500")
+parsearImporte("1$2");      // { ok: false, error: "..." }  (token en el medio, no es "12")
+parsearImporte("12 ARS 34"); // { ok: false, error: "..." } (idem)
+parsearImporte("$ -1.000"); // { ok: true, centavos: -100_000n }  (token y signo como prefijo: sí vale)
+parsearImporte("1.000,50 ARS"); // { ok: true, centavos: 100_050n } (token como sufijo: sí vale)
 ```
+
+**`decimalConPunto` es responsabilidad de quien llama**: `parsearImporte`
+no adivina el locale de quien tipeó — si se activa la opción para un campo
+que en los hechos recibe entrada argentina, `"1.000"` se lee como **1 peso**
+(un punto decimal con tres ceros), no como mil. Activarla es una decisión
+explícita para un campo/fuente que se sabe en inglés (una planilla
+importada, un formulario con `locale=en`), no un default seguro para
+"por las dudas".
 
 ### `formatearPlata` con `Importe`/`bigint`
 
@@ -246,4 +272,10 @@ formatearPlata(4_400_000n);                            // "$ 44.000,00" (bigint 
 formatearPlata(4_400_000n, { decimalesSiempre: false }); // "$ 44.000"
 formatearPlata({ centavos: 5_000n, moneda: "USD" }, { moneda: "ARS" }); // "US$ 50,00" (moneda ignorada: es un Importe)
 formatearPlata(9_007_199_254_740_993n); // "$ 90.071.992.547.409,93" (exacto más allá de MAX_SAFE_INTEGER)
+
+// El agrupamiento de miles/separadores es el del locale REAL (vía
+// Intl.NumberFormat con un string decimal exacto, no reimplementado a
+// mano asumiendo grupos de a 3 en todos lados):
+formatearPlata(123_456_789n, { locale: "es-ES", moneda: "EUR" }); // "1.234.567,89 €"
+formatearPlata(123_456_789n, { locale: "en-IN", moneda: "USD" }); // "$12,34,567.89" (agrupamiento irregular de la India)
 ```

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { aplicarFactor, factorEntre } from "../src/factor.ts";
+import * as api from "../src/index.ts";
 import { ErrorPlata } from "../src/errores.ts";
 
 describe("aplicarFactor", () => {
@@ -62,17 +63,45 @@ describe("factorEntre (M12)", () => {
     expect(factorEntre("1", "3")).toBe("0.33333333");
   });
 
-  it("valorBase <= 0 tira ErrorPlata (tc_no_positivo)", () => {
-    expect(() => factorEntre("100", "0")).toThrow(ErrorPlata);
-    expect(() => factorEntre("100", "-5")).toThrow(ErrorPlata);
-    try {
-      factorEntre("100", "0");
-    } catch (e) {
-      expect((e as ErrorPlata).codigo).toBe("tc_no_positivo");
-    }
-  });
+  describe("N4: los índices son positivos; se documenta y valida en las dos entradas", () => {
+    it("valorBase <= 0 tira ErrorPlata (indice_invalido)", () => {
+      expect(() => factorEntre("100", "0")).toThrow(ErrorPlata);
+      expect(() => factorEntre("100", "-5")).toThrow(ErrorPlata);
+      try {
+        factorEntre("100", "0");
+      } catch (e) {
+        expect((e as ErrorPlata).codigo).toBe("indice_invalido");
+      }
+    });
 
-  it("valorRef negativo da un factor negativo", () => {
-    expect(factorEntre("-100", "50")).toBe("-2");
+    it("valorRef <= 0 también tira ErrorPlata (indice_invalido), no un factor negativo", () => {
+      expect(() => factorEntre("-100", "50")).toThrow(ErrorPlata);
+      expect(() => factorEntre("0", "50")).toThrow(ErrorPlata);
+      try {
+        factorEntre("-100", "50");
+      } catch (e) {
+        expect((e as ErrorPlata).codigo).toBe("indice_invalido");
+      }
+    });
+
+    it("un valorRef/valorBase que no es un decimal tira ErrorPlata (indice_invalido)", () => {
+      expect(() => factorEntre("abc", "50")).toThrow(ErrorPlata);
+      expect(() => factorEntre("50", "")).toThrow(ErrorPlata);
+    });
+
+    it("acepta MÁS de 8 decimales en los índices (a diferencia de un factor ya calculado)", () => {
+      // El límite de 8 decimales es del FACTOR final (aplicarFactor); los
+      // índices de entrada pueden traer más precisión.
+      const factor = factorEntre("3662.123456789", "3448.3");
+      expect(factor).toBe("1.06200837");
+      expect(() => aplicarFactor(1_000_000n, factor)).not.toThrow();
+    });
+  });
+});
+
+describe("N3: factorAEscala/ESCALA_FACTOR son internos, no forman parte de la API pública", () => {
+  it('no están entre los exports de "@mafesoftware/plata-ar" (index.ts)', () => {
+    expect("factorAEscala" in api).toBe(false);
+    expect("ESCALA_FACTOR" in api).toBe(false);
   });
 });

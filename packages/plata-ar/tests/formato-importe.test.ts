@@ -61,6 +61,18 @@ describe("formatearPlata (Importe | bigint, API 0.2)", () => {
     });
   });
 
+  describe("N2: agrupamiento de miles según el locale real, no siempre de a 3 asumido a mano", () => {
+    it('es-ES agrupa con "." y pone el símbolo después: "1.234.567,89 €"', () => {
+      expect(formatearPlata(123_456_789n, { locale: "es-ES", moneda: "EUR" })).toMatch(
+        /^1\.234\.567,89\s€$/,
+      );
+    });
+
+    it("en-IN agrupa irregular (2 y 2, no de a 3): 12,34,567.89", () => {
+      expect(formatearPlata(123_456_789n, { locale: "en-IN", moneda: "USD" })).toContain("12,34,567.89");
+    });
+  });
+
   it("sigue funcionando la firma 0.1 (Centavos number)", () => {
     expect(formatearPlata(4_400_000)).not.toMatch(/,00/);
     expect(formatearPlata(25914)).toMatch(/,14/);

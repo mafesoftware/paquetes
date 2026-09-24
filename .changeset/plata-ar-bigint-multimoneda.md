@@ -12,8 +12,10 @@ sigue funcionando):
 - `aplicarFactor(centavos, factor)`: factores decimales de hasta 8 decimales
   (spec 02 §3.2), sin punto flotante.
 - `factorEntre(valorRef, valorBase)`: la razón exacta entre dos valores de
-  índice, redondeada comercial a 8 decimales (`bigint` puro). Tira
-  `ErrorPlata` (`tc_no_positivo`) si el valor base no es mayor a 0.
+  índice (acepta cualquier cantidad de decimales en la entrada, a diferencia
+  de `aplicarFactor`), redondeada comercial a 8 decimales (`bigint` puro).
+  Los índices son positivos: tira `ErrorPlata` (`indice_invalido`) si
+  `valorRef`/`valorBase` no son mayores a 0, o no son un decimal válido.
 - `repartirPorMayorResto(total, pesos)`: reparto por mayor resto (pesos como
   `bigint | number | string`, incluida notación exponencial en los
   `number`), sin límite de decimales; **empate en el resto → gana el peso
@@ -33,14 +35,20 @@ sigue funcionando):
   forma del resultado cambió de raíz. Formato es-AR **estricto** por
   defecto: un punto SIEMPRE es separador de miles (debe agrupar de a 3
   dígitos exactos; `"1.50"`/`"1234.56"` son inválidos) — `opciones.
-  decimalConPunto: true` habilita la convención en inglés. Solo tolera
+  decimalConPunto: true` habilita la convención en inglés (responsabilidad
+  de quien llama: en ese modo `"1.000"` es 1 peso, no mil). Solo tolera
   dígitos, un `-` inicial, `.`, `,`, espacios y símbolos/códigos de moneda
-  (`$`, `US$`, `U$S`, `ARS`, `USD`, `EUR`, `€`); cualquier otro caracter
-  (`"1e3"`, `"(500)"`) es inválido, no se descarta en silencio.
+  (`$`, `US$`, `U$S`, `ARS`, `USD`, `EUR`, `€`) — y el signo/token únicamente
+  como prefijo o sufijo alrededor del número, nunca metidos adentro de los
+  dígitos: `"1e3"`, `"(500)"`, `"1$2"` y `"12 ARS 34"` son inválidos, no se
+  leen a pedazos.
 - `formatearPlata` ahora también acepta `Importe | bigint` (sobrecarga sobre
   la firma 0.1 en `Centavos`), con aritmética `bigint` exacta más allá de
-  `Number.MAX_SAFE_INTEGER` centavos. `opciones.moneda` no tiene efecto
-  cuando se pasa un `Importe` (la moneda la trae el propio importe).
+  `Number.MAX_SAFE_INTEGER` centavos y agrupamiento/separadores del locale
+  real (vía un string decimal exacto a `Intl.NumberFormat`, no una
+  reimplementación a mano que asume grupos de a 3 en todos lados).
+  `opciones.moneda` no tiene efecto cuando se pasa un `Importe` (la moneda la
+  trae el propio importe).
 - `ErrorPlata` / `CodigoErrorPlata`, para las condiciones de arriba que son
-  un bug de quien llama, no un dato de usuario (agrega `tc_no_positivo` y
-  `tc_identidad`).
+  un bug de quien llama, no un dato de usuario (agrega `tc_no_positivo`,
+  `tc_identidad` e `indice_invalido`).

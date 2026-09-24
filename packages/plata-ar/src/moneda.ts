@@ -1,5 +1,9 @@
 import { ErrorPlata } from "./errores.js";
-import { aplicarFactor, factorAEscala, ESCALA_FACTOR } from "./factor.js";
+import { aplicarFactor } from "./factor.js";
+// `factorAEscala`/`ESCALA_FACTOR` son internos (ver `escala-factor.ts`): se
+// importan directo de ahí, no de `factor.ts`, que solo re-exporta la API
+// pública (`aplicarFactor`, `factorEntre`).
+import { factorAEscala, ESCALA_FACTOR } from "./escala-factor.js";
 
 /** Monedas soportadas (spec 02 §1: "ARS, USD; EUR habilitable"). */
 export type Moneda = "ARS" | "USD" | "EUR";

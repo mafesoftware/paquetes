@@ -151,13 +151,28 @@ describe("repartirPorMayorResto", () => {
                 .map((frac) => `${entero}.${String(frac).padStart(cantidadDecimales, "0")}`),
         );
 
+      // number fraccionario "de verdad" (no un decimal prolijo armado a
+      // mano): puede traer ruido de punto flotante, como 0.1 + 0.2 =
+      // 0.30000000000000004 — exactamente el caso que
+      // `expandirNotacionExponencial`/`analizarPeso` tienen que digerir sin
+      // tirar ni perder precisión.
+      const pesoFlotante = fc.double({ min: 0, max: 10_000, noNaN: true, noDefaultInfinity: true });
+      const pesoSumaFlotante = fc
+        .tuple(
+          fc.double({ min: 0, max: 100, noNaN: true, noDefaultInfinity: true }),
+          fc.double({ min: 0, max: 100, noNaN: true, noDefaultInfinity: true }),
+        )
+        .map(([a, b]) => a + b);
+
       const pesoMixto = fc.oneof(
         fc.bigInt({ min: 0n, max: 10_000n }),
         fc.nat({ max: 10_000 }),
         pesoDecimalString,
+        pesoFlotante,
+        pesoSumaFlotante,
       );
 
-      // Un ancla > 0 en bigint garantiza sumaPesos > 0 sin reimplementar acá
+      // Un ancla `number` > 0 garantiza sumaPesos > 0 sin reimplementar acá
       // el parseo de pesos (que volvería la propiedad circular).
       const ancla = fc.integer({ min: 1, max: 1000 });
 

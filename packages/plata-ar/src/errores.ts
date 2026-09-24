@@ -30,10 +30,12 @@ export type CodigoErrorPlata =
   | "moneda_mezclada"
   /** `sumar` fue llamado sin importes: no hay moneda que inferir. */
   | "sumar_sin_importes"
-  /** `convertir`/`factorEntre` recibieron un tipo de cambio o valor base que no es mayor a 0. */
+  /** `convertir` recibió un tipo de cambio que no es mayor a 0. */
   | "tc_no_positivo"
   /** `convertir` a la misma moneda de origen con un tipo de cambio que no es exactamente "1". */
-  | "tc_identidad";
+  | "tc_identidad"
+  /** `factorEntre` recibió un valor de índice que no es un decimal válido, o que no es mayor a 0 (los índices son positivos). */
+  | "indice_invalido";
 
 /** Error de `plata-ar` para condiciones que son un bug de quien llama, no un dato inválido de usuario. */
 export class ErrorPlata extends Error {

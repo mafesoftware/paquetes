@@ -1,27 +1,22 @@
 import type { Moneda } from "./moneda.js";
 
-function agruparMiles(digitos: string, separador: string): string {
-  if (separador === "" || digitos.length <= 3) return digitos;
-  const grupos: string[] = [];
-  let resto = digitos;
-  while (resto.length > 3) {
-    grupos.unshift(resto.slice(-3));
-    resto = resto.slice(0, -3);
-  }
-  grupos.unshift(resto);
-  return grupos.join(separador);
-}
-
 /**
  * Formatea un monto en centavos (`bigint`) con moneda, sin la pérdida de
  * precisión de pasar por `Number(centavos) / 100` — que redondea mal apenas
  * el monto cruza `Number.MAX_SAFE_INTEGER` centavos.
  *
- * Arma la parte entera y la fraccionaria con aritmética `bigint` exacta (los
- * dígitos nunca pasan por un `number`), y le pide a `Intl.NumberFormat`
- * *solo* los adornos del locale/moneda —símbolo, su posición, separador de
- * miles y decimal— formateando un valor de referencia chico (nunca el monto
- * real) y reemplazando sus dígitos por los nuestros.
+ * Arma el valor como un STRING decimal exacto (`enteroTexto.fraccionTexto`,
+ * construido con aritmética `bigint`) y se lo pasa directo a
+ * `Intl.NumberFormat#format`, que —a diferencia de pasarle un `number`—
+ * acepta un string decimal y lo interpreta con precisión matemática exacta
+ * (`ToIntlMathematicalValue`, parte del estándar ECMA-402 desde 2020;
+ * soportado en los motores JS modernos, Node ≥ 20 incluido). Así `Intl`
+ * resuelve símbolo, posición, separador de miles/decimal y agrupamiento
+ * **del locale real** (de a 3 en la mayoría, pero irregular en otros como
+ * `en-IN`: "₹12,34,567"), sin que este paquete tenga que reimplementar esa
+ * lógica a mano asumiendo grupos de a 3 en todos lados — que es lo que
+ * hacía una versión anterior de esta función, y que perdía el agrupamiento
+ * en `es-ES` (ver test).
  */
 export function formatearImporteExacto(
   centavos: bigint,
@@ -34,6 +29,8 @@ export function formatearImporteExacto(
   const enteroTexto = (absoluto / 100n).toString();
   const fraccionTexto = (absoluto % 100n).toString().padStart(2, "0");
   const decimales = decimalesSiempre || fraccionTexto !== "00" ? 2 : 0;
+  const valorDecimal =
+    (negativo ? "-" : "") + (decimales > 0 ? `${enteroTexto}.${fraccionTexto}` : enteroTexto);
 
   const formateador = new Intl.NumberFormat(locale, {
     style: "currency",
@@ -42,34 +39,8 @@ export function formatearImporteExacto(
     maximumFractionDigits: decimales,
   });
 
-  // Valor de referencia (NUNCA el monto real, que puede exceder lo que un
-  // `number` representa exacto): solo para leer del locale el símbolo, su
-  // posición y los separadores de miles/decimal.
-  const partes = formateador.formatToParts(negativo ? -1234 : 1234);
-  const separadorDeGrupo = partes.find((p) => p.type === "group")?.value ?? "";
-  const enteroFormateado = agruparMiles(enteroTexto, separadorDeGrupo);
-
-  let resultado = "";
-  let enteroEmitido = false;
-  for (const parte of partes) {
-    if (parte.type === "integer" || parte.type === "group") {
-      if (!enteroEmitido) {
-        resultado += enteroFormateado;
-        enteroEmitido = true;
-      }
-      continue;
-    }
-    if (parte.type === "fraction") {
-      // Solo aparece cuando `decimales > 0`: así se construyó `formateador`
-      // (`minimumFractionDigits`/`maximumFractionDigits` = `decimales`).
-      resultado += fraccionTexto;
-      continue;
-    }
-    if (parte.type === "decimal") {
-      resultado += parte.value;
-      continue;
-    }
-    resultado += parte.value;
-  }
-  return resultado;
+  // `Intl.NumberFormat#format` acepta `string` en tiempo de ejecución (ver
+  // docstring), pero el tipo de `lib.es2020.intl` de TypeScript solo declara
+  // `number | bigint` — de ahí el cast.
+  return formateador.format(valorDecimal as unknown as number);
 }

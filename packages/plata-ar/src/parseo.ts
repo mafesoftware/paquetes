@@ -32,25 +32,34 @@ function esGrupoDeMilesValido(texto: string): boolean {
 }
 
 /**
- * Símbolos y códigos de moneda que `parsearImporte` tolera delante o
- * detrás del número. Cualquier OTRO caracter que no sea dígito, `.`, `,`,
- * un `-` inicial o espacio es un importe inválido — no se descarta en
- * silencio (a diferencia de una limpieza a ciegas tipo `[^\d.,-]`, que
- * convertiría `"1e3"` en `"13"` o `"(500)"` en `"500"`).
+ * Símbolos y códigos de moneda que `parsearImporte` tolera, pero SOLO como
+ * prefijo o sufijo alrededor del número con signo — nunca metidos adentro
+ * de los dígitos. `"US$1.234,56"` y `"1.234,56 ARS"` son válidos; `"1ARS2"`
+ * o `"12 ARS 34"` NO lo son (serían un importe distinto leído a pedazos).
  */
-const TOKENS_MONEDA = /(US\$|U\$S|ARS|USD|EUR|\$|€)/gi;
+const TOKEN_MONEDA = "(?:US\\$|U\\$S|ARS|USD|EUR|\\$|€)";
 
-/** Quita símbolos/códigos de moneda y espacios; `null` si queda algo que no es dígito, `.`, `,` o un `-` inicial. */
-function limpiarImporte(textoOriginal: string): string | null {
+/**
+ * El signo y un token de moneda pueden aparecer, en cualquier orden, como
+ * prefijo (cada uno como mucho una vez, separados por espacios sueltos); un
+ * token puede aparecer también como sufijo. El cuerpo numérico (dígitos,
+ * `.`, `,`) tiene que ser contiguo — sin espacios ni tokens adentro, así
+ * `"2 3"`/`"10 50"`/`"1 usd 2"` no se leen como un solo número.
+ */
+const PATRON_IMPORTE = new RegExp(
+  `^\\s*(?:${TOKEN_MONEDA}\\s*)?(-)?\\s*(?:${TOKEN_MONEDA}\\s*)?([\\d.,]+)\\s*(?:${TOKEN_MONEDA})?\\s*$`,
+  "i",
+);
+
+/** Separa signo y símbolo/código de moneda del cuerpo numérico; `null` si no matchea la forma de arriba. */
+function limpiarImporte(textoOriginal: string): { negativo: boolean; nucleo: string } | null {
   const texto = String(textoOriginal ?? "");
   if (!texto.trim()) return null;
 
-  const sinSimbolos = texto.replace(TOKENS_MONEDA, "");
-  const compacto = sinSimbolos.replace(/\s+/g, "");
-  if (!compacto) return null;
-  if (!/^-?[\d.,]+$/.test(compacto)) return null;
+  const coincidencia = PATRON_IMPORTE.exec(texto);
+  if (!coincidencia) return null;
 
-  return compacto;
+  return { negativo: coincidencia[1] === "-", nucleo: coincidencia[2]! };
 }
 
 /**
@@ -66,15 +75,9 @@ function analizarImporte(textoOriginal: string, decimalConPunto: boolean): Impor
   const limpio = limpiarImporte(textoOriginal);
   if (limpio === null) return null;
 
-  let resto = limpio;
-  let negativo = false;
-  if (resto.startsWith("-")) {
-    negativo = true;
-    resto = resto.slice(1);
-  }
-  // `resto` nunca es "" acá: `limpiarImporte` exige `[\d.,]+` (1+
-  // caracteres) después de un "-" inicial opcional, así que un texto que
-  // era solo "-" ya volvió `null` más arriba.
+  const { negativo, nucleo: resto } = limpio;
+  // `resto` nunca es "": `PATRON_IMPORTE` exige `[\d.,]+` (1+ caracteres)
+  // en el grupo capturado.
 
   if (decimalConPunto) {
     if (resto.includes(",")) return null; // el modo inglés no admite coma
