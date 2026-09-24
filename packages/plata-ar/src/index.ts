@@ -41,6 +41,7 @@ export * from "./moneda.js";
 export * from "./parseo.js";
 
 import type { Importe, Moneda } from "./moneda.js";
+import { formatearImporteExacto } from "./formato.js";
 
 /**
  * Un monto guardado en centavos, como `number`.
@@ -103,7 +104,14 @@ export type FormatoPlata = {
 
 /** Opciones de formato para un `Importe`/`bigint` (API 0.2). */
 export type FormatoImporte = {
-  /** Moneda a usar cuando `i` es un `bigint` a secas. Ignorada si `i` es un `Importe` (se usa `i.moneda`). `"ARS"` por defecto. */
+  /**
+   * Moneda a usar cuando `i` es un `bigint` a secas. `"ARS"` por defecto.
+   *
+   * **Se IGNORA si `i` es un `Importe`**: la moneda de un `Importe` la trae
+   * el propio importe (`i.moneda`), no `opciones` — pasar una distinta acá
+   * no la convierte (para eso está `convertir`) ni la pisa; simplemente no
+   * tiene efecto.
+   */
   moneda?: Moneda;
   /** Locale para separadores y símbolo. `"es-AR"` por defecto. */
   locale?: string;
@@ -126,13 +134,19 @@ export function formatearPlata(centavos: Centavos, opciones?: FormatoPlata): str
 /**
  * Un `Importe` (o un monto en centavos `bigint`, sin moneda propia) para
  * mostrar. A diferencia de la variante `Centavos` de la 0.1, siempre muestra
- * los dos decimales por defecto: en un panel multimoneda "US$ 50" sin
- * decimales es ambiguo con un monto ARS.
+ * los dos decimales por defecto (en un panel multimoneda "US$ 50" sin
+ * decimales es ambiguo con un monto ARS), y formatea con aritmética `bigint`
+ * exacta — sin el límite de `Number.MAX_SAFE_INTEGER` centavos de la 0.1.
+ *
+ * `opciones.moneda` **no tiene efecto si `i` es un `Importe`**: la moneda la
+ * trae el propio importe (ver `FormatoImporte`).
  *
  * @example
  * formatearPlata({ centavos: -5_000n, moneda: "USD" }); // "-US$ 50,00"
  * @example
  * formatearPlata(4_400_000n); // "$ 44.000,00" (bigint a secas: moneda ARS por defecto)
+ * @example
+ * formatearPlata(9_007_199_254_740_993n); // "$ 90.071.992.547.409,93" (exacto más allá de MAX_SAFE_INTEGER)
  */
 export function formatearPlata(importe: Importe | bigint, opciones?: FormatoImporte): string;
 export function formatearPlata(
@@ -152,15 +166,13 @@ export function formatearPlata(
 
   const esBigintASecas = typeof i === "bigint";
   const centavosBig = esBigintASecas ? i : i.centavos;
-  const monedaResuelta: Moneda = (opciones.moneda as Moneda | undefined) ?? (esBigintASecas ? "ARS" : i.moneda);
-  const { locale = "es-AR", decimalesSiempre = true } = opciones;
-  const decimales = decimalesSiempre || centavosBig % 100n !== 0n ? 2 : 0;
-  return new Intl.NumberFormat(locale, {
-    style: "currency",
-    currency: monedaResuelta,
-    minimumFractionDigits: decimales,
-    maximumFractionDigits: decimales,
-  }).format(Number(centavosBig) / 100);
+  // La moneda de un Importe SIEMPRE manda: `opciones.moneda` solo aplica
+  // cuando `i` es un bigint a secas (que no trae moneda propia).
+  const monedaResuelta: Moneda = esBigintASecas ? ((opciones.moneda as Moneda | undefined) ?? "ARS") : i.moneda;
+  return formatearImporteExacto(centavosBig, monedaResuelta, {
+    locale: opciones.locale,
+    decimalesSiempre: opciones.decimalesSiempre,
+  });
 }
 
 /** Atajo para el caso argentino, que es el 99% de las llamadas. */

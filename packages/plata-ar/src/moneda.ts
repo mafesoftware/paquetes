@@ -1,5 +1,5 @@
 import { ErrorPlata } from "./errores.js";
-import { aplicarFactor } from "./factor.js";
+import { aplicarFactor, factorAEscala, ESCALA_FACTOR } from "./factor.js";
 
 /** Monedas soportadas (spec 02 §1: "ARS, USD; EUR habilitable"). */
 export type Moneda = "ARS" | "USD" | "EUR";
@@ -16,16 +16,47 @@ export interface Importe {
  * (string decimal de hasta 8 decimales, spec 02 §2: `tipo_cambio numeric(20,6)`
  * guardado con la precisión de `aplicarFactor`).
  *
- * Como toda conversión pasa por un redondeo comercial al centavo, la ida y
- * la vuelta (`convertir(convertir(i, B, tc), A, 1/tc)`) puede diferir del
- * importe original en como mucho ±1 centavo — nunca más, porque cada
- * conversión redondea una sola vez.
+ * `tc` tiene que ser mayor a 0 — tira `ErrorPlata` (`tc_no_positivo`) si no
+ * lo es — y, si `a` es la MISMA moneda que ya tiene `importe`, tiene que
+ * ser exactamente `"1"` — tira `ErrorPlata` (`tc_identidad`) si no: convertir
+ * ARS a ARS con un tipo de cambio que no es 1 es casi siempre un TC de otro
+ * par pegado en el lugar equivocado, no una conversión real.
+ *
+ * **Contrato real de ida y vuelta** (no "siempre ±1 centavo", que no es
+ * cierto en general): `convertir(convertir(i, B, tc), A, tcInv)` cae dentro
+ * de ±1 centavo del `i` original **solo si**:
+ * 1. `tc` y `tcInv` son recíprocos exactos (`tc × tcInv === 1` sin resto,
+ *    p.ej. `"2"` / `"0.5"`, o `"1.25"` / `"0.8"` — no dos cotizaciones
+ *    cargadas por separado y redondeadas cada una a 8 decimales, que casi
+ *    nunca multiplican exacto a 1), **y**
+ * 2. se arranca en la moneda "fuerte" (la que tiene MENOS centavos por
+ *    unidad de la otra) — es decir, la primera conversión usa el factor
+ *    mayor a 1 y la vuelta el factor `tcInv <= 1`.
+ *
+ * Sin las dos condiciones no hay garantía de round trip: la ida y la vuelta
+ * son dos conversiones independientes, cada una exacta en sí misma, no
+ * inversas la una de la otra. Quien necesite el importe original después de
+ * convertir tiene que **guardar el importe y el TC originales**, no
+ * reconstruirlos convirtiendo para atrás.
  *
  * @example
  * convertir({ centavos: 100_000n, moneda: "USD" }, "ARS", "1050.50");
  * // { centavos: 105_050_000n, moneda: "ARS" }  (USD 1.000 a $1.050,50)
+ * @example
+ * convertir({ centavos: 100n, moneda: "ARS" }, "ARS", "1"); // sin cambios
+ * convertir({ centavos: 100n, moneda: "ARS" }, "ARS", "2"); // tira ErrorPlata (tc_identidad)
  */
 export function convertir(importe: Importe, a: Moneda, tc: string): Importe {
+  const tcEscalado = factorAEscala(tc);
+  if (tcEscalado <= 0n) {
+    throw new ErrorPlata("tc_no_positivo", `convertir: el tipo de cambio debe ser mayor a 0 (fue "${tc}").`);
+  }
+  if (importe.moneda === a && tcEscalado !== ESCALA_FACTOR) {
+    throw new ErrorPlata(
+      "tc_identidad",
+      `convertir: convertir ${a} a la misma moneda requiere un tipo de cambio "1" (fue "${tc}").`,
+    );
+  }
   return { centavos: aplicarFactor(importe.centavos, tc), moneda: a };
 }
 

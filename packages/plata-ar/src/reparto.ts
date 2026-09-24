@@ -9,6 +9,42 @@ interface PesoAnalizado {
   decimales: string;
 }
 
+/**
+ * Expande la notación exponencial que `Number.prototype.toString` usa para
+ * magnitudes muy chicas (`< 1e-6`) o muy grandes (`>= 1e21`, ver ECMA-262
+ * `Number::toString`) a notación decimal plana, moviendo el punto sobre los
+ * mismos dígitos que ya imprimió `toString` — no reconstruye el valor desde
+ * los bits IEEE-754, así que un decimal "de toda la vida" como `33.33`
+ * (cuyo `toString` nunca usa notación exponencial) sale intacto, sin la
+ * expansión binaria completa (~50 dígitos) que tendría bit a bit. Un
+ * `number` sin notación exponencial en su `toString` vuelve sin cambios.
+ */
+function expandirNotacionExponencial(texto: string): string {
+  const coincidencia = /^(-?)(\d+)(?:\.(\d+))?e([+-]\d+)$/i.exec(texto);
+  if (!coincidencia) return texto;
+
+  const signo = coincidencia[1] ?? "";
+  const parteEntera = coincidencia[2]!;
+  const parteDecimal = coincidencia[3] ?? "";
+  const exponente = Number(coincidencia[4]!);
+
+  const digitos = parteEntera + parteDecimal;
+  const puntoNuevo = parteEntera.length + exponente;
+
+  let cuerpo: string;
+  if (puntoNuevo <= 0) {
+    cuerpo = `0.${"0".repeat(-puntoNuevo)}${digitos}`;
+  } else if (puntoNuevo >= digitos.length) {
+    cuerpo = digitos + "0".repeat(puntoNuevo - digitos.length);
+  } else {
+    cuerpo = `${digitos.slice(0, puntoNuevo)}.${digitos.slice(puntoNuevo)}`;
+  }
+  if (cuerpo.includes(".")) {
+    cuerpo = cuerpo.replace(/0+$/, "").replace(/\.$/, "");
+  }
+  return signo + cuerpo;
+}
+
 function analizarPeso(peso: PesoReparto): PesoAnalizado {
   let texto: string;
   if (typeof peso === "bigint") {
@@ -17,7 +53,7 @@ function analizarPeso(peso: PesoReparto): PesoAnalizado {
     if (!Number.isFinite(peso)) {
       throw new ErrorPlata("peso_invalido", `Peso inválido: ${String(peso)}.`);
     }
-    texto = peso.toString();
+    texto = expandirNotacionExponencial(peso.toString());
   } else {
     texto = peso.trim();
   }
@@ -26,28 +62,32 @@ function analizarPeso(peso: PesoReparto): PesoAnalizado {
   if (!coincidencia) {
     throw new ErrorPlata("peso_invalido", `Peso inválido: "${String(peso)}".`);
   }
+
+  const entero = coincidencia[2]!;
+  const decimales = coincidencia[3] ?? "";
+  // "-0" (o "-0.00", "-0.0", ...) es cero, no negativo: no hay signo
+  // posible para "nada" (spec: -0 cuenta como cero).
+  const esCero = /^0*$/.test(entero) && (decimales === "" || /^0*$/.test(decimales));
   return {
-    negativo: coincidencia[1] === "-",
-    // El grupo 2 (entero) siempre matchea si `coincidencia` no es null; solo
-    // el grupo 3 (decimales) es opcional.
-    entero: coincidencia[2]!,
-    decimales: coincidencia[3] ?? "",
+    negativo: coincidencia[1] === "-" && !esCero,
+    entero,
+    decimales,
   };
 }
 
 /**
  * Reparte `total` centavos entre `pesos` **sin perder ni inventar un
  * centavo**, por mayor resto (spec 02 §1: "la suma de las partes es
- * exactamente el total"; spec 06 §3: "repartos por mayor resto, no por mayor
- * peso").
+ * exactamente el total").
  *
  * Los pesos se usan como proporción, no como monto, y se convierten a
  * enteros exactos (nunca a `number` con parte fraccionaria) antes de
- * calcular: aceptan `bigint`, `number` o un string decimal ("33.33"), sin
- * límite de decimales.
+ * calcular: aceptan `bigint`, `number` (incluida notación exponencial, p.ej.
+ * `1e-7`) o un string decimal ("33.33"), sin límite de decimales.
  *
- * **Empate en el resto → gana el índice más bajo** (el primero de la
- * lista).
+ * **Empate en el resto → gana el peso más grande; si los pesos también
+ * empatan, gana el índice más bajo** (spec 02 §1: "en prorrateos se asigna
+ * por mayor resto; empate: la parte de mayor peso").
  *
  * Tira `ErrorPlata` si `pesos` está vacío, si algún peso es negativo o si
  * todos los pesos son cero: son errores de quien llama, no datos de un
@@ -57,6 +97,8 @@ function analizarPeso(peso: PesoReparto): PesoAnalizado {
  * repartirPorMayorResto(100n, [1, 1, 1]); // [34n, 33n, 33n]
  * @example
  * repartirPorMayorResto(1000n, ["33.33", "33.33", "33.34"]); // [333n, 333n, 334n]
+ * @example
+ * repartirPorMayorResto(2n, [1, 3]); // [0n, 2n]  (empate en el resto: gana el peso 3)
  */
 export function repartirPorMayorResto(total: bigint, pesos: readonly PesoReparto[]): bigint[] {
   if (pesos.length === 0) {
@@ -70,7 +112,9 @@ export function repartirPorMayorResto(total: bigint, pesos: readonly PesoReparto
     }
   }
 
-  const maxDecimales = Math.max(...analizados.map((a) => a.decimales.length));
+  // Sin spread en Math.max: con listas grandes, `Math.max(...arreglo)` puede
+  // superar el límite de argumentos de la pila del motor.
+  const maxDecimales = analizados.reduce((max, a) => Math.max(max, a.decimales.length), 0);
   const pesosEscalados = analizados.map((a) => {
     const decimalesCompletos = a.decimales.padEnd(maxDecimales, "0");
     const texto = maxDecimales === 0 ? a.entero : `${a.entero}${decimalesCompletos}`;
@@ -88,7 +132,7 @@ export function repartirPorMayorResto(total: bigint, pesos: readonly PesoReparto
   const totalAbsoluto = totalEsNegativo ? -total : total;
 
   const partes: bigint[] = pesosEscalados.map(() => 0n);
-  const restos: { resto: bigint; indice: number }[] = [];
+  const restos: { resto: bigint; peso: bigint; indice: number }[] = [];
   let sumaPartes = 0n;
 
   pesosEscalados.forEach((peso, indice) => {
@@ -97,13 +141,15 @@ export function repartirPorMayorResto(total: bigint, pesos: readonly PesoReparto
     const resto = producto % sumaPesos;
     partes[indice] = cociente;
     sumaPartes += cociente;
-    restos.push({ resto, indice });
+    restos.push({ resto, peso, indice });
   });
 
-  // Mayor resto primero; empate → el índice más bajo (spec: "empate → primero").
+  // Mayor resto primero; empate → gana el peso más grande; empate también
+  // en el peso → el índice más bajo.
   restos.sort((a, b) => {
-    if (a.resto === b.resto) return a.indice - b.indice;
-    return a.resto > b.resto ? -1 : 1;
+    if (a.resto !== b.resto) return a.resto > b.resto ? -1 : 1;
+    if (a.peso !== b.peso) return a.peso > b.peso ? -1 : 1;
+    return a.indice - b.indice;
   });
 
   let faltante = totalAbsoluto - sumaPartes;

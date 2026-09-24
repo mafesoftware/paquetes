@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { aplicarFactor } from "../src/factor.ts";
+import { aplicarFactor, factorEntre } from "../src/factor.ts";
 import { ErrorPlata } from "../src/errores.ts";
 
 describe("aplicarFactor", () => {
@@ -42,5 +42,37 @@ describe("aplicarFactor", () => {
     } catch (e) {
       expect((e as ErrorPlata).codigo).toBe("factor_invalido");
     }
+  });
+});
+
+describe("factorEntre (M12)", () => {
+  it('el valor verbatim: factorEntre("3662.2", "3448.3") -> "1.06203057"', () => {
+    expect(factorEntre("3662.2", "3448.3")).toBe("1.06203057");
+  });
+
+  it("compone con aplicarFactor y da el mismo resultado que el factor a mano", () => {
+    expect(aplicarFactor(10_000_000n, factorEntre("3662.2", "3448.3"))).toBe(10_620_306n);
+  });
+
+  it("valorRef == valorBase da factor 1", () => {
+    expect(factorEntre("100", "100")).toBe("1");
+  });
+
+  it("redondea comercial a 8 decimales (no trunca)", () => {
+    expect(factorEntre("1", "3")).toBe("0.33333333");
+  });
+
+  it("valorBase <= 0 tira ErrorPlata (tc_no_positivo)", () => {
+    expect(() => factorEntre("100", "0")).toThrow(ErrorPlata);
+    expect(() => factorEntre("100", "-5")).toThrow(ErrorPlata);
+    try {
+      factorEntre("100", "0");
+    } catch (e) {
+      expect((e as ErrorPlata).codigo).toBe("tc_no_positivo");
+    }
+  });
+
+  it("valorRef negativo da un factor negativo", () => {
+    expect(factorEntre("-100", "50")).toBe("-2");
   });
 });

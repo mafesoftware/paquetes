@@ -11,16 +11,36 @@ sigue funcionando):
   cero, en `bigint` puro.
 - `aplicarFactor(centavos, factor)`: factores decimales de hasta 8 decimales
   (spec 02 §3.2), sin punto flotante.
+- `factorEntre(valorRef, valorBase)`: la razón exacta entre dos valores de
+  índice, redondeada comercial a 8 decimales (`bigint` puro). Tira
+  `ErrorPlata` (`tc_no_positivo`) si el valor base no es mayor a 0.
 - `repartirPorMayorResto(total, pesos)`: reparto por mayor resto (pesos como
-  `bigint | number | string`), sin límite de decimales; empate en el resto
-  gana el índice más bajo. Tira `ErrorPlata` con lista vacía, un peso
-  negativo o todos los pesos en cero.
-- `convertir(importe, moneda, tc)` y `sumar(...importes)` (tira `ErrorPlata`
-  si se mezclan monedas).
+  `bigint | number | string`, incluida notación exponencial en los
+  `number`), sin límite de decimales; **empate en el resto → gana el peso
+  más grande; empate también en el peso → el índice más bajo** (spec 02
+  §1). Un `-0` cuenta como cero, no como negativo. Tira `ErrorPlata` con
+  lista vacía, un peso negativo o todos los pesos en cero.
+- `convertir(importe, moneda, tc)`: `tc` tiene que ser mayor a 0 (si no,
+  `ErrorPlata` `tc_no_positivo`), y convertir a la misma moneda de origen
+  exige `tc === "1"` (si no, `ErrorPlata` `tc_identidad`). El round trip
+  (`convertir` ida y vuelta) cae dentro de ±1 centavo **solo** cuando el TC
+  y su inverso son recíprocos exactos y se arranca en la moneda fuerte — no
+  es una garantía general con dos cotizaciones cargadas por separado.
+- `sumar(...importes)` (tira `ErrorPlata` si se mezclan monedas, o si se
+  llama sin importes).
 - `parsearImporte(texto, opciones?)`: nunca tira, devuelve `{ ok, centavos }`
   o `{ ok, error }`. Se llama distinto de `parsearPlata` (0.1) porque la
-  forma del resultado cambió de raíz.
+  forma del resultado cambió de raíz. Formato es-AR **estricto** por
+  defecto: un punto SIEMPRE es separador de miles (debe agrupar de a 3
+  dígitos exactos; `"1.50"`/`"1234.56"` son inválidos) — `opciones.
+  decimalConPunto: true` habilita la convención en inglés. Solo tolera
+  dígitos, un `-` inicial, `.`, `,`, espacios y símbolos/códigos de moneda
+  (`$`, `US$`, `U$S`, `ARS`, `USD`, `EUR`, `€`); cualquier otro caracter
+  (`"1e3"`, `"(500)"`) es inválido, no se descarta en silencio.
 - `formatearPlata` ahora también acepta `Importe | bigint` (sobrecarga sobre
-  la firma 0.1 en `Centavos`).
+  la firma 0.1 en `Centavos`), con aritmética `bigint` exacta más allá de
+  `Number.MAX_SAFE_INTEGER` centavos. `opciones.moneda` no tiene efecto
+  cuando se pasa un `Importe` (la moneda la trae el propio importe).
 - `ErrorPlata` / `CodigoErrorPlata`, para las condiciones de arriba que son
-  un bug de quien llama, no un dato de usuario.
+  un bug de quien llama, no un dato de usuario (agrega `tc_no_positivo` y
+  `tc_identidad`).
