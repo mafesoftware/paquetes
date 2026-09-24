@@ -19,10 +19,10 @@
  *   único). No es lo que produce `siguienteNumero` bajo concurrencia (ver
  *   su JSDoc); sigue sirviendo para el patrón `max + 1` + insert de
  *   store360 y similares.
- * - `falla-de-serializacion.ts`: `esFallaDeSerializacion` — `40001`/`40P01`.
- *   Es el fallo real de `siguienteNumero` bajo aislamiento `REPEATABLE
- *   READ`/`SERIALIZABLE` (no bajo `READ COMMITTED`, para el que está
- *   pensado por defecto).
+ * - `falla-de-serializacion.ts`: `esFallaDeSerializacion` — `40001`
+ *   (necesita aislamiento `REPEATABLE READ`/`SERIALIZABLE`) o `40P01`,
+ *   deadlock, que puede pasar bajo CUALQUIER aislamiento —incluido `READ
+ *   COMMITTED`, el default— si una transacción numera varias filas.
  * - `reintento.ts`: `conReintento` — reintento con backoff y jitter para un
  *   error reintentable (`esChoqueDeUnico` por defecto).
  * - `errores.ts`: `ErrorNumeradores`, el único error que tira este paquete.

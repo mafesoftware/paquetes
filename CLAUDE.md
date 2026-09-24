@@ -27,6 +27,10 @@ repo.
   convertirlo a una versión real, y `bun run lint:paquetes` verifica (con
   `bun pm pack` real, en una copia descartable) que ningún tarball empaquetado
   se quede con `"workspace:"` — ver "Publicar" en el README de la raíz.
+  `reescribir-workspace.ts` se niega a correr fuera de CI (`CI=true`) salvo
+  `--forzar`, porque muta los `package.json` reales del checkout IN PLACE —
+  corrido a mano sin eso, dejaría el working tree con las versiones
+  reescritas.
 - Commits: autor `MFSoftware <mafesoftware@gmail.com>` (pasar `-c user.name=... -c
   user.email=...` si el git config local no lo tiene por defecto), mensajes en
   español. No pushear ni publicar salvo que se pida explícitamente.

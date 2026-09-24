@@ -405,4 +405,37 @@ describe("configurarNumerador (Postgres)", () => {
     const { formateado } = await db.transaction((tx) => siguienteNumero(tx, numeradores, { tenantId, tipo: "recibo" }));
     expect(formateado).toBe("V-001");
   });
+
+  it("proximo por encima de 2_147_483_647 (el máximo de un int4) funciona en una fila NUEVA (INSERT): sin el cast explícito, Postgres infiere el parámetro como int4 y tira 22003", async () => {
+    const tenantId = randomUUID();
+    const PROXIMO_GRANDE = 3_000_000_000n; // > 2_147_483_647 (int4), cabe en bigint
+
+    await expect(
+      configurarNumerador(db, numeradores, { tenantId, tipo: "recibo", proximo: PROXIMO_GRANDE }),
+    ).resolves.toBeUndefined();
+
+    const primero = await db.transaction((tx) => siguienteNumero(tx, numeradores, { tenantId, tipo: "recibo" }));
+    expect(primero.numero).toBe(3_000_000_000n);
+
+    const segundo = await db.transaction((tx) => siguienteNumero(tx, numeradores, { tenantId, tipo: "recibo" }));
+    expect(segundo.numero).toBe(3_000_000_001n);
+  });
+
+  it("proximo por encima de 2_147_483_647 funciona reconfigurando una fila YA EXISTENTE (DO UPDATE)", async () => {
+    const tenantId = randomUUID();
+    const PROXIMO_GRANDE = 3_000_000_000n;
+
+    // La fila ya existe (creada con un proximo chico) antes de subirla.
+    await configurarNumerador(db, numeradores, { tenantId, tipo: "recibo", proximo: 5n });
+
+    await expect(
+      configurarNumerador(db, numeradores, { tenantId, tipo: "recibo", proximo: PROXIMO_GRANDE }),
+    ).resolves.toBeUndefined();
+
+    const primero = await db.transaction((tx) => siguienteNumero(tx, numeradores, { tenantId, tipo: "recibo" }));
+    expect(primero.numero).toBe(3_000_000_000n);
+
+    const segundo = await db.transaction((tx) => siguienteNumero(tx, numeradores, { tenantId, tipo: "recibo" }));
+    expect(segundo.numero).toBe(3_000_000_001n);
+  });
 });

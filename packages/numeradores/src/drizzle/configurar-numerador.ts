@@ -132,19 +132,31 @@ export async function configurarNumerador(
   // `excluded` acá, así que no hay el problema de ambigüedad de columna
   // que sí tiene `siguienteNumero` (ver su comentario), pero calificar no
   // está de más).
+  //
+  // `::bigint`/`::integer`/`::text` en CADA parámetro (y en el literal de
+  // default que lo acompaña en las VALUES): sin el cast, Postgres infiere
+  // el tipo de `$6` (proximo) a partir del OTRO lado del `coalesce` — el
+  // literal `1`, que sin sufijo es `integer` (int4) — y liga el parámetro a
+  // int4 aunque la columna sea `bigint`. Con `proximo` chico no se nota
+  // (cabe en int4 igual), pero un `proximo` real por encima de
+  // 2_147_483_647 (el máximo de int4) tira `22003` ("value ... is out of
+  // range for type integer") tanto insertando una fila nueva como
+  // actualizando una existente — reproducido con `3_000_000_000n` (ver
+  // `tests/drizzle/postgres.test.ts`). El cast explícito fija el tipo del
+  // parámetro ANTES de que Postgres tenga que inferirlo del literal vecino.
   const consulta = sql`
     insert into ${tabla} (${colTenant}, ${colAmbito}, ${colTipo}, ${colPrefijo}, ${colRelleno}, ${colProximo})
     values (
       ${opciones.tenantId}, ${ambito}, ${opciones.tipo},
-      coalesce(${prefijoParam}, ''), coalesce(${rellenoParam}, 0), coalesce(${proximoParam}, 1)
+      coalesce(${prefijoParam}::text, ''::text), coalesce(${rellenoParam}::integer, 0::integer), coalesce(${proximoParam}::bigint, 1::bigint)
     )
     on conflict (${colTenant}, ${colAmbito}, ${colTipo})
     do update set
-      ${colPrefijo} = coalesce(${prefijoParam}, ${tabla}.${colPrefijo}),
-      ${colRelleno} = coalesce(${rellenoParam}, ${tabla}.${colRelleno}),
-      ${colProximo} = coalesce(${proximoParam}, ${tabla}.${colProximo}),
+      ${colPrefijo} = coalesce(${prefijoParam}::text, ${tabla}.${colPrefijo}),
+      ${colRelleno} = coalesce(${rellenoParam}::integer, ${tabla}.${colRelleno}),
+      ${colProximo} = coalesce(${proximoParam}::bigint, ${tabla}.${colProximo}),
       ${colActualizadoEn} = now()
-    where ${tabla}.${colProximo} <= coalesce(${proximoParam}, ${tabla}.${colProximo})
+    where ${tabla}.${colProximo} <= coalesce(${proximoParam}::bigint, ${tabla}.${colProximo})
     returning ${colProximo} as proximo
   `;
 

@@ -30,13 +30,23 @@ export interface OpcionesConReintento {
  *   CONFLICT DO UPDATE` absorbe ese choque adentro de la misma sentencia,
  *   nunca llega a violar el índice — ver su JSDoc).
  * - La falla de serialización (`40001`/`40P01`, `esFallaDeSerializacion`)
- *   que SÍ puede tirar `siguienteNumero`, pero solo si la transacción que
- *   lo envuelve corre con aislamiento `REPEATABLE READ`/`SERIALIZABLE` (no
- *   con `READ COMMITTED`, el default, para el que `siguienteNumero` está
- *   pensado). Con esos aislamientos, hay que envolver la transacción
- *   ENTERA, no solo la llamada a `siguienteNumero`: una vez que Postgres
- *   aborta una transacción por esto, TODA sentencia posterior en esa misma
- *   transacción falla también, así que reintentar de adentro no alcanza.
+ *   que SÍ puede tirar `siguienteNumero`. `40001` necesita aislamiento
+ *   `REPEATABLE READ`/`SERIALIZABLE` (no pasa bajo `READ COMMITTED`, el
+ *   default, para el que `siguienteNumero` está pensado). `40P01`
+ *   (deadlock) en cambio puede pasar bajo CUALQUIER aislamiento, incluido
+ *   `READ COMMITTED`: si una transacción numera VARIAS filas distintas (más
+ *   de un `(tenant, ambito, tipo)`) y otra transacción concurrente las pide
+ *   en el orden contrario, Postgres puede abortar a una de las dos con
+ *   `40P01` aunque ninguna pidiera un aislamiento estricto — ver el JSDoc
+ *   de `esFallaDeSerializacion`. En cualquiera de los dos casos hay que
+ *   envolver la transacción ENTERA, no solo la llamada a `siguienteNumero`:
+ *   una vez que Postgres aborta una transacción por esto, TODA sentencia
+ *   posterior en esa misma transacción falla también, así que reintentar de
+ *   adentro no alcanza. Si tu app numera más de una fila por transacción,
+ *   además mantené un orden de bloqueo consistente entre los flujos que
+ *   puedan competir (por ejemplo, pedir los números siempre ordenados por
+ *   `tipo`) — reduce la chance de deadlock, aunque `conReintento` sigue
+ *   haciendo falta como red.
  *
  * **La espera con jitter, no solo los intentos, es parte del mecanismo.**
  * Sin espera, los perdedores de la carrera reintentan todos juntos sobre la
@@ -52,11 +62,27 @@ export interface OpcionesConReintento {
  * import { conReintento, esChoqueDeUnico, esFallaDeSerializacion } from "@mafesoftware/numeradores";
  * import { siguienteNumero } from "@mafesoftware/numeradores/drizzle";
  *
- * // Uso típico con READ COMMITTED (el default de siguienteNumero): no hace
- * // falta reintentar nada — el bloqueo de fila del INSERT ... ON CONFLICT
- * // ya serializa a las transacciones concurrentes sin que ninguna falle.
+ * // Uso típico con READ COMMITTED (el default de siguienteNumero), UNA
+ * // sola fila por transacción: no hace falta conReintento — el bloqueo de
+ * // fila del INSERT ... ON CONFLICT ya serializa a las transacciones
+ * // concurrentes sin que ninguna falle (ver el test de 100 concurrentes).
  * const { numero, formateado } = await db.transaction((tx) =>
  *   siguienteNumero(tx, tabla, { tenantId, tipo: "recibo" }),
+ * );
+ *
+ * // Si la transacción numera MÁS DE UNA fila (dos tipos distintos, por
+ * // ejemplo), un deadlock (40P01) es posible aunque sea READ COMMITTED —
+ * // mismo conReintento y mismo predicado combinado que en el caso
+ * // SERIALIZABLE de abajo (esChoqueDeUnico por sí solo NO detecta 40P01),
+ * // y pedir los números siempre en el mismo orden en todos los flujos que
+ * // puedan competir.
+ * const { recibo, ordenPago } = await conReintento(
+ *   () =>
+ *     db.transaction(async (tx) => ({
+ *       recibo: await siguienteNumero(tx, tabla, { tenantId, tipo: "recibo" }),
+ *       ordenPago: await siguienteNumero(tx, tabla, { tenantId, tipo: "orden_pago" }),
+ *     })),
+ *   { esReintentable: (e) => esChoqueDeUnico(e) || esFallaDeSerializacion(e) },
  * );
  *
  * // Con SERIALIZABLE (o REPEATABLE READ) explícito, envolver la

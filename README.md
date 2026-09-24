@@ -89,7 +89,9 @@ workspaces: bun/pnpm/yarn). Publicado tal cual, un consumidor externo
 `scripts/reescribir-workspace.ts` (funciones puras testeadas en
 `tests/reescribir-workspace.test.ts`) reescribe, en cada
 `packages/*/package.json`, todo especificador `"workspace:"` de
-`dependencies`/`peerDependencies`/`optionalDependencies` a la versión REAL
+`dependencies`/`devDependencies`/`peerDependencies`/`optionalDependencies`
+(las cuatro — incluye `devDependencies` porque `npm publish` las sube tal
+cual igual, aunque un consumidor no las instale) a la versión REAL
 del paquete referenciado (`"workspace:*"` → `"x.y.z"` exacta; `workspace:^`/
 `workspace:~` → `"^x.y.z"`/`"~x.y.z"`). El script `"release"` de la
 raíz lo corre DESPUÉS de `build` y ANTES de `changeset publish` — mutando
@@ -106,6 +108,16 @@ directorio descartable, aplica la misma reescritura, empaqueta con
 `"workspace:"` — la misma combinación que corre `release`, para detectar acá
 (en cada CI normal) un `reescribirPackageJson` que dejó de cubrir algo,
 en vez de recién notarlo cuando `npm install` le falla a un consumidor real.
+
+**`bun scripts/reescribir-workspace.ts` corrido a mano (`bun run release`
+en la laptop de alguien, por ejemplo) se niega a correr si `CI` no es
+`"true"`**, salvo que se le pase `--forzar`: sin este freno, un
+desarrollador que corre `release` local para probar el flujo se queda con
+los `package.json` reescritos (`"workspace:*"` → una versión exacta) en su
+working tree — fácil de commitear sin querer, o de dejarlos así y que el
+próximo `bun install` se confunda. Si hace falta correrlo local de todos
+modos: `bun scripts/reescribir-workspace.ts --forzar`, y después
+`git checkout -- 'packages/*/package.json'` para revertir.
 
 Trusted publishing exige que el paquete **ya exista** en npm y tenga el
 "Trusted Publisher" de ese repo configurado ahí. Para un paquete nuevo, hay un

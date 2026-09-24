@@ -100,12 +100,19 @@ try {
 ¿Es `error` (en cualquier punto de su cadena) una falla de serialización de
 Postgres — `40001` (`serialization_failure`) o `40P01`
 (`deadlock_detected`)? Misma caminata de `cause`/`AggregateError` que
-`esChoqueDeUnico`. Es el fallo REAL que puede tirar `siguienteNumero` bajo
-concurrencia si la transacción que lo envuelve corre con aislamiento
-`REPEATABLE READ` o `SERIALIZABLE` (no bajo `READ COMMITTED`, el default de
-Postgres y para el que `siguienteNumero` está pensado — ver su sección más
-abajo). Cuando pasa, TODA la transacción queda abortada, no solo la
-sentencia — hay que reintentar la transacción ENTERA.
+`esChoqueDeUnico`. Son dos motivos distintos: `40001` necesita aislamiento
+`REPEATABLE READ`/`SERIALIZABLE` (no pasa bajo `READ COMMITTED`, el default
+de Postgres y para el que `siguienteNumero` está pensado); `40P01`
+(deadlock) en cambio puede pasar bajo CUALQUIER aislamiento, incluido
+`READ COMMITTED` — no depende del nivel de aislamiento, depende del ORDEN
+en que dos transacciones toman locks. Si una transacción llama a
+`siguienteNumero` para VARIAS filas (más de un `(tenant, ambito, tipo)`) y
+otra transacción concurrente las pide en el orden contrario, Postgres
+puede abortar a una de las dos con `40P01`. Cuando pasa cualquiera de los
+dos, TODA la transacción queda abortada, no solo la sentencia — hay que
+reintentar la transacción ENTERA, y si tu app numera más de una fila por
+transacción, además conviene un orden de bloqueo consistente entre los
+flujos que puedan competir (reduce la chance de deadlock, no la elimina).
 
 ```ts
 import { esFallaDeSerializacion } from "@mafesoftware/numeradores";
@@ -132,22 +139,39 @@ una carrera reintentarían todos juntos sobre la misma foto y volverían a
 chocar entre sí. `espera` es inyectable para tests deterministas.
 
 Con `siguienteNumero` bajo `READ COMMITTED` (el uso típico, default de
-`db.transaction(...)`) **no hace falta reintentar nada**: el bloqueo de
-fila del `INSERT ... ON CONFLICT` ya serializa a las transacciones
-concurrentes sin que ninguna falle (lo prueban los tests de concurrencia
-contra Postgres real). `conReintento` entra en juego recién si se pide
-`REPEATABLE READ`/`SERIALIZABLE` explícito — ahí hay que envolver la
-**transacción entera**, no la llamada a `siguienteNumero` sola (una
-transacción abortada por Postgres rechaza cualquier sentencia posterior
-hasta que termina):
+`db.transaction(...)`) pidiendo **una sola fila por transacción**, no hace
+falta reintentar nada: el bloqueo de fila del `INSERT ... ON CONFLICT` ya
+serializa a las transacciones concurrentes sin que ninguna falle (lo
+prueban los tests de concurrencia contra Postgres real). **Eso no quiere
+decir que `READ COMMITTED` esté libre de fallas**: un deadlock (`40P01`)
+puede pasar bajo cualquier aislamiento si una transacción numera VARIAS
+filas y otra concurrente las pide en el orden contrario (ver
+`esFallaDeSerializacion` más arriba) — ahí también hace falta
+`conReintento`. Y con `REPEATABLE READ`/`SERIALIZABLE` explícito, siempre
+hay que envolver la **transacción entera**, no la llamada a
+`siguienteNumero` sola (una transacción abortada por Postgres rechaza
+cualquier sentencia posterior hasta que termina):
 
 ```ts
 import { conReintento, esChoqueDeUnico, esFallaDeSerializacion } from "@mafesoftware/numeradores";
 import { siguienteNumero } from "@mafesoftware/numeradores/drizzle";
 
-// READ COMMITTED (default): sin conReintento, no hace falta.
+// READ COMMITTED (default), UNA sola fila por transacción: no hace falta conReintento.
 const { numero, formateado } = await db.transaction((tx) =>
   siguienteNumero(tx, numeradores, { tenantId, tipo: "recibo" }),
+);
+
+// READ COMMITTED pero numerando MÁS DE UNA fila en la misma transacción:
+// un deadlock (40P01) es posible aunque sea READ COMMITTED — conReintento
+// con el mismo predicado combinado, y pedir los números siempre en el
+// mismo orden en todos los flujos que puedan competir.
+const { recibo, ordenPago } = await conReintento(
+  () =>
+    db.transaction(async (tx) => ({
+      recibo: await siguienteNumero(tx, numeradores, { tenantId, tipo: "recibo" }),
+      ordenPago: await siguienteNumero(tx, numeradores, { tenantId, tipo: "orden_pago" }),
+    })),
+  { esReintentable: (e) => esChoqueDeUnico(e) || esFallaDeSerializacion(e) },
 );
 
 // SERIALIZABLE explícito: conReintento envuelve TODA la transacción.
@@ -259,14 +283,21 @@ para probar que la serialización es CONTENCIÓN REAL sobre la fila, no una
 casualidad del test.
 
 **Pensada para `READ COMMITTED`**, el aislamiento default de Postgres: ahí
-dos transacciones que compiten por la misma fila nunca fallan entre sí, la
-segunda simplemente espera a que la primera termine. Bajo `REPEATABLE
-READ`/`SERIALIZABLE` es distinto — la que pierde la carrera puede ABORTAR
-con `40001`/`40P01` en vez de esperar (`esFallaDeSerializacion` los
-detecta), y hay que reintentar la transacción ENTERA con `conReintento`
-(ver su sección más arriba y el test con `SERIALIZABLE` en
-`tests/drizzle/postgres.test.ts`). **No tira `esChoqueDeUnico`**: el `ON
-CONFLICT DO UPDATE` absorbe ese choque adentro de la misma sentencia.
+dos transacciones que compiten por LA MISMA fila nunca fallan entre sí, la
+segunda simplemente espera a que la primera termine. **Eso no significa
+que `READ COMMITTED` esté libre de fallas**: un deadlock (`40P01`) puede
+pasar bajo CUALQUIER aislamiento si una transacción numera VARIAS filas
+distintas (más de un `(tenant, ambito, tipo)`) y otra transacción
+concurrente las pide en el orden contrario — mantené un orden de bloqueo
+consistente entre los flujos que puedan competir, y envolvé la transacción
+con `conReintento` igual que bajo aislamientos más estrictos. Bajo
+`REPEATABLE READ`/`SERIALIZABLE` hay además otra falla: la que pierde la
+carrera por una fila puede ABORTAR con `40001` en vez de esperar
+(`esFallaDeSerializacion` detecta los dos códigos), y hay que reintentar la
+transacción ENTERA con `conReintento` (ver su sección más arriba y el test
+con `SERIALIZABLE` en `tests/drizzle/postgres.test.ts`). **No tira
+`esChoqueDeUnico`**: el `ON CONFLICT DO UPDATE` absorbe ese choque adentro
+de la misma sentencia.
 
 ```ts
 import { siguienteNumero } from "@mafesoftware/numeradores/drizzle";
@@ -361,7 +392,10 @@ sosteniendo el lock para probar contención real (no una casualidad de
 scheduling), 20 transacciones concurrentes bajo `SERIALIZABLE` con
 `conReintento` envolviendo la transacción entera, ámbitos/tenants
 independientes, la secuencia de migración documentada arriba (prefijo se
-conserva), y las validaciones de `configurarNumerador`. El DDL que ejecuta
+conserva), un `proximo` por encima de 2_147_483_647 (el máximo de un int4
+— sin el cast explícito a `::bigint`, Postgres infiere mal el tipo del
+parámetro y `configurarNumerador` tira `22003` tanto insertando como
+actualizando), y las validaciones de `configurarNumerador`. El DDL que ejecuta
 no está escrito a mano: sale del MISMO esquema de Drizzle que arma
 `tablaNumeradores` (`tests/drizzle/esquema.ts`), generado con
 `drizzle-kit/api` (`generateDrizzleJson` + `generateMigration`) — igual que

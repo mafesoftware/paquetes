@@ -61,27 +61,44 @@ interface FilaSiguienteNumero {
  *
  * **Pensada para `READ COMMITTED`** (el aislamiento default de Postgres, y
  * el que usa `db.transaction(...)` si no se pide otro). Bajo `READ
- * COMMITTED`, dos transacciones que compiten por la MISMA fila nunca
- * fallan entre sí por esto: la segunda simplemente ESPERA a que la primera
- * termine (bloqueada en el `UPDATE` que arma el `ON CONFLICT`) y sigue con
- * el valor ya actualizado — exactamente lo que prueba el test de 100
- * transacciones concurrentes contra Postgres real
- * (`tests/drizzle/postgres.test.ts`): ninguna de las 100 necesita
- * reintentar nada.
+ * COMMITTED`, dos transacciones que compiten por LA MISMA fila (piden el
+ * mismo `(tenant, ambito, tipo)`) nunca fallan entre sí por esto: la
+ * segunda simplemente ESPERA a que la primera termine (bloqueada en el
+ * `UPDATE` que arma el `ON CONFLICT`) y sigue con el valor ya actualizado —
+ * exactamente lo que prueba el test de 100 transacciones concurrentes
+ * contra Postgres real (`tests/drizzle/postgres.test.ts`): ninguna de las
+ * 100 necesita reintentar nada.
  *
- * **Bajo `REPEATABLE READ` o `SERIALIZABLE` es distinto.** Con esos
- * aislamientos más estrictos, la transacción que pierde la carrera por
- * esta fila puede ABORTAR en vez de simplemente esperar: Postgres tira
+ * **Eso NO significa que `READ COMMITTED` esté libre de fallas.** Un
+ * DEADLOCK (`40P01`, `deadlock_detected`) puede pasar bajo CUALQUIER
+ * aislamiento, incluido `READ COMMITTED` — no es un tema de snapshot
+ * (`REPEATABLE READ`/`SERIALIZABLE`), es un tema de ORDEN de bloqueo. Si
+ * una transacción llama a `siguienteNumero` para VARIAS filas distintas
+ * (por ejemplo, numera un `"recibo"` y una `"orden_pago"` en la misma
+ * transacción) y otra transacción concurrente pide esas mismas dos filas
+ * en el orden CONTRARIO, cada una queda esperando a la fila que la otra ya
+ * tiene bloqueada — Postgres detecta el ciclo y aborta a una de las dos con
+ * `40P01`. Si tu app numera más de una fila por transacción: pedí los
+ * números siempre en el MISMO orden (por ejemplo, alfabético por `tipo`) en
+ * todos los flujos que puedan competir entre sí, y envolvé la transacción
+ * con `conReintento` igual que bajo `SERIALIZABLE` (ver más abajo) — un
+ * orden consistente hace el deadlock IMPROBABLE, no imposible: Postgres
+ * también puede abortar por timeout de lock u otras razones.
+ *
+ * **Bajo `REPEATABLE READ` o `SERIALIZABLE` hay además otra falla.** Con
+ * esos aislamientos más estrictos, la transacción que pierde la carrera
+ * por una fila puede ABORTAR en vez de simplemente esperar: Postgres tira
  * `40001` (`serialization_failure`, "could not serialize access due to
- * concurrent update") o, más raro, `40P01` (`deadlock_detected`) —
+ * concurrent update") además del `40P01` de arriba —
  * `esFallaDeSerializacion` de este mismo paquete detecta los dos. Cuando
- * eso pasa, TODA la transacción queda abortada (no solo esta sentencia), así
- * que hay que reintentar la transacción ENTERA con `conReintento`
- * envolviendo el `db.transaction(...)` completo, no la llamada a
- * `siguienteNumero` sola — ver el ejemplo de `conReintento` (en el núcleo
- * del paquete) y el README. **Esta función no tira `esChoqueDeUnico`**
- * (`23505`): el `ON CONFLICT DO UPDATE` absorbe ese choque adentro de la
- * misma sentencia, nunca llega a violar el índice único.
+ * cualquiera de los dos pasa, TODA la transacción queda abortada (no solo
+ * esta sentencia), así que hay que reintentar la transacción ENTERA con
+ * `conReintento` envolviendo el `db.transaction(...)` completo, no la
+ * llamada a `siguienteNumero` sola — ver el ejemplo de `conReintento` (en
+ * el núcleo del paquete) y el README. **Esta función no tira
+ * `esChoqueDeUnico`** (`23505`): el `ON CONFLICT DO UPDATE` absorbe ese
+ * choque adentro de la misma sentencia, nunca llega a violar el índice
+ * único.
  *
  * ```ts
  * import { siguienteNumero } from "@mafesoftware/numeradores/drizzle";
