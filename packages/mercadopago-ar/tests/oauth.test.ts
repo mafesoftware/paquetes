@@ -99,6 +99,31 @@ describe("canjearCodigo", () => {
     expect(error).toBeInstanceOf(ErrorMP);
     expect((error as ErrorMP).categoria).toBe("credenciales");
   });
+
+  it("un error que no es 'rechazado' (por ejemplo, de red) se propaga tal cual", async () => {
+    const { fn } = fetchQueDevuelve(500, { message: "boom" });
+    const error = await canjearCodigo({
+      code: "X",
+      redirectUri: "https://x/cb",
+      app: APP,
+      fetch: fn,
+    }).catch((e) => e);
+    expect(error).toBeInstanceOf(ErrorMP);
+    // No se reescribe a "credenciales": el 500 ya viene categorizado como "red".
+    expect((error as ErrorMP).categoria).toBe("red");
+  });
+
+  it("una respuesta 200 sin access_token no se hace pasar por exito", async () => {
+    const { fn } = fetchQueDevuelve(200, { token_type: "bearer" });
+    const error = await canjearCodigo({
+      code: "X",
+      redirectUri: "https://x/cb",
+      app: APP,
+      fetch: fn,
+    }).catch((e) => e);
+    expect(error).toBeInstanceOf(ErrorMP);
+    expect((error as ErrorMP).categoria).toBe("credenciales");
+  });
 });
 
 describe("refrescarToken", () => {

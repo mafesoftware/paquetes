@@ -9,6 +9,7 @@
 import { describe, expect, it } from "vitest";
 import {
   consultarComprobante,
+  estadoDelServicio,
   ErrorWsfe,
   fechaWire,
   solicitarCae,
@@ -316,5 +317,170 @@ describe("consultar un comprobante ya emitido", () => {
         ),
       })
     ).rejects.toThrow(ErrorWsfe);
+  });
+});
+
+describe("llamar(): casos internos comunes a todo el WSFE", () => {
+  it("sin fetch inyectado, usa el fetch global", async () => {
+    const original = globalThis.fetch;
+    let llamado = false;
+    globalThis.fetch = (async () => {
+      llamado = true;
+      return new Response(
+        `<soap:Envelope><soap:Body><FECompUltimoAutorizadoResponse><CbteNro>1</CbteNro></FECompUltimoAutorizadoResponse></soap:Body></soap:Envelope>`,
+        { status: 200 }
+      );
+    }) as typeof fetch;
+    try {
+      const n = await ultimoAutorizado({ auth: AUTH, puntoVenta: 3, tipoComprobante: 6, entorno: "homologacion" });
+      expect(llamado).toBe(true);
+      expect(n).toBe(1);
+    } finally {
+      globalThis.fetch = original;
+    }
+  });
+
+  it("un error HTTP puro (sin fault ni Err) tambien se propaga", async () => {
+    const fetchFalso = (async () => new Response("Internal Server Error", { status: 500 })) as typeof fetch;
+    await expect(
+      ultimoAutorizado({ auth: AUTH, puntoVenta: 3, tipoComprobante: 6, entorno: "homologacion", fetch: fetchFalso })
+    ).rejects.toThrow(/respondió 500/);
+  });
+
+  it("un Err sin Code ni Msg no revienta: caen a 0 y string vacio", async () => {
+    const xml = `<soap:Envelope><soap:Body><Errors><Err></Err></Errors></soap:Body></soap:Envelope>`;
+    try {
+      await ultimoAutorizado({ auth: AUTH, puntoVenta: 3, tipoComprobante: 6, entorno: "homologacion", fetch: fetchQueDevuelve(xml) });
+      throw new Error("no debería llegar acá");
+    } catch (e) {
+      expect((e as ErrorWsfe).errores).toEqual([{ codigo: 0, mensaje: "" }]);
+    }
+  });
+
+  it("mas de un error sin tolerar se anuncia en plural", async () => {
+    const xml = `<soap:Envelope><soap:Body><Errors>
+      <Err><Code>10016</Code><Msg>Campo A</Msg></Err>
+      <Err><Code>10017</Code><Msg>Campo B</Msg></Err>
+    </Errors></soap:Body></soap:Envelope>`;
+    await expect(
+      ultimoAutorizado({ auth: AUTH, puntoVenta: 3, tipoComprobante: 6, entorno: "homologacion", fetch: fetchQueDevuelve(xml) })
+    ).rejects.toThrow(/^ARCA devolvió errores: /);
+  });
+});
+
+describe("ultimoAutorizado: respuesta sin numero", () => {
+  it("sin CbteNro en la respuesta, avisa en vez de devolver un numero inventado", async () => {
+    const xml = `<soap:Envelope><soap:Body><FECompUltimoAutorizadoResponse></FECompUltimoAutorizadoResponse></soap:Body></soap:Envelope>`;
+    await expect(
+      ultimoAutorizado({ auth: AUTH, puntoVenta: 3, tipoComprobante: 6, entorno: "homologacion", fetch: fetchQueDevuelve(xml) })
+    ).rejects.toThrow(/último número autorizado/);
+  });
+});
+
+describe("consultarComprobante: respuesta con campos ausentes", () => {
+  it("sin FchVto ni Resultado, quedan vacios en vez de 'null'", async () => {
+    const r = await consultarComprobante({
+      auth: AUTH,
+      puntoVenta: 1,
+      tipoComprobante: 6,
+      numero: 42,
+      entorno: "homologacion",
+      fetch: fetchQueDevuelve(
+        `<soap:Envelope><soap:Body><FECompConsultarResponse><ResultGet>
+          <CodAutorizacion>75123456789012</CodAutorizacion>
+        </ResultGet></FECompConsultarResponse></soap:Body></soap:Envelope>`
+      ),
+    });
+    expect(r).toEqual({
+      existe: true,
+      cae: "75123456789012",
+      vencimientoCae: "",
+      resultado: "",
+      observaciones: "",
+    });
+  });
+});
+
+describe("solicitarCae: comprobante sin discriminar IVA (letra C), y asociado sin CUIT", () => {
+  it("una C no manda <ar:Iva> en absoluto", async () => {
+    const { iva: _iva, ...sinIva } = COMPROBANTE;
+    const captura: { body?: string } = {};
+    await solicitarCae({
+      auth: AUTH,
+      comprobante: { ...sinIva, totalCent: 1000000, netoCent: 1000000, ivaCent: 0 },
+      entorno: "homologacion",
+      fetch: fetchQueDevuelve(RESPUESTA_APROBADA, captura),
+    });
+    expect(captura.body).not.toContain("<ar:Iva>");
+  });
+
+  it("un asociado sin cuitEmisor no manda <ar:Cuit>", async () => {
+    const captura: { body?: string } = {};
+    await solicitarCae({
+      auth: AUTH,
+      comprobante: {
+        ...COMPROBANTE,
+        tipoComprobante: 8,
+        asociados: [{ tipo: 6, puntoVenta: 3, numero: 128 }],
+      },
+      entorno: "homologacion",
+      fetch: fetchQueDevuelve(RESPUESTA_APROBADA, captura),
+    });
+    expect(captura.body).toContain("<ar:CbteAsoc><ar:Tipo>6</ar:Tipo><ar:PtoVta>3</ar:PtoVta><ar:Nro>128</ar:Nro></ar:CbteAsoc>");
+  });
+
+  it("sin CAE ni CAEFchVto en la respuesta (rechazo llano), caeVence es null", async () => {
+    const sinDatos = `<?xml version="1.0"?><soap:Envelope><soap:Body><FECAESolicitarResponse>
+<FeCabResp><Resultado>R</Resultado></FeCabResp>
+<FeDetResp><FECAEDetResponse></FECAEDetResponse></FeDetResp></FECAESolicitarResponse></soap:Body></soap:Envelope>`;
+    const r = await solicitarCae({
+      auth: AUTH,
+      comprobante: COMPROBANTE,
+      entorno: "homologacion",
+      fetch: fetchQueDevuelve(sinDatos),
+    });
+    expect(r).toMatchObject({ resultado: "rechazado", cae: "", caeVence: null, observaciones: [] });
+  });
+});
+
+describe("solicitarCae: una Obs sin Code ni Msg no revienta", () => {
+  it("cae a 0 y string vacio, igual que un Err", async () => {
+    const conObsVacia = `<?xml version="1.0"?><soap:Envelope><soap:Body><FECAESolicitarResponse>
+<FeCabResp><Resultado>A</Resultado></FeCabResp>
+<FeDetResp><FECAEDetResponse><CAE>1</CAE><CAEFchVto>20260827</CAEFchVto>
+<Observaciones><Obs></Obs></Observaciones>
+</FECAEDetResponse></FeDetResp></FECAESolicitarResponse></soap:Body></soap:Envelope>`;
+    const r = await solicitarCae({
+      auth: AUTH,
+      comprobante: COMPROBANTE,
+      entorno: "homologacion",
+      fetch: fetchQueDevuelve(conObsVacia),
+    });
+    expect(r.observaciones).toEqual([{ codigo: 0, mensaje: "" }]);
+  });
+});
+
+describe("estadoDelServicio: FEDummy", () => {
+  it("informa el estado de los tres servidores", async () => {
+    const captura: { body?: string; url?: string } = {};
+    const xml = `<soap:Envelope><soap:Body><FEDummyResponse><AppServer>OK</AppServer><DbServer>OK</DbServer><AuthServer>OK</AuthServer></FEDummyResponse></soap:Body></soap:Envelope>`;
+    const r = await estadoDelServicio({ entorno: "produccion", fetch: fetchQueDevuelve(xml, captura) });
+    expect(r).toEqual({ app: "OK", db: "OK", auth: "OK" });
+    expect(captura.url).toContain("servicios1.afip.gov.ar");
+    expect(captura.body).toContain("FEDummy");
+  });
+
+  it("sin fetch inyectado, tambien usa el global", async () => {
+    const original = globalThis.fetch;
+    globalThis.fetch = (async () =>
+      new Response(`<soap:Envelope><soap:Body><FEDummyResponse></FEDummyResponse></soap:Body></soap:Envelope>`, {
+        status: 200,
+      })) as typeof fetch;
+    try {
+      const r = await estadoDelServicio({ entorno: "homologacion" });
+      expect(r).toEqual({ app: "?", db: "?", auth: "?" });
+    } finally {
+      globalThis.fetch = original;
+    }
   });
 });

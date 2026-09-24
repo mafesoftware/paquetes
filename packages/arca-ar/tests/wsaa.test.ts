@@ -99,4 +99,58 @@ describe("solicitarTicket", () => {
       })
     ).rejects.toThrow(ErrorWSAA);
   });
+
+  it("un error HTTP puro (sin faultstring) tambien se avisa", async () => {
+    const { certPem, clavePem } = certificadoDePrueba();
+    const falso = (async () => new Response("Bad Gateway", { status: 502 })) as typeof fetch;
+
+    await expect(
+      solicitarTicket({
+        servicio: "wsfe",
+        certificadoPem: certPem,
+        clavePrivadaPem: clavePem,
+        entorno: "homologacion",
+        fetch: falso,
+      })
+    ).rejects.toThrow(/respondió 502/);
+  });
+
+  it("una respuesta sin loginCmsReturn tampoco pasa en silencio", async () => {
+    const { certPem, clavePem } = certificadoDePrueba();
+    const falso = (async () =>
+      new Response(`<soapenv:Envelope><soapenv:Body></soapenv:Body></soapenv:Envelope>`, { status: 200 })) as typeof fetch;
+
+    await expect(
+      solicitarTicket({
+        servicio: "wsfe",
+        certificadoPem: certPem,
+        clavePrivadaPem: clavePem,
+        entorno: "homologacion",
+        fetch: falso,
+      })
+    ).rejects.toThrow(/no trae el ticket/);
+  });
+
+  it("sin fetch inyectado, usa el fetch global", async () => {
+    const { certPem, clavePem } = certificadoDePrueba();
+    const original = globalThis.fetch;
+    let llamado = false;
+    globalThis.fetch = (async () => {
+      llamado = true;
+      return new Response(respuestaConTicket(), { status: 200 });
+    }) as typeof fetch;
+    try {
+      const ticket = await solicitarTicket({
+        servicio: "wsfe",
+        certificadoPem: certPem,
+        clavePrivadaPem: clavePem,
+        entorno: "homologacion",
+        ahora: AHORA,
+      });
+      expect(llamado).toBe(true);
+      expect(ticket.token).toBe("TOKEN.123");
+    } finally {
+      globalThis.fetch = original;
+    }
+  });
 });

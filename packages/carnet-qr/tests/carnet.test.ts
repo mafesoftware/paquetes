@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { createPrivateKey, createPublicKey } from "node:crypto";
 import {
   generarClaves,
   emitirCarnet,
@@ -69,6 +70,14 @@ describe("emitir y verificar", () => {
     const r = verificarCarnet(token, { publicaPem: claves.publicaPem, ahora: AHORA });
     expect(r.ok && r.datos.categoria).toBeUndefined();
   });
+
+  it("tambien acepta un KeyObject en vez de un PEM, para emitir y para verificar", () => {
+    const clavePrivada = createPrivateKey(claves.privadaPem);
+    const clavePublica = createPublicKey(claves.publicaPem);
+    const token = emitirCarnet(datos(), clavePrivada);
+    const r = verificarCarnet(token, { publicaPem: clavePublica, ahora: AHORA });
+    expect(r.ok).toBe(true);
+  });
 });
 
 describe("firma: un lector no puede fabricar carnets", () => {
@@ -132,6 +141,14 @@ describe("nunca tira: la entrada de un lector es hostil", () => {
     const token = emitirCarnet(datos(), claves.privadaPem);
     const r = verificarCarnet(token, { publicaPem: "no soy una clave", ahora: AHORA });
     expect(r).toEqual({ ok: false, motivo: "firma" });
+  });
+
+  it("un carnet firmado con campos numericos invalidos (bypaseando el tipo) da 'formato'", () => {
+    // La firma valida perfectamente (el club la firmó tal cual), pero el
+    // contenido no deserializa: version no es un entero.
+    const token = emitirCarnet(datos({ version: Number.NaN as never }), claves.privadaPem);
+    const r = verificarCarnet(token, { publicaPem: claves.publicaPem, ahora: AHORA });
+    expect(r).toEqual({ ok: false, motivo: "formato" });
   });
 });
 

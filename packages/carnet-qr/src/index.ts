@@ -29,7 +29,7 @@
  * porque la versión vigente viaja en el padrón que sincroniza. Es lo que se
  * usa cuando alguien pierde el teléfono.
  *
- * Sin dependencias fuera de `node:crypto`. No lee `process.env`.
+ * Sin dependencias fuera de `node:crypto`. No lee variables de entorno.
  */
 
 import {
@@ -144,6 +144,10 @@ export function verificarCarnet(
     cuerpo = deB64url(partes[1]!);
     firma = deB64url(partes[2]!);
   } catch {
+    // El decodificador de base64 de Node es permisivo (no tira con basura),
+    // así que este catch no es alcanzable con el `Buffer.from` actual. Queda
+    // como salvaguarda si el runtime cambia esa lenidad.
+    /* v8 ignore next */
     return { ok: false, motivo: "formato" };
   }
   // Ed25519 firma siempre 64 bytes. Sin este corte, una firma de largo raro
@@ -164,6 +168,10 @@ export function verificarCarnet(
   try {
     firmaOk = verificarFirma(null, cuerpo, clave, firma);
   } catch {
+    // No reproducido con la versión de OpenSSL de este entorno (siempre
+    // devuelve `false` en vez de tirar), pero el comentario de arriba avisa
+    // que otras versiones sí tiraban. Queda como salvaguarda.
+    /* v8 ignore next */
     firmaOk = false;
   }
   // La firma se chequea ANTES de mirar el contenido: si no, el vencimiento de
@@ -217,6 +225,10 @@ function serializar(d: DatosCarnet): string {
 
 function deserializar(s: string): DatosCarnet | null {
   const p = s.split(SEP);
+  // No alcanzable desde `verificarCarnet`: `limpiar()` saca el separador de
+  // todo campo antes de armar el payload, así que lo que llegó a firmarse
+  // siempre tiene exactamente 8 campos. Salvaguarda si `serializar` cambia.
+  /* v8 ignore next */
   if (p.length !== 8) return null;
   const version = Number(p[5]);
   const emitido = Number(p[6]);

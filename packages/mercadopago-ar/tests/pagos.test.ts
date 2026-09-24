@@ -77,6 +77,22 @@ describe("traerPago", () => {
     const { fn } = fetchQueDevuelve(404, { message: "not found" });
     expect(await traerPago({ pagoId: "999", accessToken: "T", fetch: fn })).toBeNull();
   });
+
+  it("con los campos opcionales ausentes, cae a los defaults en vez de 'undefined'", async () => {
+    const { fn } = fetchQueDevuelve(200, { id: 222 });
+    const pago = await traerPago({ pagoId: "222", accessToken: "T", fetch: fn });
+    expect(pago).toEqual({
+      id: "222",
+      estado: "pendiente",
+      estadoCrudo: "",
+      detalleEstado: "",
+      referenciaExterna: null,
+      preferenciaId: null,
+      monto: 0,
+      moneda: "ARS",
+      creadoEn: null,
+    } satisfies PagoMP);
+  });
 });
 
 describe("buscarPagosPorReferencia", () => {
@@ -154,5 +170,13 @@ describe("pagoMasRelevante", () => {
 
   it("sin pagos devuelve null", () => {
     expect(pagoMasRelevante([])).toBeNull();
+  });
+
+  it("del mismo peso, uno sin creadoEn no revienta la comparacion", () => {
+    const sinFecha = { ...pago("rechazado", ""), creadoEn: null };
+    const elegido = pagoMasRelevante([sinFecha, pago("rechazado", "2026-08-13T10:00:00Z")]);
+    // Con creadoEn null se compara como "", que es "menor": gana el que sí
+    // tiene fecha.
+    expect(elegido!.creadoEn).toBe("2026-08-13T10:00:00Z");
   });
 });

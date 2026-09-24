@@ -12,6 +12,9 @@
     "skipLibCheck": true,
     "declaration": true,
     "isolatedModules": true,
-    "resolveJsonModule": true
+    "resolveJsonModule": true,
+    "paths": {
+      "@mafesoftware/*": ["./packages/*/src/index.ts"]
+    }
   }
 }

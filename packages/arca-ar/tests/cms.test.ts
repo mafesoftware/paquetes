@@ -38,6 +38,15 @@ describe("firmarCMS contra openssl", () => {
     expect(readFileSync(salida, "utf8")).toBe(TRA);
   });
 
+  it("tambien acepta el contenido ya como Buffer, no solo como string", () => {
+    const { certPem, clavePem } = certificadoDePrueba();
+    const comoString = firmarCMS(TRA, certPem, clavePem);
+    const comoBuffer = firmarCMS(Buffer.from(TRA, "utf8"), certPem, clavePem);
+    // La firma en si difiere (RSA con padding aleatorio), pero el TAMAÑO del
+    // resultado es igual: ambos caminos codifican el mismo contenido.
+    expect(comoBuffer.length).toBe(comoString.length);
+  });
+
   it("el base64 decodifica al mismo DER", () => {
     const { certPem, clavePem } = certificadoDePrueba();
     const der = firmarCMS(TRA, certPem, clavePem);

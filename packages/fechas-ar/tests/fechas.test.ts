@@ -4,9 +4,11 @@ import {
   aMinutos,
   deMinutos,
   diaCorto,
+  diaDeInstante,
   diaDeSemana,
   diaEnZona,
   diaLargo,
+  diaLargoDeInstante,
   diaYHora,
   diasEntre,
   finDelDia,
@@ -80,6 +82,11 @@ describe("rangos: el dia se corta en la zona de la institucion", () => {
   it("en UTC el dia arranca a medianoche", () => {
     expect(inicioDelDia("2026-08-19", "UTC").toISOString()).toBe("2026-08-19T00:00:00.000Z");
   });
+  it("inicioDelDia y finDelDia tambien aceptan un Date, no solo un string", () => {
+    const dia = new Date("2026-08-19T15:00:00Z");
+    expect(inicioDelDia(dia, "UTC").toISOString()).toBe("2026-08-19T00:00:00.000Z");
+    expect(finDelDia(dia, "UTC").toISOString()).toBe("2026-08-20T00:00:00.000Z");
+  });
 });
 
 describe("aritmetica de dias", () => {
@@ -113,6 +120,9 @@ describe("instanteDelDia", () => {
     // recibir la zona. Hasta entonces este test documenta hasta donde llega.
     expect(diaEnZona(instanteDelDia("2026-08-19"), "Pacific/Auckland")).toBe("2026-08-20");
   });
+  it("tambien acepta un Date, no solo un string", () => {
+    expect(diaEnZona(instanteDelDia(new Date("2026-08-19T00:00:00Z")), "UTC")).toBe("2026-08-19");
+  });
 });
 
 describe("instantes: se muestran en la zona de la institucion", () => {
@@ -124,6 +134,12 @@ describe("instantes: se muestran en la zona de la institucion", () => {
   });
   it("otra zona, otra hora", () => {
     expect(horaCorta(new Date("2026-08-19T11:48:00Z"), "UTC")).toBe("11:48");
+  });
+  it("dia de un instante, corto", () => {
+    expect(diaDeInstante(new Date("2026-08-19T11:48:00Z"), ZONA_AR)).toBe("19 ago");
+  });
+  it("dia de un instante, largo", () => {
+    expect(diaLargoDeInstante(new Date("2026-08-19T11:48:00Z"), ZONA_AR)).toBe("19 de agosto de 2026");
   });
 });
 
@@ -290,5 +306,15 @@ describe("instanteEnZona: la hora de pared del club", () => {
     const t = instanteEnZona("2026-09-06", "00:00", "America/Santiago");
     expect(diaEnZona(t, "America/Santiago")).toBe("2026-09-06");
     expect(horaCorta(t, "America/Santiago")).toBe("01:00");
+  });
+
+  it("con un hhmm que no es una hora valida, no busca: devuelve la aproximacion cruda", () => {
+    // aMinutos("24:00") da null (24 no es una hora, aunque "24:00:00Z" sea un
+    // Date válido: rueda a la medianoche del día siguiente), así que no hay
+    // minutosPedidos con qué comparar y la función no entra a la búsqueda por
+    // hora de pared.
+    expect(aMinutos("24:00")).toBeNull();
+    const t = instanteEnZona("2026-06-15", "24:00", "UTC");
+    expect(t.toISOString()).toBe("2026-06-16T00:00:00.000Z");
   });
 });

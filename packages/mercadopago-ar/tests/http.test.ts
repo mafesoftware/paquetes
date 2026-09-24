@@ -76,6 +76,45 @@ describe("pedirAMercadoPago", () => {
     expect(esTransitorio(error)).toBe(true);
   });
 
+  it("con un cuerpo JSON y sin metodo explicito, infiere POST", async () => {
+    const { fn, llamadas } = fetchFalso({ estado: 200, cuerpo: {} });
+    await pedirAMercadoPago({ ruta: "/v1/preferences", cuerpoJson: { items: [] }, fetch: fn });
+    expect(llamadas[0]!.init?.method).toBe("POST");
+    const headers = new Headers(llamadas[0]!.init?.headers);
+    expect(headers.get("content-type")).toBe("application/json");
+  });
+
+  it("sin cuerpo y sin metodo explicito, infiere GET", async () => {
+    const { fn, llamadas } = fetchFalso({ estado: 200, cuerpo: {} });
+    await pedirAMercadoPago({ ruta: "/v1/payments/1", fetch: fn });
+    expect(llamadas[0]!.init?.method).toBe("GET");
+  });
+
+  it("sin fetch inyectado, usa el fetch global", async () => {
+    const original = globalThis.fetch;
+    let llamado = false;
+    globalThis.fetch = (async () => {
+      llamado = true;
+      return new Response(JSON.stringify({ id: 1 }), { status: 200 });
+    }) as typeof fetch;
+    try {
+      const r = await pedirAMercadoPago<{ id: number }>({ ruta: "/v1/payments/1" });
+      expect(llamado).toBe(true);
+      expect(r).toEqual({ id: 1 });
+    } finally {
+      globalThis.fetch = original;
+    }
+  });
+
+  it("una respuesta de error cuyo .text() revienta no hace caer al pedido", async () => {
+    const fn = (async () =>
+      ({ ok: false, status: 400, text: () => Promise.reject(new Error("stream cortado")) }) as unknown as Response
+    ) as typeof fetch;
+    const error = await pedirAMercadoPago({ ruta: "/x", fetch: fn }).catch((e) => e);
+    expect(error).toBeInstanceOf(ErrorMP);
+    expect((error as ErrorMP).detalle).toBe("");
+  });
+
   it("si el fetch explota, es de red y transitorio", async () => {
     const fn = (async () => {
       throw new TypeError("network down");

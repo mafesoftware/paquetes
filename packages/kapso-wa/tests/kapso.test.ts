@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import {
   aNumeroWhatsApp,
   crearCliente,
@@ -575,5 +575,316 @@ describe("un mensaje entrante no puede ser de cualquier tamaño", () => {
     });
     expect(e.tipo).toBe("mensaje");
     if (e.tipo === "mensaje") expect(e.mensaje.texto).toBe("hola, cuánto debo?");
+  });
+});
+
+describe("aNumeroWhatsApp con otro pais: tambien tiene piso y techo", () => {
+  it("menos de 8 digitos no es un numero", () => {
+    expect(aNumeroWhatsApp("9912345", "598")).toBeNull();
+  });
+  it("mas de 15 digitos tampoco", () => {
+    expect(aNumeroWhatsApp("1234567890123456", "598")).toBeNull();
+  });
+});
+
+describe("enviarPlantilla con parametros en las dos formas", () => {
+  it("acepta un objeto {tipo, valor}, no solo strings sueltos", async () => {
+    const { fetch, llamadas } = espia();
+    await enviarPlantilla(cred(fetch), "549114", "gf_cuota_vence", [
+      "Juana",
+      { tipo: "texto", valor: "$12.000" },
+    ]);
+    expect(llamadas[0]!.cuerpo.template.components[0].parameters).toEqual([
+      { type: "text", text: "Juana" },
+      { type: "text", text: "$12.000" },
+    ]);
+  });
+});
+
+describe("enviarLista: encabezado y pie tambien son opcionales ahi", () => {
+  it("se agregan cuando se pasan", async () => {
+    const { fetch, llamadas } = espia();
+    await enviarLista(cred(fetch), "549114", "Turnos", "Ver", [{ titulo: "S1", opciones: [{ id: "1", titulo: "a" }] }], {
+      encabezado: "Reservas",
+      pie: "Club",
+    });
+    expect(llamadas[0]!.cuerpo.interactive.header).toEqual({ type: "text", text: "Reservas" });
+    expect(llamadas[0]!.cuerpo.interactive.footer).toEqual({ text: "Club" });
+  });
+});
+
+describe("categoria ventana: el error de fuera de las 24h", () => {
+  it("un 400 que menciona la ventana de 24h categoriza como ventana", async () => {
+    const { fetch } = espia({
+      estado: 400,
+      texto: JSON.stringify({ error: { message: "message failed to send because more than 24 hours have passed since the customer last replied to this number (window)" } }),
+    });
+    const r = await enviarTexto(cred(fetch), "5491145678901", "Hola");
+    expect(r).toMatchObject({ ok: false, categoria: "ventana" });
+  });
+});
+
+describe("el detalle de un error sin mensaje cae al texto crudo, o al estado HTTP", () => {
+  it("sin campo message en el error, usa el texto crudo de la respuesta", async () => {
+    const { fetch } = espia({ estado: 400, texto: "no es json ni tiene message" });
+    const r = await enviarTexto(cred(fetch), "5491145678901", "Hola");
+    expect(r).toMatchObject({ ok: false, error: "no es json ni tiene message" });
+  });
+  it("sin texto en absoluto, el mensaje es el estado HTTP", async () => {
+    const { fetch } = espia({ estado: 400, texto: "" });
+    const r = await enviarTexto(cred(fetch), "5491145678901", "Hola");
+    expect(r).toMatchObject({ ok: false, error: "HTTP 400" });
+  });
+});
+
+describe("mensajeDe: lo que se le puede leer a un error de red", () => {
+  it("un throw que no es un Error igual da un mensaje legible", async () => {
+    const fetch: FetchLike = async () => {
+      // eslint-disable-next-line @typescript-eslint/no-throw-literal
+      throw "ECONNRESET";
+    };
+    const r = await enviarTexto(cred(fetch), "5491145678901", "Hola");
+    expect(r).toEqual({ ok: false, categoria: "red", error: "ECONNRESET" });
+  });
+  it("un AbortError (timeout) da un mensaje propio", async () => {
+    const fetch: FetchLike = async () => {
+      throw new DOMException("aborted", "AbortError");
+    };
+    const r = await enviarTexto(cred(fetch), "5491145678901", "Hola");
+    expect(r).toEqual({ ok: false, categoria: "red", error: "tiempo de espera agotado" });
+  });
+});
+
+describe("pedir(): timeout y respuesta que no se puede leer como texto", () => {
+  it("un fetch que nunca resuelve se corta con AbortController al vencer el timeout", async () => {
+    vi.useFakeTimers();
+    let abortado = false;
+    const fetch: FetchLike = (_url, init) =>
+      new Promise((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => {
+          abortado = true;
+          reject(new DOMException("aborted", "AbortError"));
+        });
+      });
+    try {
+      const promesa = enviarTexto({ apiKey: "k", phoneNumberId: "pn_1", fetch, timeoutMs: 100 }, "549114", "hola");
+      await vi.advanceTimersByTimeAsync(150);
+      const r = await promesa;
+      expect(abortado).toBe(true);
+      expect(r).toEqual({ ok: false, categoria: "red", error: "tiempo de espera agotado" });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("una respuesta cuyo .text() revienta no hace caer a pedir()", async () => {
+    const fetch: FetchLike = async () =>
+      ({ ok: true, status: 200, text: () => Promise.reject(new Error("stream cortado")) }) as unknown as Response;
+    const r = await enviarTexto(cred(fetch), "5491145678901", "Hola");
+    expect(r).toEqual({ ok: true, id: "" });
+  });
+});
+
+describe("pedir(): sin clave o sin fetch, no sale a la red (vía crearCliente)", () => {
+  it("crearCliente sin clave no llama a fetch", async () => {
+    const { fetch, llamadas } = espia();
+    const r = await crearCliente({ apiKey: "", fetch }, "Club", "x");
+    expect(r).toMatchObject({ ok: false, categoria: "credenciales" });
+    expect(llamadas).toHaveLength(0);
+  });
+
+  it("sin fetch inyectado, usa el fetch global", async () => {
+    const original = globalThis.fetch;
+    let llamado = false;
+    globalThis.fetch = (async () => {
+      llamado = true;
+      return new Response(JSON.stringify({ id: "cus_1" }), { status: 200 });
+    }) as typeof fetch;
+    try {
+      const r = await crearCliente({ apiKey: "k" }, "Club", "x");
+      expect(llamado).toBe(true);
+      expect(r).toMatchObject({ ok: true });
+    } finally {
+      globalThis.fetch = original;
+    }
+  });
+
+  it("sin fetch inyectado NI global disponible, da un resultado y no revienta", async () => {
+    const original = globalThis.fetch;
+    // @ts-expect-error simula un entorno sin fetch global
+    globalThis.fetch = undefined;
+    try {
+      const r = await crearCliente({ apiKey: "k" }, "Club", "x");
+      expect(r).toEqual({ ok: false, categoria: "red", error: "no hay fetch disponible" });
+    } finally {
+      globalThis.fetch = original;
+    }
+  });
+});
+
+describe("crearCliente: variantes de la respuesta de Kapso", () => {
+  it("sin id en la respuesta, no se hace pasar por exito", async () => {
+    const { fetch } = espia({ cuerpo: { algo: "raro" } });
+    const r = await crearCliente({ apiKey: "k", fetch }, "Club", "x");
+    expect(r).toMatchObject({ ok: false, categoria: "rechazado" });
+  });
+  it("sin external_customer_id en la respuesta, arma el default con el prefijo", async () => {
+    const { fetch } = espia({ cuerpo: { id: "cus_9" } });
+    const r = await crearCliente({ apiKey: "k", fetch }, "Club", "club_9");
+    expect(r).toMatchObject({ ok: true, cliente: { id: "cus_9", externalCustomerId: "gestionflow:club_9" } });
+  });
+});
+
+describe("crearSetupLink: las tres opciones de redirección/tema, y su error", () => {
+  it("volverBienA, volverMalA y colorPrimario viajan si se pasan", async () => {
+    const { fetch, llamadas } = espia({ cuerpo: { url: "u" } });
+    await crearSetupLink({ apiKey: "k", fetch }, "cus_1", {
+      volverBienA: "https://app/ok",
+      volverMalA: "https://app/mal",
+      colorPrimario: "#111827",
+    });
+    expect(llamadas[0]!.cuerpo.setup_link.success_redirect_url).toBe("https://app/ok");
+    expect(llamadas[0]!.cuerpo.setup_link.failure_redirect_url).toBe("https://app/mal");
+    expect(llamadas[0]!.cuerpo.setup_link.theme_config).toEqual({ primary_color: "#111827" });
+  });
+  it("un error de Kapso en crearSetupLink vuelve con su categoria", async () => {
+    const { fetch } = espia({ estado: 500, texto: "boom" });
+    const r = await crearSetupLink({ apiKey: "k", fetch }, "cus_1");
+    expect(r).toMatchObject({ ok: false, categoria: "red" });
+  });
+});
+
+describe("leerFecha: los distintos formatos que manda Kapso", () => {
+  it("sin timestamp/created_at/occurred_at, usa el momento actual", () => {
+    const antes = Date.now();
+    const e = leerEventoWebhook({
+      event: "whatsapp.message.received",
+      data: { message: { id: "m", from: "549114", text: { body: "hola" } } },
+    });
+    expect(e.tipo).toBe("mensaje");
+    if (e.tipo === "mensaje") expect(e.mensaje.fechaHora.getTime()).toBeGreaterThanOrEqual(antes);
+  });
+  it("created_at como fecha ISO se lee tal cual", () => {
+    const e = leerEventoWebhook({
+      event: "whatsapp.message.received",
+      data: { message: { id: "m", from: "549114", text: { body: "hola" }, created_at: "2026-09-01T00:00:00Z" } },
+    });
+    expect(e.tipo).toBe("mensaje");
+    if (e.tipo === "mensaje") expect(e.mensaje.fechaHora.toISOString()).toBe("2026-09-01T00:00:00.000Z");
+  });
+  it("un occurred_at que no se puede parsear cae al momento actual, no a 1970", () => {
+    const antes = Date.now();
+    const e = leerEventoWebhook({
+      event: "whatsapp.message.received",
+      data: { message: { id: "m", from: "549114", text: { body: "hola" }, occurred_at: "no es una fecha" } },
+    });
+    expect(e.tipo).toBe("mensaje");
+    if (e.tipo === "mensaje") expect(e.mensaje.fechaHora.getTime()).toBeGreaterThanOrEqual(antes);
+  });
+  it("un timestamp numerico en milisegundos no se vuelve a multiplicar", () => {
+    const ms = Date.parse("2026-08-19T00:00:00Z");
+    const e = leerEventoWebhook({
+      event: "whatsapp.message.received",
+      data: { message: { id: "m", from: "549114", text: { body: "hola" }, timestamp: ms } },
+    });
+    expect(e.tipo).toBe("mensaje");
+    if (e.tipo === "mensaje") expect(e.mensaje.fechaHora.toISOString()).toBe("2026-08-19T00:00:00.000Z");
+  });
+  it("un timestamp numerico en SEGUNDOS si se multiplica", () => {
+    const segundos = Date.parse("2026-08-19T00:00:00Z") / 1000;
+    const e = leerEventoWebhook({
+      event: "whatsapp.message.received",
+      data: { message: { id: "m", from: "549114", text: { body: "hola" }, timestamp: segundos } },
+    });
+    expect(e.tipo).toBe("mensaje");
+    if (e.tipo === "mensaje") expect(e.mensaje.fechaHora.toISOString()).toBe("2026-08-19T00:00:00.000Z");
+  });
+});
+
+describe("numero_conectado / numero_desconectado: campos alternativos y faltantes", () => {
+  it("sin display_phone_number, telefono queda undefined", () => {
+    const e = leerEventoWebhook({
+      event: "whatsapp.phone_number.created",
+      data: { phone_number_id: "pn_9", customer_id: "cus_1" },
+    });
+    expect(e).toEqual({ tipo: "numero_conectado", clienteId: "cus_1", phoneNumberId: "pn_9", telefono: undefined });
+  });
+  it("una desconexion tambien acepta id/external_customer_id como alternativa", () => {
+    const e = leerEventoWebhook({
+      event: "whatsapp.phone_number.deleted",
+      data: { id: "pn_9", external_customer_id: "cus_1" },
+    });
+    expect(e).toEqual({ tipo: "numero_desconectado", clienteId: "cus_1", phoneNumberId: "pn_9" });
+  });
+  it("una desconexion sin ids tambien se ignora", () => {
+    expect(leerEventoWebhook({ event: "whatsapp.phone_number.deleted", data: {} }).tipo).toBe("ignorado");
+  });
+});
+
+describe("estado de mensaje: campos alternativos de id y ausencia", () => {
+  it("acepta datos.id como alternativa a message.id", () => {
+    const e = leerEventoWebhook({ event: "whatsapp.message.delivered", data: { id: "wamid.1" } });
+    expect(e).toMatchObject({ tipo: "estado", mensajeId: "wamid.1", estado: "delivered" });
+  });
+  it("acepta message_id como otra alternativa mas", () => {
+    const e = leerEventoWebhook({ event: "whatsapp.message.read", data: { message_id: "wamid.2" } });
+    expect(e).toMatchObject({ tipo: "estado", mensajeId: "wamid.2", estado: "read" });
+  });
+  it("un estado sin ningun id se ignora", () => {
+    expect(leerEventoWebhook({ event: "whatsapp.message.sent", data: {} }).tipo).toBe("ignorado");
+  });
+});
+
+describe("mensaje entrante: campos que faltan no rompen el evento", () => {
+  it("un boton sin id (payload) y sin id de mensaje", () => {
+    const e = leerEventoWebhook({
+      event: "whatsapp.message.received",
+      data: { message: { from: "549114", interactive: { type: "button_reply", button_reply: { title: "Sí" } } } },
+    });
+    expect(e).toEqual({
+      tipo: "mensaje",
+      mensaje: expect.objectContaining({ tipo: "boton", payload: undefined, mensajeId: "" }),
+    });
+  });
+  it("una opcion de lista sin id (payload) y sin id de mensaje", () => {
+    const e = leerEventoWebhook({
+      event: "whatsapp.message.received",
+      data: { message: { from: "549114", interactive: { type: "list_reply", list_reply: { title: "18:00" } } } },
+    });
+    expect(e).toEqual({
+      tipo: "mensaje",
+      mensaje: expect.objectContaining({ tipo: "opcion_lista", payload: undefined, mensajeId: "" }),
+    });
+  });
+  it("un mensaje de texto sin id de mensaje", () => {
+    const e = leerEventoWebhook({
+      event: "whatsapp.message.received",
+      data: { message: { from: "549114", text: { body: "hola" } } },
+    });
+    expect(e).toMatchObject({ mensaje: { mensajeId: "" } });
+  });
+});
+
+describe("categoriaDe: la ventana tambien se reconoce en espanol", () => {
+  it("24 horas + 'ventana' (sin 'window') categoriza como ventana", async () => {
+    const { fetch } = espia({
+      estado: 400,
+      texto: JSON.stringify({ error: { message: "no se puede: pasaron más de 24hs de la ventana de atención" } }),
+    });
+    const r = await enviarTexto(cred(fetch), "5491145678901", "Hola");
+    expect(r).toMatchObject({ ok: false, categoria: "ventana" });
+  });
+});
+
+describe("enviarAviso sin parametros explicitos, fuera de la ventana", () => {
+  it("manda la plantilla sin parametros (arma components vacio)", async () => {
+    const { fetch, llamadas } = espia();
+    await enviarAviso(cred(fetch), "549114", {
+      texto: "Tu cuota vence",
+      plantilla: "gf_cuota_vence",
+      ultimoMensajeEntrante: null,
+      ahora: new Date("2026-09-09T12:00:00Z"),
+    });
+    expect(llamadas[0]!.cuerpo.template.components).toBeUndefined();
   });
 });

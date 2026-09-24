@@ -34,7 +34,7 @@
  * servidor** — que es un endpoint alcanzable desde el navegador aunque no haya
  * ningún botón que lo llame.
  *
- * Puro, sin dependencias, sin `process.env`. Lo importa el menú, que es
+ * Puro, sin dependencias, sin variables de entorno. Lo importa el menú, que es
  * cliente.
  */
 

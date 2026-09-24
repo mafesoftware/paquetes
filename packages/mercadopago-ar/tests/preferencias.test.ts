@@ -144,4 +144,58 @@ describe("crearPreferencia", () => {
     const error = await crearPreferencia({ ...BASE, fetch: fn }).catch((e) => e);
     expect(error).toBeInstanceOf(ErrorMP);
   });
+
+  it("sin sandbox_init_point en la respuesta, queda null", async () => {
+    const { fn } = capturarCuerpo({ id: "pref-1", init_point: "https://mp/checkout" });
+    const pref = await crearPreferencia({ ...BASE, fetch: fn });
+    expect(pref.sandboxInitPoint).toBeNull();
+  });
+
+  it("un item con descripcion y categoria los manda; sin ellas, no", async () => {
+    const { fn, cuerpos } = capturarCuerpo();
+    await crearPreferencia({
+      ...BASE,
+      items: [{ id: "sku-1", titulo: "Serum", descripcion: "30ml", categoria: "skincare", cantidad: 1, precioUnitario: 12000 }],
+      fetch: fn,
+    });
+    const item = (cuerpos[0]!.items as Record<string, unknown>[])[0]!;
+    expect(item.description).toBe("30ml");
+    expect(item.category_id).toBe("skincare");
+
+    const { fn: fn2, cuerpos: cuerpos2 } = capturarCuerpo();
+    await crearPreferencia({ ...BASE, fetch: fn2 });
+    const itemSinExtra = (cuerpos2[0]!.items as Record<string, unknown>[])[0]!;
+    expect("description" in itemSinExtra).toBe(false);
+    expect("category_id" in itemSinExtra).toBe(false);
+  });
+
+  it("el pagador se manda solo con lo que se pasa: nombre, email, o ambos", async () => {
+    const { fn, cuerpos } = capturarCuerpo();
+    await crearPreferencia({ ...BASE, pagador: { nombre: "Juana" }, fetch: fn });
+    expect(cuerpos[0]!.payer).toEqual({ name: "Juana" });
+
+    const { fn: fn2, cuerpos: cuerpos2 } = capturarCuerpo();
+    await crearPreferencia({ ...BASE, pagador: { email: "juana@x.com" }, fetch: fn2 });
+    expect(cuerpos2[0]!.payer).toEqual({ email: "juana@x.com" });
+
+    const { fn: fn3, cuerpos: cuerpos3 } = capturarCuerpo();
+    await crearPreferencia({ ...BASE, fetch: fn3 });
+    expect("payer" in cuerpos3[0]!).toBe(false);
+  });
+
+  it("con descriptorEnResumen, lo manda como statement_descriptor", async () => {
+    const { fn, cuerpos } = capturarCuerpo();
+    await crearPreferencia({ ...BASE, descriptorEnResumen: "BESTIE", fetch: fn });
+    expect(cuerpos[0]!.statement_descriptor).toBe("BESTIE");
+  });
+
+  it("con metadata, la manda; sin ella, no", async () => {
+    const { fn, cuerpos } = capturarCuerpo();
+    await crearPreferencia({ ...BASE, metadata: { tenantId: "bestie" }, fetch: fn });
+    expect(cuerpos[0]!.metadata).toEqual({ tenantId: "bestie" });
+
+    const { fn: fn2, cuerpos: cuerpos2 } = capturarCuerpo();
+    await crearPreferencia({ ...BASE, fetch: fn2 });
+    expect("metadata" in cuerpos2[0]!).toBe(false);
+  });
 });

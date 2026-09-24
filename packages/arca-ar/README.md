@@ -130,6 +130,41 @@ mano (son siete TLVs de DER) y **los tests lo verifican con
 por byte, la estructura está bien. No hay material criptográfico en el repo:
 los tests generan un certificado descartable por corrida.
 
+## API
+
+Referencia completa de lo que exporta `@mafesoftware/arca-ar` (los flujos de
+arriba ya muestran el uso real de la mayoría):
+
+- **WSAA** (`./wsaa.js`): `solicitarTicket(opciones)` — el ticket de acceso
+  (ver "El flujo entero"). `armarTRA({ servicio, generationTime, expirationTime })`
+  arma el XML del ticket antes de firmarlo. `sobreLoginCms(cms)` envuelve el
+  CMS en el SOAP del login. `ErrorWSAA` — la excepción de infraestructura (no
+  un resultado: acá SÍ conviene tirar, porque sin ticket no hay nada que
+  intentar).
+- **CMS** (`./cms.js`): `firmarCMS(tra, cert, clave)` / `firmarCMSBase64(...)`
+  construyen la firma PKCS#7 a mano. `pemADer(pem)` pasa un PEM a DER.
+  `emisorYSerie(certificadoPem)` saca el emisor y el número de serie que pide
+  el `SignedData`.
+- **Letra y tipo de comprobante** (`./letra.js`):
+
+  ```ts
+  import { letraPara, tipoComprobante, alicuotaPorId, ALICUOTAS_IVA, CONDICION_IVA_ID, DOC_TIPO } from "@mafesoftware/arca-ar";
+
+  letraPara("responsable_inscripto", "consumidor_final"); // "B"
+  tipoComprobante("monotributo", "consumidor_final");     // { letra: "C", codigo: 11 }
+  alicuotaPorId(5); // { id: 5, nombre: "21%", puntosBasicos: 2100 }
+  ```
+
+- **WSFEv1** (`./wsfe.js`): `solicitarCae`, `ultimoAutorizado`,
+  `consultarComprobante` (ver los ejemplos de arriba). `estadoDelServicio(opciones)`
+  — si ARCA está operativo. `fechaWire(fecha)` — a `"AAAAMMDD"`, el formato
+  decimal que espera el wire. `ErrorWsfe` — errores de infraestructura (un
+  rechazo de negocio vuelve como `resultado: "rechazado"`, no como excepción).
+- **Padrón** (`./padron.js`): `ticketDePadron`, `consultarPadron` (ver "El
+  padrón: quién es un CUIT"). `condicionDesdePadron(impuestos)` — deriva la
+  condición de IVA a partir de los impuestos informados. `SERVICIO_PADRON` — el
+  nombre de servicio para pedirle su propio ticket al WSAA. `ErrorPadron`.
+
 ## Qué NO hace
 
 - No guarda tickets, numeración ni comprobantes: eso es de tu base.

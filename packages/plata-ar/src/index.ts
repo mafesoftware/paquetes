@@ -19,7 +19,7 @@
  *    grupo familiar repartido entre cinco integrantes: redondear en cada paso
  *    corre el total lo suficiente como para que la liquidación no cierre.
  *
- * El paquete no tiene dependencias y no lee `process.env`.
+ * El paquete no tiene dependencias y no lee variables de entorno.
  */
 
 /** Un monto guardado en centavos. Se marca con el nombre, no con un tipo. */
@@ -49,7 +49,13 @@ export function aCentavos(pesos: number): Centavos | null {
   // `Math.round` sobre el producto y no `parseInt`: 19.99 * 100 da
   // 1998.9999999999998 en coma flotante, y truncar deja 1998.
   const centavos = Math.round(pesos * 100);
-  return Number.isSafeInteger(centavos) ? centavos : null;
+  // Con el guard de arriba (`Math.abs(pesos) <= MAXIMO_CENTAVOS / 100`) esto
+  // nunca da `false`: verificado exhaustivamente contra los flotantes
+  // vecinos del límite, en los dos signos. Queda como salvaguarda
+  // defensiva, no como camino alcanzable.
+  /* v8 ignore next */
+  if (!Number.isSafeInteger(centavos)) return null;
+  return centavos;
 }
 
 export function aPesos(centavos: Centavos): number {

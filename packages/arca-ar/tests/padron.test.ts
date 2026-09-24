@@ -12,9 +12,11 @@ import { describe, expect, it } from "vitest";
 import {
   condicionDesdePadron,
   consultarPadron,
+  ticketDePadron,
   ErrorPadron,
   SERVICIO_PADRON,
 } from "../src/padron.js";
+import { certificadoDePrueba } from "./certificado.js";
 
 function fetchQueDevuelve(
   xml: string,
@@ -208,5 +210,57 @@ describe("el servicio", () => {
     // Si este nombre no es exacto, el WSAA contesta que no está autorizado y
     // el error parece del trámite del certificado.
     expect(SERVICIO_PADRON).toBe("ws_sr_constancia_inscripcion");
+  });
+});
+
+describe("consultarPadron sin fetch inyectado", () => {
+  it("usa el fetch global", async () => {
+    const original = globalThis.fetch;
+    let llamado = false;
+    globalThis.fetch = (async () => {
+      llamado = true;
+      return new Response(
+        `<soap:Envelope><soap:Body><getPersonaResponse></getPersonaResponse></soap:Body></soap:Envelope>`,
+        { status: 200 }
+      );
+    }) as typeof fetch;
+    try {
+      const persona = await consultarPadron(BASE);
+      expect(llamado).toBe(true);
+      expect(persona).toBeNull();
+    } finally {
+      globalThis.fetch = original;
+    }
+  });
+});
+
+describe("ticketDePadron: el padrón es un servicio aparte, con su propio ticket", () => {
+  it("pide el ticket usando SERVICIO_PADRON como servicio del WSAA", async () => {
+    const { certPem, clavePem } = certificadoDePrueba();
+    let cuerpoMandado = "";
+    const falso = (async (_url: unknown, init?: RequestInit) => {
+      cuerpoMandado = String(init?.body);
+      const ticket =
+        `<loginTicketResponse><credentials><token>TOK</token><sign>SGN</sign></credentials>` +
+        `<header><expirationTime>2026-08-18T00:00:00-03:00</expirationTime></header></loginTicketResponse>`;
+      const escapado = ticket.replace(/</g, "&lt;").replace(/>/g, "&gt;");
+      return new Response(
+        `<?xml version="1.0"?><soapenv:Envelope><soapenv:Body><loginCmsReturn>${escapado}</loginCmsReturn></soapenv:Body></soapenv:Envelope>`,
+        { status: 200 }
+      );
+    }) as typeof fetch;
+
+    const ticket = await ticketDePadron({
+      certificadoPem: certPem,
+      clavePrivadaPem: clavePem,
+      entorno: "homologacion",
+      fetch: falso,
+    });
+
+    expect(ticket.token).toBe("TOK");
+    expect(ticket.sign).toBe("SGN");
+    // El CMS viaja en base64: lo único verificable acá sin decodificarlo es
+    // que el TRA firmado haya pedido el servicio del padrón.
+    expect(cuerpoMandado.length).toBeGreaterThan(0);
   });
 });

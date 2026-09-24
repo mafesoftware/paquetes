@@ -82,6 +82,9 @@ describe("parsearNumeroAR y sus alias no multiplican por cien", () => {
   it("y sigue entendiendo el formato argentino", () => {
     expect(parsearNumeroAR("1.234,5")).toBe(1234.5);
   });
+  it("null si después de limpiar no queda un número válido", () => {
+    expect(parsearNumeroAR("12-34")).toBeNull();
+  });
 });
 
 describe("pesosParaPlanilla", () => {

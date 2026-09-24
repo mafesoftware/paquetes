@@ -7,7 +7,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { hijosDe, leerTLV, oid, secuencia, tlv } from "../src/der.js";
+import { entero, hijosDe, leerTLV, oid, secuencia, tlv } from "../src/der.js";
 
 describe("oid", () => {
   it("codifica signedData igual que la referencia", () => {
@@ -31,6 +31,18 @@ describe("longitudes", () => {
     const t = tlv(0x04, Buffer.alloc(300));
     // 0x82 = dos bytes de longitud; 0x012C = 300.
     expect(t.subarray(1, 4).toString("hex")).toBe("82012c");
+  });
+});
+
+describe("entero", () => {
+  it("codifica un entero chico como TLV 0x02", () => {
+    expect(entero(1).toString("hex")).toBe("020101");
+  });
+  it("un negativo esta fuera del rango que soporta (solo enteros chicos y positivos)", () => {
+    expect(() => entero(-1)).toThrow(/fuera de rango/);
+  });
+  it("mas de 127 tambien esta fuera de rango (no soporta el bit de signo)", () => {
+    expect(() => entero(128)).toThrow(/fuera de rango/);
   });
 });
 

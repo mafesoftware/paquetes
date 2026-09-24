@@ -80,6 +80,12 @@ describe("minimas: guardar la diferencia, no el conjunto", () => {
     const e = ROLES.minimas("tesoreria", deseadas);
     expect([...ROLES.efectivas("tesoreria", e)].sort()).toEqual([...deseadas].sort());
   });
+  it("ignora una clave deseada que el sistema no conoce", () => {
+    // "inventada.total" no cuenta: solo queda la diferencia real con el
+    // preset (que sigue trayendo "cobranzas.cobrar" y ahora no se quiere).
+    expect(ROLES.minimas("tesoreria", ["socios.ver", "inventada.total" as never]))
+      .toEqual({ "cobranzas.cobrar": false });
+  });
   it("un rol que cambia despues arrastra a quien no tenia excepcion", () => {
     // Es el motivo entero de minimas(): guardar el conjunto congelaria esto.
     const e = ROLES.minimas("porteria", ["socios.ver", "accesos.abrir"]);
@@ -103,6 +109,24 @@ describe("limpiar", () => {
   });
   it("un mapa nulo queda vacio", () => {
     expect(ROLES.limpiar("duenio", null)).toEqual({});
+  });
+  it("descarta un valor que no es booleano, no lo coerciona", () => {
+    expect(ROLES.limpiar("tesoreria", { "accesos.abrir": "true" } as never)).toEqual({});
+  });
+});
+
+describe("un preset que no existe no revienta", () => {
+  // Puede pasar con datos viejos: un rol borrado que sigue en una fila de la
+  // base. Las funciones tratan ese preset como si no concediera nada, en vez
+  // de tirar.
+  it("tiene() da false para cualquier clave", () => {
+    expect(ROLES.tiene("inventado" as never, undefined, "socios.ver")).toBe(false);
+  });
+  it("minimas() no tiene nada de base con que comparar: guarda todo lo deseado", () => {
+    expect(ROLES.minimas("inventado" as never, ["socios.ver"])).toEqual({ "socios.ver": true });
+  });
+  it("limpiar() no tiene base: cualquier excepcion booleana sobrevive", () => {
+    expect(ROLES.limpiar("inventado" as never, { "socios.ver": true })).toEqual({ "socios.ver": true });
   });
 });
 
