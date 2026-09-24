@@ -106,6 +106,10 @@ describe("aritmetica de dias", () => {
   it("diasEntre no se corre por el horario de verano", () => {
     expect(diasEntre("2026-03-01", "2026-04-01")).toBe(31);
   });
+  it("diasEntre cuenta el 29 de febrero de un ano bisiesto (requisito 0.2)", () => {
+    expect(diasEntre("2028-02-28", "2028-03-01")).toBe(2);
+    expect(diasEntre("2028-02-01", "2029-02-01")).toBe(366);
+  });
 });
 
 describe("instanteDelDia", () => {

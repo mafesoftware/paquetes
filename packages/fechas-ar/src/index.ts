@@ -41,7 +41,25 @@
  *
  * El paquete es PURO y no tiene dependencias: lo importan las pantallas, que
  * son cliente.
+ *
+ * ## 0.2: períodos, meses de cuota y días hábiles
+ *
+ * La API de arriba (días vs. instantes) se mantiene íntegra. La 0.2 agrega
+ * una tercera familia, la de **calendario puro**: `Periodo` (`"YYYY-MM"`,
+ * `periodo.ts`), aritmética de meses segura para cuotas (`sumarMeses`,
+ * `meses.ts`) y días hábiles con feriados inyectados (`esHabil`,
+ * `siguienteHabil`, `anteriorHabil`, `habiles.ts`), re-exportadas acá. Todas
+ * reciben y devuelven `"YYYY-MM-DD"`/`"YYYY-MM"` en UTC puro (nunca
+ * `setHours`/`setUTCHours`/`getHours` — spec 02 §6) y validan su entrada:
+ * un formato roto o un calendario imposible (`"2026-02-30"`) tira
+ * `ErrorFecha` con `codigo`, porque en esta familia lo que llega ya lo
+ * calculó otro código, no lo tipeó una persona.
  */
+
+export * from "./errores.js";
+export * from "./periodo.js";
+export * from "./meses.js";
+export * from "./habiles.js";
 
 /** La zona por defecto. Un club de otro país pasa la suya. */
 export const ZONA_AR = "America/Argentina/Buenos_Aires";
@@ -325,7 +343,14 @@ export function sumarDiasISO(iso: string, dias: number): string {
   return d.toISOString().slice(0, 10);
 }
 
-/** Cuántos días enteros hay entre dos días de calendario. */
+/**
+ * Cuántos días enteros hay entre dos días de calendario: `hastaISO -
+ * desdeISO`, con signo (negativo si `hastaISO` es anterior).
+ *
+ * Es exactamente la función `diasEntre(a, b)` que pide la API 0.2: misma
+ * firma, mismo `b − a` con signo. No se duplicó como `diasEntreFechas`
+ * porque no hace falta — esta ya es esa función.
+ */
 export function diasEntre(desdeISO: string, hastaISO: string): number {
   const a = Date.parse(`${desdeISO.slice(0, 10)}T00:00:00Z`);
   const b = Date.parse(`${hastaISO.slice(0, 10)}T00:00:00Z`);

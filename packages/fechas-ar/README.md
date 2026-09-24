@@ -71,6 +71,66 @@ aMinutos("08:30");  // 510
 deMinutos(510);      // "08:30"
 ```
 
+## API 0.2
+
+Una tercera familia, de **calendario puro**: recibe y devuelve
+`"YYYY-MM-DD"`/`"YYYY-MM"`, nunca un `Date`. Un formato roto o un calendario
+imposible (`"2026-02-30"`) tira `ErrorFecha`, no devuelve `null` ni `NaN`.
+
+### Errores (`errores.ts`)
+
+```ts
+import { ErrorFecha, type CodigoErrorFecha } from "@mafesoftware/fechas-ar";
+
+try {
+  // ...
+} catch (e) {
+  if (e instanceof ErrorFecha) {
+    e.codigo; // "formato_invalido" | "fecha_invalida" | "dia_invalido"
+  }
+}
+```
+
+### Períodos mensuales (`periodo.ts`)
+
+```ts
+import { esPeriodo, etiquetaPeriodo, periodoDe, sumarPeriodos, type Periodo } from "@mafesoftware/fechas-ar";
+
+esPeriodo("2026-09");        // true
+esPeriodo("2026-13");        // false: no hay mes 13
+periodoDe("2026-09-24");     // "2026-09"
+sumarPeriodos("2026-11", 3); // "2027-02" (n negativo resta; n === 0 devuelve el mismo período)
+etiquetaPeriodo("2026-09");  // "sep-2026"
+```
+
+### Meses de cuota (`meses.ts`)
+
+```ts
+import { sumarMeses } from "@mafesoftware/fechas-ar";
+
+// dia es el día objetivo (1..31 o "ultimo"), clamped al último día real del
+// mes resultante: nunca se desborda al mes siguiente.
+sumarMeses("2026-01-31", 1, 31);     // "2026-02-28" (2026 no es bisiesto)
+sumarMeses("2028-01-31", 1, 31);     // "2028-02-29" (2028 sí lo es)
+sumarMeses("2026-01-15", 2, "ultimo"); // "2026-03-31"
+```
+
+### Días hábiles (`habiles.ts`)
+
+Los feriados se inyectan (spec 06 §3.1): cada organización trae los suyos.
+
+```ts
+import { esHabil, siguienteHabil, anteriorHabil } from "@mafesoftware/fechas-ar";
+
+const feriados = new Set(["2026-09-04"]); // viernes feriado
+
+esHabil("2026-09-05", feriados);       // false: sábado
+esHabil("2026-09-04", feriados);       // false: feriado (aunque sea viernes)
+siguienteHabil("2026-09-04", feriados); // "2026-09-07": viernes feriado + fin de semana -> lunes
+siguienteHabil("2026-09-01", feriados); // "2026-09-01": ya es hábil, se devuelve igual (documentado)
+anteriorHabil("2026-09-06", feriados);  // "2026-09-03": domingo -> sábado y viernes tampoco sirven (feriado) -> jueves
+```
+
 ## Probar
 
 ```bash
