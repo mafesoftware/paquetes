@@ -18,6 +18,7 @@ Ninguno está publicado a npm todavía (primera publicación pendiente — ver
 |---|---|
 | `@mafesoftware/accesos` | Reglas de control de acceso y cola offline idempotente. Puro. |
 | `@mafesoftware/arca-ar` | Facturación electrónica de ARCA (ex AFIP) para Argentina: WSAA, WSFEv1 y consulta al padrón, sin dependencias. |
+| `@mafesoftware/archivos-s3` | Subida a S3 con URL prefirmada, promoción a la clave final, descarga por URL firmada con autorización por registro (nunca por prefijo) y borrado en lote. `S3Client` inyectado (peerDependency). |
 | `@mafesoftware/auditoria` | Registro de auditoría inmutable y por tenant: diff de antes/después, campos sensibles redactados; `/drizzle` con tabla + trigger de inmutabilidad. |
 | `@mafesoftware/carnet-qr` | Credencial digital firmada (Ed25519), verificable offline. |
 | `@mafesoftware/correo` | Envío de mails transaccionales por Resend. Sin dependencias, fetch inyectable. |

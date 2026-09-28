@@ -6,8 +6,20 @@ export interface ResultadoVerificacion {
   errores: string[];
 }
 
-/** Subcarpetas de `src/` donde SÍ está permitido importar drizzle-orm/next/react/@aws-sdk. */
-const SUBCARPETAS_PERMITIDAS = new Set(['drizzle', 'next']);
+/**
+ * Subcarpetas de `src/` donde SÍ está permitido importar
+ * drizzle-orm/next/react/@aws-sdk. `aws` se agregó para
+ * `@mafesoftware/archivos-s3`: a diferencia de drizzle-orm/next (opcionales,
+ * confinados a un subpath que el resto del paquete no necesita),
+ * `@aws-sdk/client-s3` + `@aws-sdk/s3-presigned-post` +
+ * `@aws-sdk/s3-request-presigner` son el "puerto" que ESE paquete inyecta
+ * por parámetro (regla 1 de diseño: toda dependencia externa se inyecta,
+ * nunca se instancia adentro) — el `S3Client` entra como argumento, nunca se
+ * crea con credenciales propias ni lee `process.env`. La validación pura
+ * (mime/tamaño/saneo de nombre/clave segura) no vive acá: solo el código que
+ * arma comandos y firma URLs, que sin el SDK real no se puede reimplementar.
+ */
+const SUBCARPETAS_PERMITIDAS = new Set(['drizzle', 'next', 'aws']);
 
 /** Especificadores de import prohibidos en el núcleo (fuera de drizzle/ y next/). */
 const IMPORTS_PROHIBIDOS = ['drizzle-orm', 'next', 'react', '@aws-sdk'];
@@ -19,7 +31,7 @@ const EXTENSIONES_FUENTE = new Set(['.ts', '.tsx', '.js', '.jsx', '.mts', '.mjs'
  * monorepo (spec 06 §3 / restricciones.md): README con sección "## API",
  * CHANGELOG, `exports`/`files` apuntando a dist, licencia MIT, y núcleo puro
  * (sin importar drizzle-orm/next/react/@aws-sdk ni usar process.env, salvo en
- * las subcarpetas src/drizzle/ y src/next/).
+ * las subcarpetas src/drizzle/, src/next/ y src/aws/).
  */
 export function verificarPaquete(dir: string): ResultadoVerificacion {
   const errores: string[] = [];

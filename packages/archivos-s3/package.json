@@ -1,0 +1,55 @@
+{
+  "name": "@mafesoftware/archivos-s3",
+  "version": "0.0.0",
+  "description": "Subida directa a S3 con URL prefirmada (POST a un prefijo pending/), promoción a su clave final, descarga por URL firmada con autorización POR REGISTRO (nunca por prefijo — la lección de ediflow: un prefijo dejaba leer los archivos de otro tenant) y borrado en lote. Núcleo puro: el S3Client se inyecta por parámetro, credenciales y bucket entran siempre por argumento, nunca por process.env.",
+  "type": "module",
+  "license": "MIT",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "README.md",
+    "CHANGELOG.md"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mafesoftware/paquetes.git",
+    "directory": "packages/archivos-s3"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.build.json --noEmit"
+  },
+  "peerDependencies": {
+    "@aws-sdk/client-s3": ">=3.600.0 <4",
+    "@aws-sdk/s3-presigned-post": ">=3.600.0 <4",
+    "@aws-sdk/s3-request-presigner": ">=3.600.0 <4"
+  },
+  "devDependencies": {
+    "@aws-sdk/client-s3": "^3.1142.0",
+    "@aws-sdk/s3-presigned-post": "^3.1142.0",
+    "@aws-sdk/s3-request-presigner": "^3.1142.0"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "keywords": [
+    "s3",
+    "presigned-url",
+    "presigned-post",
+    "archivos",
+    "multi-tenant"
+  ]
+}

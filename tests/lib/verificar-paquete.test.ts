@@ -10,7 +10,7 @@ function ruta(nombre: string): string {
 }
 
 describe('verificarPaquete', () => {
-  it('acepta un paquete bien formado, incluyendo subcarpetas drizzle/ y next/', () => {
+  it('acepta un paquete bien formado, incluyendo subcarpetas drizzle/, next/ y aws/', () => {
     const resultado = verificarPaquete(ruta('paquete-bueno'));
     expect(resultado.errores).toEqual([]);
     expect(resultado.ok).toBe(true);

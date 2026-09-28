@@ -76,9 +76,10 @@ Valida que `<nombre>` sea kebab-case en minúsculas y que no exista ya. Genera
 
 El resultado debe pasar `tests/estructura.test.ts` (`bun run test`), que recorre
 `packages/*` y hace cumplir las reglas de diseño de arriba: núcleo sin
-`drizzle-orm`/`next`/`react`/`@aws-sdk`/`process.env` (salvo en `src/drizzle/` y
-`src/next/`), README con `## API`, CHANGELOG, `exports`/`files` apuntando a `dist`,
-licencia MIT.
+`drizzle-orm`/`next`/`react`/`@aws-sdk`/`process.env` (salvo en `src/drizzle/`,
+`src/next/` y `src/aws/` — esta última para `@mafesoftware/archivos-s3`, que
+inyecta el `S3Client` como puerto), README con `## API`, CHANGELOG,
+`exports`/`files` apuntando a `dist`, licencia MIT.
 
 Antes de publicar: completar la lógica real en `src/index.ts`, el README con la
 API real y un ejemplo por función, y el CHANGELOG. `bun run build && bun run
