@@ -15,7 +15,7 @@ export function crearEsquemaDePrueba(nombreEsquema: string) {
   const proyectos = esquema.table(
     "proyectos",
     {
-      id: uuid("id").notNull(),
+      id: uuid("id").primaryKey(),
       organizacionId: columnaTenant(),
       nombre: text("nombre").notNull(),
     },

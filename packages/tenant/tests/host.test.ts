@@ -52,6 +52,37 @@ describe("validarDominioBase", () => {
     expect(() => validarDominioBase(".")).toThrow(ErrorTenant);
   });
 
+  describe("fix P.C: rechaza cualquier cosa que no sea un hostname", () => {
+    it('rechaza una URL con esquema ("https://x")', () => {
+      expect(() => validarDominioBase("https://x")).toThrow(ErrorTenant);
+    });
+
+    it('rechaza un valor con una barra al final ("x/")', () => {
+      expect(() => validarDominioBase("x/")).toThrow(ErrorTenant);
+    });
+
+    it('rechaza un wildcard ("*.x")', () => {
+      expect(() => validarDominioBase("*.x")).toThrow(ErrorTenant);
+    });
+
+    it("rechaza valores con espacios en el medio", () => {
+      expect(() => validarDominioBase("mafe app.com")).toThrow(ErrorTenant);
+      expect(() => validarDominioBase("mafe.app x")).toThrow(ErrorTenant);
+    });
+
+    it("rechaza cualquier otra cosa que no sea un hostname (@, :, dos puntos sueltos, etc.)", () => {
+      expect(() => validarDominioBase("mafe@app.com")).toThrow(ErrorTenant);
+      expect(() => validarDominioBase("mafe..app")).toThrow(ErrorTenant);
+      expect(() => validarDominioBase("-mafe.app")).toThrow(ErrorTenant);
+    });
+
+    it("sigue aceptando hostnames reales (con o sin www, mayúsculas)", () => {
+      expect(validarDominioBase("mafe.app")).toBe("mafe.app");
+      expect(validarDominioBase("MAFE.app")).toBe("mafe.app");
+      expect(validarDominioBase("localhost")).toBe("localhost");
+    });
+  });
+
   it("el ErrorTenant tirado tiene el código correcto", () => {
     expect.assertions(2);
     try {

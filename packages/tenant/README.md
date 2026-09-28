@@ -159,6 +159,18 @@ const tenantId = await resolverTenant({
 if (!tenantId) notFound();
 ```
 
+**Ojo con `x-forwarded-host`: es un header, y cualquiera puede mandar
+cualquier header.** Si la request llega directo a tu proceso (sin un proxy
+de confianza en el medio que lo SOBRESCRIBA), quien la manda puede setear
+`x-forwarded-host` a lo que quiera — un atacante podría hacerse pasar por
+`otra-org.mafe.app` sin serlo. En Vercel (o detrás de cualquier proxy
+confiable equivalente: un load balancer propio, un CDN configurado para
+esto) el proxy SOBRESCRIBE ese header con el host real antes de que llegue a
+tu código, así que ahí es seguro leerlo. Si tu app no corre detrás de un
+proxy así, no confíes en `x-forwarded-host` sin verificar antes que quien lo
+puso es tu propio proxy (o usá directamente `host`, que sí lo pone el
+cliente TCP, no un header arbitrario).
+
 #### `conTenant<T>(id: string, fn: () => Promise<T>): Promise<T>`
 
 Corre `fn` con `id` como el tenant del contexto (`AsyncLocalStorage`) para

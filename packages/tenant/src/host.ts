@@ -33,20 +33,42 @@ export function normalizarHost(host: string): string {
 }
 
 /**
+ * Un hostname válido: una o más etiquetas `[a-z0-9]` (con guiones en el
+ * medio, nunca al borde) separadas por un punto. Ni esquema (`https://`),
+ * ni path (`/`), ni wildcard (`*`), ni espacios — un `dominioBase` es
+ * SIEMPRE un host pelado, nunca una URL.
+ */
+const HOSTNAME_VALIDO = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*$/;
+
+/**
  * `dominioBase` normalizado igual que un host (mismas reglas de
  * `normalizarHost` — en particular, un `dominioBase = "www.mafe.app"` y uno
  * `= "mafe.app"` se tratan como el mismo dominio), y VALIDADO: un
- * `dominioBase` vacío, en blanco, o que quede vacío después de normalizar
- * (`""`, `"  "`, `"."`) es un error de PROGRAMACIÓN — la app que llama a
- * `slugDeHost`/`resolverTenant` no configuró su dominio, no es un host que
- * mandó alguien — así que tira `ErrorTenant` (`codigo:
+ * `dominioBase` vacío, en blanco, que quede vacío después de normalizar
+ * (`""`, `"  "`, `"."`), o que no sea un HOSTNAME (una URL con esquema como
+ * `"https://x"`, algo con una barra como `"x/"`, un wildcard como `"*.x"`,
+ * un valor con espacios en el medio, o cualquier otra cosa que no sea
+ * `[a-z0-9-]` separado por puntos) es un error de PROGRAMACIÓN — la app que
+ * llama a `slugDeHost`/`resolverTenant` no configuró bien su dominio, no es
+ * un host que mandó alguien — así que tira `ErrorTenant` (`codigo:
  * "dominio_base_invalido"`) en vez de devolver `null` como el resto de las
  * validaciones de este archivo.
+ *
+ * El chequeo de esquema (`"://"`) va ANTES de `normalizarHost`: ese
+ * normalizado saca todo lo que sigue al primer `":"` como si fuera un
+ * puerto (`"https://x"` → `"https"`, que por sí solo SÍ parece un hostname
+ * válido) — sin este chequeo previo, una URL con esquema se colaría.
  */
 export function validarDominioBase(dominioBase: string): string {
+  if (typeof dominioBase === "string" && dominioBase.includes("://")) {
+    throw new ErrorTenant(
+      "dominio_base_invalido",
+      `dominioBase tiene que ser un hostname, no una URL con esquema: ${JSON.stringify(dominioBase)}`,
+    );
+  }
   const base = normalizarHost(dominioBase);
-  if (!base) {
-    throw new ErrorTenant("dominio_base_invalido", `dominioBase vacío o inválido: ${JSON.stringify(dominioBase)}`);
+  if (!base || !HOSTNAME_VALIDO.test(base)) {
+    throw new ErrorTenant("dominio_base_invalido", `dominioBase vacío o inválido (tiene que ser un hostname): ${JSON.stringify(dominioBase)}`);
   }
   return base;
 }

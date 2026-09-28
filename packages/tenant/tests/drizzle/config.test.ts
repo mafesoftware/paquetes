@@ -33,6 +33,12 @@ describe("configuración de tabla (sin Postgres)", () => {
     expect(columna?.getSQLType()).toBe("text");
   });
 
+  it("fix P.C: la fixture usa id: uuid('id').primaryKey() en el padre, como el ejemplo del README (no solo .notNull())", () => {
+    const columna = getTableConfig(proyectos).columns.find((c) => c.name === "id");
+    expect(columna).toBeDefined();
+    expect(columna?.primary).toBe(true);
+  });
+
   it("unicoConTenant agrega el unique (organizacion_id, id) en la tabla padre", () => {
     const config = getTableConfig(proyectos);
     expect(config.uniqueConstraints).toHaveLength(1);
