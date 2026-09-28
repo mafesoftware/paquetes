@@ -1,17 +1,19 @@
 {
   "name": "@mafesoftware/outbox",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Outbox transaccional para correo y WhatsApp: la app encola un mensaje en la MISMA transacción que el hecho de negocio (encolar, exige transacción) y un cron lo procesa con reintentos, backoff con jitter y FOR UPDATE SKIP LOCKED (procesarOutbox). decidir/backoff/clasificarResultado en el núcleo; tablaOutbox + encolar + procesarOutbox en /drizzle; transporteCorreo/transporteWhatsApp adaptan @mafesoftware/correo y @mafesoftware/kapso-wa sin depender de ellos en tiempo de ejecución.",
   "type": "module",
   "license": "MIT",
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
     },
     "./drizzle": {
       "types": "./dist/drizzle/index.d.ts",
-      "import": "./dist/drizzle/index.js"
+      "import": "./dist/drizzle/index.js",
+      "default": "./dist/drizzle/index.js"
     }
   },
   "main": "./dist/index.js",

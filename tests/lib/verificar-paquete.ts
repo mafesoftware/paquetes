@@ -90,6 +90,12 @@ function verificarPackageJson(dir: string, errores: string[]): Record<string, un
     errores.push('El campo "exports" debe apuntar a ./dist (import y types)');
   }
 
+  for (const entrada of entradasSinCondicionDefault(paquete.exports)) {
+    errores.push(
+      `El export "${entrada}" tiene "import" pero no "default": un loader CJS (p. ej. drizzle-kit) no puede resolverlo`,
+    );
+  }
+
   const files = paquete.files;
   if (!Array.isArray(files) || !files.includes('dist')) {
     errores.push('El campo "files" debe existir e incluir "dist"');
@@ -110,6 +116,30 @@ function apuntaADist(exportsField: unknown): boolean {
   const importOk = typeof rutaImport === 'string' && rutaImport.startsWith('./dist/');
   const typesOk = typeof types !== 'string' || types.startsWith('./dist/');
   return importOk && typesOk;
+}
+
+/**
+ * Toda entrada de "exports" (la raíz "." y cada subpath, como "./drizzle")
+ * que tenga condición "import" debe tener también "default": drizzle-kit
+ * (y otros loaders CJS) resuelven `require()` vía la condición "default",
+ * no "import" — sin ella, `ERR_PACKAGE_PATH_NOT_EXPORTED` al cargar el
+ * paquete desde un esquema de drizzle-kit.
+ */
+function entradasSinCondicionDefault(exportsField: unknown): string[] {
+  if (!exportsField || typeof exportsField !== 'object') {
+    return [];
+  }
+  const faltantes: string[] = [];
+  for (const [subpath, entrada] of Object.entries(exportsField as Record<string, unknown>)) {
+    if (!entrada || typeof entrada !== 'object') {
+      continue;
+    }
+    const { import: rutaImport, default: rutaDefault } = entrada as Record<string, unknown>;
+    if (typeof rutaImport === 'string' && typeof rutaDefault !== 'string') {
+      faltantes.push(subpath);
+    }
+  }
+  return faltantes;
 }
 
 function verificarNucleo(dir: string, errores: string[]): void {

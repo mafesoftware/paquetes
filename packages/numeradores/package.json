@@ -1,17 +1,19 @@
 {
   "name": "@mafesoftware/numeradores",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Numeración correlativa sin huecos (comprobantes, órdenes de pago, órdenes de compra) por tenant + ámbito + tipo, segura bajo concurrencia: formatearNumero (sin truncar), esChoqueDeUnico/conReintento en el núcleo y, en /drizzle, tablaNumeradores + siguienteNumero (atómico, exige transacción) + configurarNumerador.",
   "type": "module",
   "license": "MIT",
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
     },
     "./drizzle": {
       "types": "./dist/drizzle/index.d.ts",
-      "import": "./dist/drizzle/index.js"
+      "import": "./dist/drizzle/index.js",
+      "default": "./dist/drizzle/index.js"
     }
   },
   "main": "./dist/index.js",

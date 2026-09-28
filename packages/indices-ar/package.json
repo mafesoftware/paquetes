@@ -1,21 +1,24 @@
 {
   "name": "@mafesoftware/indices-ar",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Indices de ajuste argentinos (CAC, ICC, UVA, CER, IPC, ICL): factores de ajuste, periodo de referencia, modalidades disponible/provisorio/definitivo, topes, polinomicas, puntos-indice y, en /drizzle y /fuentes, tablas y lectores de fuentes publicas (BCRA, dolarapi) con fetch inyectado.",
   "type": "module",
   "license": "MIT",
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
     },
     "./drizzle": {
       "types": "./dist/drizzle/index.d.ts",
-      "import": "./dist/drizzle/index.js"
+      "import": "./dist/drizzle/index.js",
+      "default": "./dist/drizzle/index.js"
     },
     "./fuentes": {
       "types": "./dist/fuentes/index.d.ts",
-      "import": "./dist/fuentes/index.js"
+      "import": "./dist/fuentes/index.js",
+      "default": "./dist/fuentes/index.js"
     }
   },
   "main": "./dist/index.js",

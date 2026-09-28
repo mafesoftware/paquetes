@@ -1,13 +1,17 @@
 {
-  "name": "@mafesoftware/bueno-comentario-process-env",
+  "name": "@mafesoftware/malo-sin-default",
   "version": "0.0.0",
   "type": "module",
   "license": "MIT",
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
-      "import": "./dist/index.js",
-      "default": "./dist/index.js"
+      "import": "./dist/index.js"
+    },
+    "./drizzle": {
+      "types": "./dist/drizzle/index.d.ts",
+      "import": "./dist/drizzle/index.js",
+      "default": "./dist/drizzle/index.js"
     }
   },
   "main": "./dist/index.js",
@@ -17,6 +21,6 @@
   "repository": {
     "type": "git",
     "url": "git+https://github.com/mafesoftware/paquetes.git",
-    "directory": "packages/bueno-comentario-process-env"
+    "directory": "packages/malo-sin-default"
   }
 }

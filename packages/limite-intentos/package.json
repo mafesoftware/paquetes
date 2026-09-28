@@ -1,17 +1,19 @@
 {
   "name": "@mafesoftware/limite-intentos",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Freno a la fuerza bruta en el ingreso (login/attempt throttling), persistido en Postgres por cuenta y por IP — nunca en memoria (las instancias de Vercel no comparten memoria). claveCuenta/claveIp en el núcleo; en /drizzle, tablaIntentos + registrarIntento (upsert atómico, single-statement) + consultarIntento (read-only) + limpiarIntentos.",
   "type": "module",
   "license": "MIT",
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
     },
     "./drizzle": {
       "types": "./dist/drizzle/index.d.ts",
-      "import": "./dist/drizzle/index.js"
+      "import": "./dist/drizzle/index.js",
+      "default": "./dist/drizzle/index.js"
     }
   },
   "main": "./dist/index.js",

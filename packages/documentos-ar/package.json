@@ -1,13 +1,14 @@
 {
   "name": "@mafesoftware/documentos-ar",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "CUIT/CUIL, DNI, CBU/CVU, alias y telefonos argentinos: validacion y formato. Sin dependencias.",
   "type": "module",
   "license": "MIT",
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
     }
   },
   "main": "./dist/index.js",

@@ -104,6 +104,7 @@ function packageJson(nombre: string, dependencias: string[] = []): Record<string
       '.': {
         types: './dist/index.d.ts',
         import: './dist/index.js',
+        default: './dist/index.js',
       },
     },
     main: './dist/index.js',

@@ -1,17 +1,19 @@
 {
   "name": "@mafesoftware/seguridad",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Primitivas de seguridad para los productos de MAFE Software: comparación en tiempo constante, cifrado versionado AES-256-GCM, pases firmados con vencimiento, CSP/cabeceras y auth de cron/guard() para Next.js. Sin process.env en el núcleo.",
   "type": "module",
   "license": "MIT",
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
     },
     "./next": {
       "types": "./dist/next/index.d.ts",
-      "import": "./dist/next/index.js"
+      "import": "./dist/next/index.js",
+      "default": "./dist/next/index.js"
     }
   },
   "main": "./dist/index.js",

@@ -1,6 +1,6 @@
 {
   "name": "@mafesoftware/kapso-wa",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "WhatsApp por Kapso (proxy de la Cloud API de Meta). fetch inyectable.",
   "license": "MIT",
   "type": "module",
@@ -9,7 +9,8 @@
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
     }
   },
   "publishConfig": {

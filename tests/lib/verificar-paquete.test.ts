@@ -34,6 +34,14 @@ describe('verificarPaquete', () => {
     expect(resultado.errores.some((e) => /exports/.test(e))).toBe(true);
   });
 
+  it('falla si un export con "import" no tiene también "default" (drizzle-kit no lo resuelve)', () => {
+    const resultado = verificarPaquete(ruta('paquete-malo-sin-default'));
+    expect(resultado.ok).toBe(false);
+    expect(resultado.errores.some((e) => /"\."/.test(e) && /default/.test(e))).toBe(true);
+    // La entrada "./drizzle" sí tiene "default": no debe reportarse.
+    expect(resultado.errores.some((e) => /"\.\/drizzle"/.test(e))).toBe(false);
+  });
+
   it('falla si falta "files" o no incluye dist', () => {
     const resultado = verificarPaquete(ruta('paquete-malo-sin-files'));
     expect(resultado.ok).toBe(false);
