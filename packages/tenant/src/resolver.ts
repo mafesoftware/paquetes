@@ -13,6 +13,13 @@ export interface OpcionesResolverTenant {
    * encarga `slugDeHost` adentro) — típicamente
    * `headers.get("x-forwarded-host") ?? headers.get("host")`. `null` si no
    * hay uno (script, cron, seed).
+   *
+   * Ojo: `x-forwarded-host` es un header como cualquier otro — quien manda
+   * la request puede setearlo a lo que quiera. Solo es confiable si un
+   * proxy de confianza (Vercel, un load balancer propio) lo SOBRESCRIBE
+   * antes de que la request llegue a tu código; si tu app no corre detrás
+   * de algo así, no lo uses sin verificar, o preferí `host` (el que pone el
+   * cliente TCP, no un header arbitrario).
    */
   host: string | null;
   /** El dominio de la plataforma bajo el que cuelgan los subdominios de organización (ver `slugDeHost`). */
