@@ -156,6 +156,23 @@
       "name": "@mafesoftware/plata-ar",
       "version": "0.1.0",
     },
+    "packages/pruebas-fuentes": {
+      "name": "@mafesoftware/pruebas-fuentes",
+      "version": "0.0.0",
+    },
+    "packages/pruebas-tenant": {
+      "name": "@mafesoftware/pruebas-tenant",
+      "version": "0.0.0",
+      "devDependencies": {
+        "vitest": "^5.0.1",
+      },
+      "peerDependencies": {
+        "vitest": ">=5",
+      },
+      "optionalPeers": [
+        "vitest",
+      ],
+    },
     "packages/reservas": {
       "name": "@mafesoftware/reservas",
       "version": "0.1.0",
@@ -400,6 +417,10 @@
     "@mafesoftware/permisos": ["@mafesoftware/permisos@workspace:packages/permisos"],
 
     "@mafesoftware/plata-ar": ["@mafesoftware/plata-ar@workspace:packages/plata-ar"],
+
+    "@mafesoftware/pruebas-fuentes": ["@mafesoftware/pruebas-fuentes@workspace:packages/pruebas-fuentes"],
+
+    "@mafesoftware/pruebas-tenant": ["@mafesoftware/pruebas-tenant@workspace:packages/pruebas-tenant"],
 
     "@mafesoftware/reservas": ["@mafesoftware/reservas@workspace:packages/reservas"],
 

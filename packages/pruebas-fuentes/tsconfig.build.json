@@ -1,0 +1,14 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "dist",
+    "rootDir": "src",
+    // `leer-archivos.ts` usa `node:fs`/`node:path`; sin este "types" explícito
+    // TS no encuentra los tipos de Node aunque `@types/node` esté instalado
+    // (mismo motivo documentado en packages/tenant/tsconfig.build.json).
+    "types": ["node"]
+  },
+  "include": [
+    "src"
+  ]
+}
