@@ -28,7 +28,7 @@ describe("validarCuit", () => {
     const largo = validarCuit("201234567860");
     expect(corto).toEqual({
       ok: false,
-      motivo: "Un CUIT/CUIL tiene 11 dígitos (tiene 10).",
+      mensaje: "Un CUIT/CUIL tiene 11 dígitos (tiene 10).",
       codigo: "longitud_invalida",
     });
     expect(largo.ok).toBe(false);

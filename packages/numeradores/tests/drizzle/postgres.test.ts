@@ -233,7 +233,13 @@ describe("siguienteNumero bajo concurrencia real (Postgres)", () => {
 
   it('llamado con "db" plano (sin transacción) tira ErrorNumeradores("requiere_transaccion")', async () => {
     const tenantId = randomUUID();
-    await expect(siguienteNumero(db, numeradores, { tenantId, tipo: "recibo" })).rejects.toMatchObject({
+    await expect(
+      // @ts-expect-error `siguienteNumero` exige `Transaccion` (ver
+      // tipos.test.ts): este test prueba a propósito que el chequeo en
+      // RUNTIME (`exigirTransaccion`) también sigue andando como red de
+      // contención, aunque el tipo ya lo rechace en compilación.
+      siguienteNumero(db, numeradores, { tenantId, tipo: "recibo" }),
+    ).rejects.toMatchObject({
       name: "ErrorNumeradores",
       codigo: "requiere_transaccion",
     });

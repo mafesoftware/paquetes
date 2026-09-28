@@ -50,7 +50,7 @@ describe("validarCbu", () => {
     const r = validarCbu(cbu.slice(0, 21));
     expect(r).toEqual({
       ok: false,
-      motivo: "Un CBU tiene 22 dígitos (tiene 21).",
+      mensaje: "Un CBU tiene 22 dígitos (tiene 21).",
       codigo: "longitud_invalida",
     });
   });
@@ -79,13 +79,13 @@ describe("validarCbu", () => {
     if (!r.ok) expect(r.codigo).toBe("digito_verificador_invalido");
   });
 
-  it("rechaza un CVU (prefijo 000) con un motivo que apunta a validarCvu", () => {
+  it("rechaza un CVU (prefijo 000) con un mensaje que apunta a validarCvu", () => {
     const cvu = armarCbu("000", "0031", "0000000012345");
     const r = validarCbu(cvu);
     expect(r.ok).toBe(false);
     if (!r.ok) {
       expect(r.codigo).toBe("es_cvu");
-      expect(r.motivo).toMatch(/CVU/);
+      expect(r.mensaje).toMatch(/CVU/);
     }
   });
 });
@@ -153,13 +153,13 @@ describe("validarCvu", () => {
     if (!r.ok) expect(r.codigo).toBe("digito_verificador_invalido");
   });
 
-  it("rechaza un CBU (sin prefijo 000) con un motivo que apunta a validarCbu", () => {
+  it("rechaza un CBU (sin prefijo 000) con un mensaje que apunta a validarCbu", () => {
     const cbu = armarCbu("007", "0445", "0000003100094");
     const r = validarCvu(cbu);
     expect(r.ok).toBe(false);
     if (!r.ok) {
       expect(r.codigo).toBe("no_es_cvu");
-      expect(r.motivo).toMatch(/CBU/);
+      expect(r.mensaje).toMatch(/CBU/);
     }
   });
 

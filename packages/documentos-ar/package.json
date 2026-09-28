@@ -34,5 +34,6 @@
   "dependencies": {},
   "engines": {
     "node": ">=20"
-  }
+  },
+  "sideEffects": false
 }

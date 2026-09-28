@@ -49,8 +49,8 @@
     }
   },
   "dependencies": {
-    "@mafesoftware/plata-ar": "workspace:*",
-    "@mafesoftware/fechas-ar": "workspace:*"
+    "@mafesoftware/plata-ar": "workspace:^",
+    "@mafesoftware/fechas-ar": "workspace:^"
   },
   "devDependencies": {
     "@types/pg": "^8.15.5",
@@ -71,5 +71,6 @@
     "ipc",
     "icl",
     "argentina"
-  ]
+  ],
+  "sideEffects": false
 }

@@ -1,7 +1,20 @@
 import { is } from "drizzle-orm";
-import { PgTransaction } from "drizzle-orm/pg-core";
+import { PgTransaction, type PgQueryResultHKT } from "drizzle-orm/pg-core";
 import { ErrorNumeradores } from "../errores.js";
 import type { DbCliente } from "./cliente.js";
+
+/**
+ * El tipo que exige el primer parámetro de `siguienteNumero`: la `tx` que
+ * entrega `db.transaction(async (tx) => ...)`, no el `db` de nivel
+ * superior — así `siguienteNumero(db, ...)` (pasando `db` a secas) falla en
+ * TIEMPO DE COMPILACIÓN, antes de llegar siquiera a `exigirTransaccion` (que
+ * se mantiene como chequeo en tiempo de ejecución: sigue haciendo falta
+ * porque el tipo estático no puede atrapar un `as any`/`as DbCliente` ni una
+ * `tx` reusada después de que su transacción ya terminó). Un probe confirmó
+ * que `Transaccion` acepta la `tx` real de Drizzle y rechaza un `db` de
+ * nivel superior.
+ */
+export type Transaccion = PgTransaction<PgQueryResultHKT, any, any>;
 
 /**
  * Exige que `db` sea la `tx` que entrega `db.transaction(async (tx) => ...)`,

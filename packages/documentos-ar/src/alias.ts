@@ -4,7 +4,7 @@ export type CodigoErrorAlias = "formato_invalido";
 
 export type ResultadoAlias =
   | { ok: true; normalizado: string }
-  | { ok: false; motivo: string; codigo: CodigoErrorAlias };
+  | { ok: false; mensaje: string; codigo: CodigoErrorAlias };
 
 const ALIAS_RE = /^[a-z0-9.-]{6,20}$/;
 
@@ -20,7 +20,7 @@ export function validarAlias(valor: string): ResultadoAlias {
   if (!ALIAS_RE.test(normalizado)) {
     return {
       ok: false,
-      motivo: 'Un alias tiene de 6 a 20 caracteres, solo letras, números, "." y "-".',
+      mensaje: 'Un alias tiene de 6 a 20 caracteres, solo letras, números, "." y "-".',
       codigo: "formato_invalido",
     };
   }

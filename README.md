@@ -11,9 +11,32 @@ catálogo de paquetes previsto.
 
 ## Paquetes
 
-| Paquete | Versión | Descripción |
-|---|---|---|
-| _(todavía no hay paquetes publicados desde este monorepo)_ | | |
+Ninguno está publicado a npm todavía (primera publicación pendiente — ver
+"Publicar" más abajo). El estado actual de cada uno:
+
+| Paquete | Descripción |
+|---|---|
+| `@mafesoftware/accesos` | Reglas de control de acceso y cola offline idempotente. Puro. |
+| `@mafesoftware/arca-ar` | Facturación electrónica de ARCA (ex AFIP) para Argentina: WSAA, WSFEv1 y consulta al padrón, sin dependencias. |
+| `@mafesoftware/auditoria` | Registro de auditoría inmutable y por tenant: diff de antes/después, campos sensibles redactados; `/drizzle` con tabla + trigger de inmutabilidad. |
+| `@mafesoftware/carnet-qr` | Credencial digital firmada (Ed25519), verificable offline. |
+| `@mafesoftware/correo` | Envío de mails transaccionales por Resend. Sin dependencias, fetch inyectable. |
+| `@mafesoftware/cuotas` | Motor de cuotas: períodos, recargo por mora e imputación de pagos. Puro. |
+| `@mafesoftware/documentos-ar` | CUIT/CUIL, DNI, CBU/CVU, alias y teléfonos argentinos: validación y formato. Sin dependencias. |
+| `@mafesoftware/fechas-ar` | Días de calendario vs. instantes, con zona horaria explícita. Sin dependencias. |
+| `@mafesoftware/indices-ar` | Índices de ajuste argentinos (CAC, ICC, UVA, CER, IPC, ICL): factores, períodos, topes, polinómicas; `/drizzle` y `/fuentes` para fuentes públicas. |
+| `@mafesoftware/kapso-wa` | WhatsApp por Kapso (proxy de la Cloud API de Meta). fetch inyectable. |
+| `@mafesoftware/limite-intentos` | Freno a la fuerza bruta en el ingreso, persistido en Postgres por cuenta y por IP. |
+| `@mafesoftware/mercadopago-ar` | Integración de Mercado Pago para Argentina: Checkout Pro, OAuth de marketplace y webhooks. |
+| `@mafesoftware/numeradores` | Numeración correlativa sin huecos por tenant + ámbito + tipo, segura bajo concurrencia. |
+| `@mafesoftware/outbox` | Outbox transaccional para correo y WhatsApp: encolar en la misma transacción, procesar con reintentos y backoff. |
+| `@mafesoftware/permisos` | Presets de rol y módulos por plan, con excepciones. Puro. |
+| `@mafesoftware/plata-ar` | Plata en centavos, parseo y formato argentino. Sin dependencias. |
+| `@mafesoftware/pruebas-fuentes` | Detectores de reglas de código fuente (heurísticas) para correr en los tests de la app consumidora. |
+| `@mafesoftware/pruebas-tenant` | Harness de aislamiento entre tenants: `probarAislamiento`/`describeAislamiento`. |
+| `@mafesoftware/reservas` | Motor de disponibilidad, turnos y lista de espera. Puro. |
+| `@mafesoftware/seguridad` | Primitivas de seguridad: comparación en tiempo constante, cifrado AES-256-GCM, pases firmados, CSP/cabeceras, `guard()` para Next.js. |
+| `@mafesoftware/tenant` | Resolución de tenant (organización) por host, slugs reservados, contexto con `AsyncLocalStorage`. |
 
 ## Cómo desarrollar
 
@@ -31,13 +54,23 @@ bun run lint:paquetes # publint + attw --pack sobre cada paquete ya compilado
 ### Agregar un paquete nuevo
 
 ```sh
-bun scripts/nuevo-paquete.ts <nombre>
+bun scripts/nuevo-paquete.ts <nombre> [--con-dependencias=<paquete1>,<paquete2>]
 ```
 
 Genera `packages/<nombre>` con la estructura estándar (`package.json`, `src/index.ts`,
-`tests/`, `tsconfig.build.json`, `README.md` con sección `## API`, `CHANGELOG.md`).
-El resultado debe pasar `tests/estructura.test.ts` (reglas de diseño de un paquete,
-ver `CLAUDE.md`).
+`tests/`, `tsconfig.build.json`, `README.md` con sección `## API`, `CHANGELOG.md`,
+`LICENSE` copiada de la raíz). El resultado debe pasar `tests/estructura.test.ts`
+(reglas de diseño de un paquete, ver `CLAUDE.md`).
+
+`--con-dependencias` declara que el paquete nuevo depende de otro(s) de este
+mismo monorepo (sin el scope `@mafesoftware/`, ej.
+`--con-dependencias=tenant` o `--con-dependencias=plata-ar,fechas-ar`) como
+`"workspace:*"`. Cada dependencia listada tiene que existir ya en `packages/`
+— si no, `crearPaquete` tira en vez de dejar pasar un typo en silencio. Con
+al menos una dependencia, además genera el par de `tsconfig` (typecheck
+contra la FUENTE de la dependencia, build contra su `dist` ya compilado) y
+el alias de `vitest` que necesita (los tests corren antes que `build`) —
+copiando el patrón de `packages/numeradores`.
 
 ### Postgres para tests
 

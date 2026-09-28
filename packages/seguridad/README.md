@@ -117,8 +117,9 @@ opaco que la app deriva de un estado que, al cambiar, tiene que matar el pase
 `secreto` tiene que ser un string de **al menos 32 caracteres** (es la clave
 HMAC: uno corto se puede forzar por fuerza bruta) — si no, tira
 `ErrorSeguridad` (`codigo: "secreto_invalido"`). `venceEn` tiene que ser una
-fecha/epoch VÁLIDA (no `NaN`, no un `Invalid Date`) — si no, tira
-`ErrorSeguridad` (`codigo: "pase_invalido"`).
+fecha/epoch VÁLIDA (no `NaN`, no un `Invalid Date`) y `sello` tiene que ser
+un string NO VACÍO — si cualquiera de los dos falla, tira `ErrorSeguridad`
+(`codigo: "pase_invalido"`).
 
 ```ts
 import { crearPase } from "@mafesoftware/seguridad";
@@ -150,12 +151,20 @@ de 4096 caracteres se rechaza directamente con `motivo: "formato"`, sin
 intentar parsearlo — un pase real nunca se acerca a ese largo.
 
 `"configuracion"` es distinto a los demás motivos: no dice que el TOKEN esté
-mal, dice que `secreto` (vacío, demasiado corto, o no-string) o `ahora`
-(`NaN`, `Invalid Date`) están mal — un bug de quien LLAMA a `verificarPase`,
-no de quien mandó el pase. Nunca tira ni con esto: un `secreto` `undefined`
-antes daba un `TypeError` crudo de `node:crypto`, y un `ahora` `NaN` podía
-"revivir" un pase vencido hace rato (porque `NaN > cualquier_cosa` siempre es
-`false`) — las dos cosas se cierran con `{ ok: false, motivo: "configuracion" }`.
+mal, dice que `secreto` (vacío, demasiado corto, o no-string), `opciones`
+(`null`, `undefined`, o no-objeto — ej. `verificarPase(token, secreto,
+undefined as any)`) o `ahora` (`NaN`, `Invalid Date`) están mal — un bug de
+quien LLAMA a `verificarPase`, no de quien mandó el pase. Nunca tira ni con
+esto: un `secreto` `undefined` antes daba un `TypeError` crudo de
+`node:crypto`, unas `opciones` `undefined` antes daban un `TypeError` al
+leer `opciones.ahora`, y un `ahora` `NaN` podía "revivir" un pase vencido
+hace rato (porque `NaN > cualquier_cosa` siempre es `false`) — las tres
+cosas se cierran con `{ ok: false, motivo: "configuracion" }`.
+
+Un `token` HOSTIL (lo manda cualquiera) tampoco puede tirar: si es un objeto
+cuyo `toString`/`Symbol.toPrimitive` lanza en vez de devolver un string real,
+`verificarPase` lo atrapa y da `{ ok: false, motivo: "formato" }` — un
+formato inválido más, no una excepción sin atrapar.
 
 ```ts
 import { verificarPase } from "@mafesoftware/seguridad";
@@ -294,7 +303,11 @@ Envuelve una server action.
 - Si `fn` no devuelve nada, el resultado es `{ ok: true }`.
 - Si `fn` devuelve un objeto PLANO, se mezcla en `{ ...resultado, ok: true }`
   — con `ok` puesto AL FINAL, para que un `resultado` que por accidente traiga
-  su propia clave `ok` nunca pueda pisar el `true` real.
+  su propia clave `ok` nunca pueda pisar el `true` real. Si ese `resultado`
+  trae además sus propias claves `error`/`campo` (un bug de quien llama, o
+  casualidad), se DESCARTAN antes del spread: son las mismas claves que usa
+  la rama `ok: false` de abajo, así que dejarlas colar en un resultado
+  EXITOSO confundiría a quien consume `guard()`.
 - Si `fn` devuelve un array o un primitivo (string, number, boolean, `null`),
   se envuelve como `{ ok: true, valor: resultado }` en vez de spreadearlo
   (spreadear un array da claves `"0"`, `"1"`, ...; spreadear un primitivo no

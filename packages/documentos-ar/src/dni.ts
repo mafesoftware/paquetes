@@ -5,7 +5,7 @@ export type CodigoErrorDni = "longitud_invalida" | "cero_invalido";
 
 export type ResultadoDni =
   | { ok: true; normalizado: string }
-  | { ok: false; motivo: string; codigo: CodigoErrorDni };
+  | { ok: false; mensaje: string; codigo: CodigoErrorDni };
 
 /**
  * Valida un DNI: 7 u 8 dígitos, aceptando los puntos de miles con los que
@@ -21,14 +21,14 @@ export function validarDni(valor: string): ResultadoDni {
   if (d.length < 7 || d.length > 8) {
     return {
       ok: false,
-      motivo: `Un DNI tiene 7 u 8 dígitos (tiene ${d.length}).`,
+      mensaje: `Un DNI tiene 7 u 8 dígitos (tiene ${d.length}).`,
       codigo: "longitud_invalida",
     };
   }
   if (d.charAt(0) === "0") {
     return {
       ok: false,
-      motivo: "Un DNI no empieza con 0.",
+      mensaje: "Un DNI no empieza con 0.",
       codigo: "cero_invalido",
     };
   }

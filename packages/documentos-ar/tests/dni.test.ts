@@ -22,7 +22,7 @@ describe("validarDni", () => {
     const r = validarDni("123456");
     expect(r).toEqual({
       ok: false,
-      motivo: "Un DNI tiene 7 u 8 dígitos (tiene 6).",
+      mensaje: "Un DNI tiene 7 u 8 dígitos (tiene 6).",
       codigo: "longitud_invalida",
     });
   });
@@ -35,7 +35,7 @@ describe("validarDni", () => {
 
   it("rechaza el valor 0", () => {
     const r = validarDni("0000000");
-    expect(r).toEqual({ ok: false, motivo: "Un DNI no empieza con 0.", codigo: "cero_invalido" });
+    expect(r).toEqual({ ok: false, mensaje: "Un DNI no empieza con 0.", codigo: "cero_invalido" });
   });
 
   it("rechaza cualquier DNI con cero a la izquierda", () => {

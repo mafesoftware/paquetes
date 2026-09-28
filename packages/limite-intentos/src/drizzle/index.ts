@@ -16,7 +16,12 @@
  * - `consultar-intento.ts`: `consultarIntento` — lectura pura, para chequear
  *   antes de intentar autenticar.
  * - `limpiar-intentos.ts`: `limpiarIntentos` — borra la fila al loguear bien.
- * - `cliente.ts`: interno (el tipo `DbCliente`), no se re-exporta acá.
+ * - `cliente.ts`: interno (el tipo `DbCliente` sí se re-exporta acá, ver
+ *   abajo).
+ * - `ErrorLimiteIntentos` (el mismo que exporta el núcleo,
+ *   `@mafesoftware/limite-intentos`) se re-exporta también acá, para quien
+ *   solo importa este subpath y necesita `instanceof ErrorLimiteIntentos`
+ *   sin agregar un segundo import.
  *
  * ```ts
  * import { tablaIntentos, registrarIntento, consultarIntento, limpiarIntentos } from "@mafesoftware/limite-intentos/drizzle";
@@ -40,8 +45,9 @@
  * await limpiarIntentos(db, limiteIntentos, claveCuenta(email));
  * ```
  */
-export { tablaIntentos, type ColumnasIntentos, type OpcionesTablaIntentos, type TablaIntentos, type TipoColumnaTenant } from "./tabla.js";
+export { tablaIntentos, type ColumnasIntentos, type OpcionesTablaIntentos, type TablaIntentos } from "./tabla.js";
 export { registrarIntento, type OpcionesRegistrarIntento, type ResultadoRegistrarIntento } from "./registrar-intento.js";
 export { consultarIntento, type OpcionesConsultarIntento, type ResultadoConsultarIntento } from "./consultar-intento.js";
 export { limpiarIntentos } from "./limpiar-intentos.js";
+export { ErrorLimiteIntentos, type CodigoErrorLimiteIntentos } from "../errores.js";
 export type { DbCliente } from "./cliente.js";

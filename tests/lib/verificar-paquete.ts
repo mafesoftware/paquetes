@@ -26,6 +26,7 @@ export function verificarPaquete(dir: string): ResultadoVerificacion {
 
   verificarReadme(dir, errores);
   verificarChangelog(dir, errores);
+  verificarLicencia(dir, errores);
   const packageJson = verificarPackageJson(dir, errores);
   verificarNucleo(dir, errores);
 
@@ -48,6 +49,20 @@ function verificarChangelog(dir: string, errores: string[]): void {
   const ruta = join(dir, 'CHANGELOG.md');
   if (!existsSync(ruta)) {
     errores.push('Falta CHANGELOG.md');
+  }
+}
+
+/**
+ * Verifica que el paquete tenga su propia LICENSE (copia de la de la raíz):
+ * `npm`/`bun pm pack` la suben igual sin que "files" la liste, pero cada
+ * `packages/<nombre>` tiene que tenerla en el checkout — spec 06 §3, regla
+ * 6 ("licencia MIT" en la estructura estándar de un paquete, ver
+ * `scripts/nuevo-paquete.ts`).
+ */
+function verificarLicencia(dir: string, errores: string[]): void {
+  const ruta = join(dir, 'LICENSE');
+  if (!existsSync(ruta)) {
+    errores.push('Falta LICENSE');
   }
 }
 

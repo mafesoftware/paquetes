@@ -8,7 +8,7 @@
  * útil semanas después; un CBU mal tipeado hace que una transferencia caiga
  * en la cuenta de otra persona, no en un error. Por eso ninguna función de
  * acá **tira**: la entrada de un usuario, con guiones, puntos o espacios de
- * más, es un dato de negocio — se devuelve `{ ok: false, motivo, codigo }`,
+ * más, es un dato de negocio — se devuelve `{ ok: false, mensaje, codigo }`,
  * nunca una excepción.
  *
  * - `cuit.ts`: `validarCuit`, `formatearCuit`.

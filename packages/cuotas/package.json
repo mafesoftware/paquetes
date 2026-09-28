@@ -27,8 +27,8 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@mafesoftware/plata-ar": "workspace:*",
-    "@mafesoftware/fechas-ar": "workspace:*"
+    "@mafesoftware/plata-ar": "workspace:^",
+    "@mafesoftware/fechas-ar": "workspace:^"
   },
   "engines": {
     "node": ">=20"

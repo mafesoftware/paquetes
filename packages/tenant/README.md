@@ -47,16 +47,23 @@ normalizarHost("[::1]:3000"); // "[::1]" (IPv6 entre corchetes: el puerto es lo 
 `dominioBase` normalizado igual que un host (mismas reglas de arriba — un
 `dominioBase = "www.mafe.app"` se trata igual que `"mafe.app"`). Tira
 `ErrorTenant` (`codigo: "dominio_base_invalido"`) si queda vacío después de
-normalizar: es un error de PROGRAMACIÓN (la app no configuró su dominio), no
-un host que mandó alguien. La usan `slugDeHost` y `resolverTenant`
-internamente; se expone por si una app quiere validar su configuración al
-arrancar.
+normalizar, o si no es un HOSTNAME real: es un error de PROGRAMACIÓN (la app
+no configuró bien su dominio), no un host que mandó alguien. La usan
+`slugDeHost` y `resolverTenant` internamente; se expone por si una app
+quiere validar su configuración al arrancar.
+
+**Rechaza cualquier cosa que no sea un hostname**, no solo el string vacío:
+una URL con esquema (`"https://mafe.app"`), un valor con barra
+(`"mafe.app/"`), un wildcard (`"*.mafe.app"`) o con espacios en el medio —
+`normalizarHost` los deja "parecer" un host válido, pero no lo son.
 
 ```ts
 import { validarDominioBase, ErrorTenant } from "@mafesoftware/tenant";
 
 validarDominioBase("mafe.app"); // "mafe.app"
 validarDominioBase(""); // tira ErrorTenant (codigo: "dominio_base_invalido")
+validarDominioBase("https://mafe.app"); // tira ErrorTenant (no es un hostname, es una URL)
+validarDominioBase("*.mafe.app"); // tira ErrorTenant (wildcard, no un hostname)
 ```
 
 #### `slugDeHost(host: string, dominioBase: string, reservados?: ReadonlySet<string>): string | null`

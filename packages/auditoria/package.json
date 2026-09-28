@@ -45,7 +45,7 @@
     }
   },
   "dependencies": {
-    "@mafesoftware/tenant": "workspace:*"
+    "@mafesoftware/tenant": "workspace:^"
   },
   "devDependencies": {
     "@types/pg": "^8.15.5",

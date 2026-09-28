@@ -11,9 +11,15 @@
  *
  * - `tabla.ts`: `tablaNumeradores`.
  * - `siguiente-numero.ts`: `siguienteNumero` (exige transacción).
- * - `configurar-numerador.ts`: `configurarNumerador`.
- * - `cliente.ts` / `transaccion.ts`: internos (el tipo `DbCliente` y la
- *   detección de transacción), no se re-exportan acá.
+ * - `configurar-numerador.ts`: `configurarNumerador` (no exige transacción:
+ *   su primer parámetro se llama `db`, admite tanto `db` como una `tx`).
+ * - `cliente.ts` / `transaccion.ts`: `DbCliente` (el tipo de `db`/`tx`) y
+ *   `Transaccion` (el tipo, más estricto, que exige `siguienteNumero` — ver
+ *   su JSDoc) sí se re-exportan; `exigirTransaccion` queda interno.
+ * - `ErrorNumeradores` (el mismo que exporta el núcleo,
+ *   `@mafesoftware/numeradores`) se re-exporta también acá, para quien solo
+ *   importa este subpath y necesita `instanceof ErrorNumeradores` sin
+ *   agregar un segundo import.
  *
  * Ejemplo completo:
  *
@@ -34,4 +40,6 @@
 export { tablaNumeradores, type OpcionesTablaNumeradores, type ColumnasNumeradores, type TablaNumeradores } from "./tabla.js";
 export { siguienteNumero, type OpcionesSiguienteNumero, type ResultadoSiguienteNumero } from "./siguiente-numero.js";
 export { configurarNumerador, type OpcionesConfigurarNumerador } from "./configurar-numerador.js";
+export { ErrorNumeradores, type CodigoErrorNumeradores } from "../errores.js";
 export type { DbCliente } from "./cliente.js";
+export type { Transaccion } from "./transaccion.js";

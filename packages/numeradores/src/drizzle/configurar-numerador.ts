@@ -30,7 +30,7 @@ export interface OpcionesConfigurarNumerador {
  *
  * **Es un merge parcial, no un reemplazo completo.** El campo que NO se
  * pasa conserva lo que la fila ya tenía — si se pasara por alto esto,
- * `configurarNumerador(tx, tabla, { tenantId, tipo, proximo: 501n })`
+ * `configurarNumerador(db, tabla, { tenantId, tipo, proximo: 501n })`
  * (avanzar un talonario que ya tenía `prefijo: "R-"` configurado) borraría
  * silenciosamente el prefijo. Solo cuando la fila es NUEVA (no había
  * ninguna para ese `(tenantId, ambito, tipo)`) los campos omitidos toman el
@@ -88,7 +88,7 @@ export interface OpcionesConfigurarNumerador {
  * ```
  */
 export async function configurarNumerador(
-  tx: DbCliente,
+  db: DbCliente,
   tabla: TablaNumeradores,
   opciones: OpcionesConfigurarNumerador,
 ): Promise<void> {
@@ -160,7 +160,7 @@ export async function configurarNumerador(
     returning ${colProximo} as proximo
   `;
 
-  const resultado = (await tx.execute(consulta)) as unknown as { rows: unknown[] };
+  const resultado = (await db.execute(consulta)) as unknown as { rows: unknown[] };
   if (resultado.rows.length === 0) {
     // La única forma de que este INSERT ... ON CONFLICT no devuelva
     // ninguna fila es que la fila YA existía (si no, el INSERT sin

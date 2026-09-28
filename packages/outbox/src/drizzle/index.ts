@@ -15,8 +15,12 @@
  *   llama a los `Transporte` de cada canal, registra el resultado —
  *   entrega AL MENOS UNA VEZ, ver su JSDoc).
  * - `purgar.ts`: `purgarOutbox` (borra filas terminales viejas).
- * - `cliente.ts` / `transaccion.ts`: internos (el tipo `DbCliente` y la
- *   detección de transacción), no se re-exportan acá.
+ * - `cliente.ts` / `transaccion.ts`: `DbCliente` (el tipo de `db`/`tx`) y
+ *   `Transaccion` (el tipo, más estricto, que exige `encolar` — ver su
+ *   JSDoc) sí se re-exportan; `exigirTransaccion` queda interno.
+ * - `ErrorOutbox` (el mismo que exporta el núcleo, `@mafesoftware/outbox`)
+ *   se re-exporta también acá, para quien solo importa este subpath y
+ *   necesita `instanceof ErrorOutbox` sin agregar un segundo import.
  *
  * Ejemplo completo — ver también `transporteCorreo`/`transporteWhatsApp`
  * (`@mafesoftware/outbox`, el núcleo) para armar `transportes`:
@@ -43,4 +47,6 @@ export { tablaOutbox, type ColumnasOutbox, type OpcionesTablaOutbox, type TablaO
 export { encolar, type OpcionesEncolar, type ResultadoEncolar } from "./encolar.js";
 export { procesarOutbox, type OpcionesProcesarOutbox, type ResumenProcesarOutbox } from "./procesar.js";
 export { purgarOutbox, type OpcionesPurgarOutbox, type ResultadoPurgarOutbox } from "./purgar.js";
+export { ErrorOutbox, type CodigoErrorOutbox } from "../errores.js";
 export type { DbCliente } from "./cliente.js";
+export type { Transaccion } from "./transaccion.js";

@@ -1,8 +1,7 @@
 import { sql } from "drizzle-orm";
 import { formatearNumero } from "../formatear.js";
-import type { DbCliente } from "./cliente.js";
 import type { TablaNumeradores } from "./tabla.js";
-import { exigirTransaccion } from "./transaccion.js";
+import { exigirTransaccion, type Transaccion } from "./transaccion.js";
 
 /** Opciones de `siguienteNumero`. */
 export interface OpcionesSiguienteNumero {
@@ -110,7 +109,7 @@ interface FilaSiguienteNumero {
  * ```
  */
 export async function siguienteNumero(
-  tx: DbCliente,
+  tx: Transaccion,
   tabla: TablaNumeradores,
   opciones: OpcionesSiguienteNumero,
 ): Promise<ResultadoSiguienteNumero> {

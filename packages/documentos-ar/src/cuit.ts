@@ -20,7 +20,7 @@ export type CodigoErrorCuit =
 
 export type ResultadoCuit =
   | { ok: true; normalizado: string; tipo: TipoCuit }
-  | { ok: false; motivo: string; codigo: CodigoErrorCuit };
+  | { ok: false; mensaje: string; codigo: CodigoErrorCuit };
 
 const PESOS_CUIT = [5, 4, 3, 2, 7, 6, 5, 4, 3, 2] as const;
 
@@ -76,7 +76,7 @@ export function validarCuit(valor: string): ResultadoCuit {
   if (d.length !== 11) {
     return {
       ok: false,
-      motivo: `Un CUIT/CUIL tiene 11 dígitos (tiene ${d.length}).`,
+      mensaje: `Un CUIT/CUIL tiene 11 dígitos (tiene ${d.length}).`,
       codigo: "longitud_invalida",
     };
   }
@@ -90,7 +90,7 @@ export function validarCuit(valor: string): ResultadoCuit {
   if (!tipo) {
     return {
       ok: false,
-      motivo: `El prefijo "${prefijo}" no es válido para un CUIT/CUIL (20/23/24/27 persona, 30/33/34 empresa).`,
+      mensaje: `El prefijo "${prefijo}" no es válido para un CUIT/CUIL (20/23/24/27 persona, 30/33/34 empresa).`,
       codigo: "prefijo_invalido",
     };
   }
@@ -99,7 +99,7 @@ export function validarCuit(valor: string): ResultadoCuit {
   if (dv !== Number(d.charAt(10))) {
     return {
       ok: false,
-      motivo: "El dígito verificador no coincide.",
+      mensaje: "El dígito verificador no coincide.",
       codigo: "digito_verificador_invalido",
     };
   }

@@ -70,36 +70,26 @@ try {
 
 ### Drizzle (`@mafesoftware/limite-intentos/drizzle`)
 
-#### `tablaIntentos(opciones?: { nombre?; tenant?: { columna?; tipo? }; columnasExtra? }): TablaIntentos`
+#### `tablaIntentos(opciones?: { nombre?; columnasExtra? }): TablaIntentos`
 
 La tabla del freno: `clave` (`text`, PRIMARY KEY — `claveCuenta(email)` o
 `claveIp(ip)`), `contador` (`integer`, default `0`), `ventana_desde`
 (`timestamptz`, default `now()`), `bloqueado_hasta` (`timestamptz`,
 nullable) y `actualizado_en` (`timestamptz`, default `now()`).
 
-La columna de tenant es **opcional en dos sentidos**, a diferencia de
-`columnaTenant` de `@mafesoftware/tenant/drizzle` (que usan otros paquetes
-de este monorepo y que siempre es `NOT NULL`):
-
-1. **No existe si no se pide** (`tenant` sin pasar): login pasa la mayoría
-   de las veces SIN tenant conocido todavía.
-2. **Si se pide, queda NULLABLE**: ninguna función de este paquete recibe
-   ni escribe un `tenantId` — todas operan solo por `clave`. La columna
-   existe para que la APP la popule por su cuenta (fuera de este paquete) y
-   pueda filtrar o reportar por tenant, nunca para que el freno decida por
-   tenant.
+Sin columna de tenant: ninguna función de este paquete recibe ni escribe un
+`tenantId` — todas operan solo por `clave`. Si tu app necesita filtrar o
+reportar por tenant, agregala vos como una columna más en `columnasExtra`
+(este paquete no la va a tocar).
 
 ```ts
 import { tablaIntentos } from "@mafesoftware/limite-intentos/drizzle";
 
-// Con los defaults: tabla "limite_intentos", sin columna de tenant.
+// Con los defaults: tabla "limite_intentos".
 export const limiteIntentos = tablaIntentos();
 
-// Con otro nombre y una columna de tenant NULLABLE (para reportes):
-export const limiteIntentosTienda = tablaIntentos({
-  nombre: "limite_intentos_tienda",
-  tenant: { columna: "organizacion_id", tipo: "uuid" },
-});
+// Con otro nombre de tabla:
+export const limiteIntentosTienda = tablaIntentos({ nombre: "limite_intentos_tienda" });
 ```
 
 #### `registrarIntento(db, tabla, { clave, maximo, ventanaMs, bloqueoMs, ahora? }): Promise<{ permitido; restantes; desbloqueaEn }>`
@@ -226,8 +216,8 @@ sin escritura) una vez que pasa `bloqueoMs`, el reinicio de ventana sin
 llegar al máximo, cuenta e IP independientes, 20 llamadas VERDADERAMENTE
 concurrentes sobre la misma clave (contador final exactamente 20, probado
 con un pool de 20+ conexiones y también con `pg_sleep` sosteniendo el lock
-de fila para confirmar contención real), `limpiarIntentos`, las
-validaciones, y una tabla con columna de tenant opcional. El DDL que
+de fila para confirmar contención real), `limpiarIntentos` y las
+validaciones. El DDL que
 ejecuta no está escrito a mano: sale del MISMO esquema de Drizzle que arma
 `tablaIntentos` (`tests/drizzle/esquema.ts`), generado con
 `drizzle-kit/api` — igual que `sql/ejemplo.sql`.

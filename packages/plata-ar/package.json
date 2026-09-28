@@ -34,5 +34,6 @@
     "type": "git",
     "url": "git+https://github.com/mafesoftware/paquetes.git",
     "directory": "packages/plata-ar"
-  }
+  },
+  "sideEffects": false
 }

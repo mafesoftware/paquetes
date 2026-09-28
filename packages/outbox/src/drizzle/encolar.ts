@@ -1,9 +1,8 @@
 import { sql } from "drizzle-orm";
 import { ErrorOutbox } from "../errores.js";
 import type { CanalOutbox } from "../tipos.js";
-import type { DbCliente } from "./cliente.js";
 import type { TablaOutbox } from "./tabla.js";
-import { exigirTransaccion } from "./transaccion.js";
+import { exigirTransaccion, type Transaccion } from "./transaccion.js";
 
 const CANALES_VALIDOS: readonly CanalOutbox[] = ["correo", "whatsapp"];
 
@@ -89,7 +88,7 @@ interface FilaId {
  * });
  * ```
  */
-export async function encolar(tx: DbCliente, tabla: TablaOutbox, opciones: OpcionesEncolar): Promise<ResultadoEncolar> {
+export async function encolar(tx: Transaccion, tabla: TablaOutbox, opciones: OpcionesEncolar): Promise<ResultadoEncolar> {
   if (typeof opciones.tenantId !== "string" || !opciones.tenantId.trim()) {
     throw new ErrorOutbox("opciones_invalidas", 'encolar: "tenantId" no puede estar vacío.');
   }

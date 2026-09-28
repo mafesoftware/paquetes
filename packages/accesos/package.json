@@ -27,7 +27,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@mafesoftware/fechas-ar": "workspace:*"
+    "@mafesoftware/fechas-ar": "workspace:^"
   },
   "engines": {
     "node": ">=20"

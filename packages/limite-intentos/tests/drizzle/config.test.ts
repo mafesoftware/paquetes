@@ -9,11 +9,10 @@ import { tablaIntentos } from "../../src/drizzle/tabla.js";
  * `postgres.test.ts`, en esta misma carpeta).
  */
 describe("tablaIntentos (sin Postgres)", () => {
-  it('con los defaults: tabla "limite_intentos", sin columna de tenant', () => {
+  it('con los defaults: tabla "limite_intentos"', () => {
     const tabla = tablaIntentos();
     const config = getTableConfig(tabla);
     expect(config.name).toBe("limite_intentos");
-    expect(config.columns.some((c) => c.name === "organizacion_id")).toBe(false);
   });
 
   it("admite nombre de tabla custom", () => {
@@ -66,24 +65,6 @@ describe("tablaIntentos (sin Postgres)", () => {
     const config = getTableConfig(tablaIntentos());
     expect(config.indexes).toHaveLength(0);
     expect(config.uniqueConstraints).toHaveLength(0);
-  });
-
-  describe("tenant (opcional)", () => {
-    it("con tenant: agrega la columna, NULLABLE, con los defaults (organizacion_id, uuid)", () => {
-      const config = getTableConfig(tablaIntentos({ tenant: {} }));
-      const tenantId = config.columns.find((c) => c.name === "organizacion_id");
-      expect(tenantId).toBeDefined();
-      expect(tenantId?.notNull).toBe(false);
-      expect(tenantId?.getSQLType()).toBe("uuid");
-    });
-
-    it("admite columna/tipo de tenant custom (club_id, text), sigue NULLABLE", () => {
-      const config = getTableConfig(tablaIntentos({ tenant: { columna: "club_id", tipo: "text" } }));
-      const tenantId = config.columns.find((c) => c.name === "club_id");
-      expect(tenantId).toBeDefined();
-      expect(tenantId?.notNull).toBe(false);
-      expect(tenantId?.getSQLType()).toBe("text");
-    });
   });
 
   it("columnasExtra se agregan a la tabla junto con las propias", () => {

@@ -196,6 +196,11 @@ describe("encolar (Postgres)", () => {
   it('sin transacción (db plano, no una "tx" de db.transaction) tira ErrorOutbox("requiere_transaccion")', async () => {
     const clave = `sin-tx-${randomUUID()}`;
     await expect(
+      // @ts-expect-error `encolar` exige `Transaccion` (ver tipos.test.ts): este
+      // test prueba a propósito que el chequeo en RUNTIME (`exigirTransaccion`)
+      // también sigue andando como red de contención, aunque el tipo ya lo
+      // rechace en compilación — de ahí el `as unknown as` implícito que da
+      // este `@ts-expect-error` en vez de arreglar el tipo del argumento.
       encolar(db, tablaEncolar, { tenantId: randomUUID(), canal: "correo", destino: "a@b.com", plantilla: "p", claveIdempotencia: clave }),
     ).rejects.toMatchObject({ name: "ErrorOutbox", codigo: "requiere_transaccion" });
 

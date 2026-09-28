@@ -46,6 +46,12 @@ describe('verificarPaquete', () => {
     expect(resultado.errores.some((e) => /licencia|MIT/i.test(e))).toBe(true);
   });
 
+  it('falla si falta el archivo LICENSE', () => {
+    const resultado = verificarPaquete(ruta('paquete-malo-sin-licencia'));
+    expect(resultado.ok).toBe(false);
+    expect(resultado.errores.some((e) => /LICENSE/.test(e))).toBe(true);
+  });
+
   it('falla si el núcleo importa drizzle-orm', () => {
     const resultado = verificarPaquete(ruta('paquete-malo-importa-drizzle'));
     expect(resultado.ok).toBe(false);

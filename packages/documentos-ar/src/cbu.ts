@@ -10,13 +10,13 @@ export type CodigoErrorCbu = "longitud_invalida" | "es_cvu" | "digito_verificado
 
 export type ResultadoCbu =
   | { ok: true; normalizado: string; banco: string }
-  | { ok: false; motivo: string; codigo: CodigoErrorCbu };
+  | { ok: false; mensaje: string; codigo: CodigoErrorCbu };
 
 export type CodigoErrorCvu = "longitud_invalida" | "no_es_cvu" | "digito_verificador_invalido";
 
 export type ResultadoCvu =
   | { ok: true; normalizado: string }
-  | { ok: false; motivo: string; codigo: CodigoErrorCvu };
+  | { ok: false; mensaje: string; codigo: CodigoErrorCvu };
 
 /** Pesos del primer bloque (banco + sucursal, dígitos 1-7) para el DV1 (dígito 8). */
 const PESOS_BLOQUE_1 = [7, 1, 3, 9, 7, 1, 3] as const;
@@ -58,19 +58,19 @@ function digitosValidos(d: string): boolean {
 export function validarCbu(valor: string): ResultadoCbu {
   const d = soloDigitos(valor);
   if (d.length !== 22) {
-    return { ok: false, motivo: `Un CBU tiene 22 dígitos (tiene ${d.length}).`, codigo: "longitud_invalida" };
+    return { ok: false, mensaje: `Un CBU tiene 22 dígitos (tiene ${d.length}).`, codigo: "longitud_invalida" };
   }
   if (d.slice(0, 3) === "000") {
     return {
       ok: false,
-      motivo: 'Empieza con "000": es un CVU, no un CBU. Probá con validarCvu.',
+      mensaje: 'Empieza con "000": es un CVU, no un CBU. Probá con validarCvu.',
       codigo: "es_cvu",
     };
   }
   if (!digitosValidos(d)) {
     return {
       ok: false,
-      motivo: "Alguno de los dos dígitos verificadores no coincide.",
+      mensaje: "Alguno de los dos dígitos verificadores no coincide.",
       codigo: "digito_verificador_invalido",
     };
   }
@@ -86,19 +86,19 @@ export function validarCbu(valor: string): ResultadoCbu {
 export function validarCvu(valor: string): ResultadoCvu {
   const d = soloDigitos(valor);
   if (d.length !== 22) {
-    return { ok: false, motivo: `Un CVU tiene 22 dígitos (tiene ${d.length}).`, codigo: "longitud_invalida" };
+    return { ok: false, mensaje: `Un CVU tiene 22 dígitos (tiene ${d.length}).`, codigo: "longitud_invalida" };
   }
   if (d.slice(0, 3) !== "000") {
     return {
       ok: false,
-      motivo: 'No empieza con "000": es un CBU, no un CVU. Probá con validarCbu.',
+      mensaje: 'No empieza con "000": es un CBU, no un CVU. Probá con validarCbu.',
       codigo: "no_es_cvu",
     };
   }
   if (!digitosValidos(d)) {
     return {
       ok: false,
-      motivo: "Alguno de los dos dígitos verificadores no coincide.",
+      mensaje: "Alguno de los dos dígitos verificadores no coincide.",
       codigo: "digito_verificador_invalido",
     };
   }

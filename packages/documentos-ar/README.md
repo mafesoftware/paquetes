@@ -6,7 +6,7 @@ dependencias.
 Parte de la familia de paquetes de MAFE Software: sin dependencias de framework,
 sin ORM, y **puros**. Ninguna función de acá tira: la entrada de un usuario, con
 guiones, puntos o espacios de más, es un dato de negocio, no un bug — cada
-`validarX` devuelve `{ ok: true, ... }` o `{ ok: false, motivo, codigo }`.
+`validarX` devuelve `{ ok: true, ... }` o `{ ok: false, mensaje, codigo }`.
 
 ```bash
 bun add @mafesoftware/documentos-ar
@@ -31,7 +31,7 @@ validarCuit("20-12345678-6");
 // { ok: true, normalizado: "20123456786", tipo: "persona" }
 
 validarCuit("20-12345678-7");
-// { ok: false, motivo: "El dígito verificador no coincide.", codigo: "digito_verificador_invalido" }
+// { ok: false, mensaje: "El dígito verificador no coincide.", codigo: "digito_verificador_invalido" }
 ```
 
 **El caso del dígito verificador 10 (regla 23/33).** Para algunos DNI, el
@@ -64,7 +64,7 @@ cualquier valor con cero a la izquierda (ningún DNI real empieza con 0).
 import { validarDni } from "@mafesoftware/documentos-ar";
 
 validarDni("12.345.678"); // { ok: true, normalizado: "12345678" }
-validarDni("01234567"); // { ok: false, motivo: "Un DNI no empieza con 0.", codigo: "cero_invalido" }
+validarDni("01234567"); // { ok: false, mensaje: "Un DNI no empieza con 0.", codigo: "cero_invalido" }
 ```
 
 ### `validarCbu(valor: string)`
@@ -85,7 +85,7 @@ validarCbu("0720374720000000284190");
 // { ok: true, normalizado: "0720374720000000284190", banco: "072" }
 
 validarCbu("0000445200000031000947");
-// { ok: false, motivo: 'Empieza con "000": es un CVU, no un CBU. Probá con validarCvu.', codigo: "es_cvu" }
+// { ok: false, mensaje: 'Empieza con "000": es un CVU, no un CBU. Probá con validarCvu.', codigo: "es_cvu" }
 ```
 
 ### `validarCvu(valor: string)`

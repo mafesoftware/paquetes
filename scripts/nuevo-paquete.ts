@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -65,6 +65,14 @@ export function crearPaquete(nombre: string, opciones: OpcionesNuevoPaquete = {}
   writeFileSync(join(destino, 'package.json'), `${JSON.stringify(packageJson(nombre, dependencias), null, 2)}\n`);
   writeFileSync(join(destino, 'src', 'index.ts'), SRC_INDEX);
   writeFileSync(join(destino, 'tests', 'index.test.ts'), testsIndex());
+  // Copia la LICENSE de la raíz REAL del monorepo (no la de `opciones.raiz`,
+  // que en los tests es un directorio de prueba sin LICENSE propia): es el
+  // mismo texto MIT para todo el monorepo, y `tests/estructura.test.ts`
+  // exige que cada packages/<nombre> tenga la suya (spec 06 §3, regla 6 —
+  // aunque `npm`/`bun pm pack` suban la LICENSE de la raíz igual sin que
+  // "files" la liste, tenerla en cada paquete es lo que espera esa
+  // verificación estructural).
+  writeFileSync(join(destino, 'LICENSE'), readFileSync(join(RAIZ_MONOREPO, 'LICENSE')));
 
   if (dependencias.length > 0) {
     // Copiado del patrón de packages/numeradores: el par de tsconfig

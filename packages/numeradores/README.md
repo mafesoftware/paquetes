@@ -315,7 +315,7 @@ await db.transaction((tx) => siguienteNumero(tx, numeradores, { tenantId, ambito
 await siguienteNumero(db, numeradores, { tenantId, tipo: "recibo" }); // ❌
 ```
 
-#### `configurarNumerador(tx, tabla: TablaNumeradores, opciones: { tenantId: string; ambito?: string | null; tipo: string; prefijo?: string; relleno?: number; proximo?: bigint }): Promise<void>`
+#### `configurarNumerador(db, tabla: TablaNumeradores, opciones: { tenantId: string; ambito?: string | null; tipo: string; prefijo?: string; relleno?: number; proximo?: bigint }): Promise<void>`
 
 Crea o reconfigura el numerador de `(tenantId, ambito, tipo)`: `prefijo`,
 `relleno` y, sobre todo, `proximo`. Pensado para dar de alta un talonario

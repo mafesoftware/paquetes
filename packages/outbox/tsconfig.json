@@ -13,5 +13,5 @@
     // limpia "paths" para no pisar este problema: ver su comentario.
     "types": ["node"]
   },
-  "include": ["src"]
+  "include": ["src", "tests"]
 }

@@ -5,6 +5,11 @@ on:
   push:
     branches: [main]
 
+# Mínimo necesario (solo lee el checkout): ningún job de este workflow
+# escribe en el repo ni necesita un token con más permisos que ese default.
+permissions:
+  contents: read
+
 jobs:
   ci:
     name: typecheck, test (cobertura), build, lint
