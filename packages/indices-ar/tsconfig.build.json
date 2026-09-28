@@ -1,0 +1,22 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "outDir": "dist",
+    "rootDir": "src",
+    "noEmit": false,
+    // Limpia el "paths" que hereda (vía tsconfig.json) de
+    // ../../tsconfig.base.json: ESE paths resuelve "@mafesoftware/plata-ar"/
+    // "@mafesoftware/fechas-ar" contra su código FUENTE, que queda fuera de
+    // "rootDir": "src" y TS lo rechaza con TS6059 ("not under rootDir") en
+    // cuanto intenta tipar la emisión. Con "paths" vacío, TS cae a la
+    // resolución NORMAL de node_modules: el symlink de workspace a esos dos
+    // paquetes y su "exports" -> "./dist/...". Funciona porque el build del
+    // monorepo corre en orden topológico (plata-ar/fechas-ar antes que
+    // indices-ar, por la dependencia real en package.json), así que los dos
+    // YA están buildeados cuando le toca a este paquete. `tsconfig.json`
+    // (typecheck, sin build) sigue usando el "paths" con código fuente,
+    // porque en CI el paso de typecheck corre ANTES que el de build.
+    "paths": {}
+  },
+  "include": ["src"]
+}

@@ -81,6 +81,26 @@
       "name": "@mafesoftware/fechas-ar",
       "version": "0.1.0",
     },
+    "packages/indices-ar": {
+      "name": "@mafesoftware/indices-ar",
+      "version": "0.0.0",
+      "dependencies": {
+        "@mafesoftware/fechas-ar": "workspace:*",
+        "@mafesoftware/plata-ar": "workspace:*",
+      },
+      "devDependencies": {
+        "@types/pg": "^8.15.5",
+        "drizzle-kit": "~0.31",
+        "drizzle-orm": "~0.45.2",
+        "pg": "^8.23.0",
+      },
+      "peerDependencies": {
+        "drizzle-orm": ">=0.45 <0.46",
+      },
+      "optionalPeers": [
+        "drizzle-orm",
+      ],
+    },
     "packages/kapso-wa": {
       "name": "@mafesoftware/kapso-wa",
       "version": "0.1.0",
@@ -403,6 +423,8 @@
     "@mafesoftware/documentos-ar": ["@mafesoftware/documentos-ar@workspace:packages/documentos-ar"],
 
     "@mafesoftware/fechas-ar": ["@mafesoftware/fechas-ar@workspace:packages/fechas-ar"],
+
+    "@mafesoftware/indices-ar": ["@mafesoftware/indices-ar@workspace:packages/indices-ar"],
 
     "@mafesoftware/kapso-wa": ["@mafesoftware/kapso-wa@workspace:packages/kapso-wa"],
 

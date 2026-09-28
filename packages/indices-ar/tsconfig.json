@@ -1,0 +1,17 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    // Sin "rootDir" a propósito, igual que packages/numeradores/tsconfig.json:
+    // este paquete depende en tiempo de ejecución de otros paquetes del
+    // monorepo (@mafesoftware/plata-ar, @mafesoftware/fechas-ar), resueltos
+    // por el "paths" de ../../tsconfig.base.json contra su CÓDIGO FUENTE (no
+    // contra dist, que en el paso de typecheck de CI todavía no existe). Con
+    // "rootDir": "src" (como tsconfig.build.json) TS rechazaría esos archivos
+    // fuera de packages/indices-ar/src con TS6059, aunque no vaya a emitir
+    // nada.
+    "lib": ["ES2022", "DOM"],
+    "types": ["node"]
+  },
+  "include": ["src"]
+}
