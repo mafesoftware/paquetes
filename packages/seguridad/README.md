@@ -61,7 +61,9 @@ con relleno `=` en una posición rara) o un `Uint8Array` ya decodificado.
 Devuelve `"v1:<iv>:<tag>:<datos>"`, todo en base64 — **el mismo formato que
 `fiscalCifrado.ts` de store360**, así que migrar es pasarle la misma clave de
 32 bytes, sin volver a cifrar nada. Tira `ErrorSeguridad` (`codigo:
-"clave_invalida"`) si la clave no tiene 32 bytes o no es base64 canónico.
+"clave_invalida"`) si la clave no tiene 32 bytes, no es base64 canónico, o no
+es ni un `string` ni un `Uint8Array` (ej. un `number`, `undefined`, `null` o
+un array plano de números pasado desde JS sin chequeo de tipos).
 
 ```ts
 import { cifrar } from "@mafesoftware/seguridad";
@@ -219,8 +221,11 @@ agrega fuentes a una directiva existente (o una directiva nueva) sin pisar la
 base.
 
 Tira `ErrorSeguridad` (`codigo: "csp_invalida"`) si `nonce` no tiene forma de
-nonce (base64/base64url, con o sin relleno), si el nombre de una directiva de
-`extras` no es `[a-z-]+`, o si una fuente contiene `;`, `,` o un espacio —
+nonce (base64/base64url, con o sin relleno); si el valor de una directiva de
+`extras` no es un ARRAY de strings (un string suelto se recorrería carácter
+por carácter); si el nombre de una directiva de `extras` no son una o más
+etiquetas `[a-z]+` separadas por un solo guion (un "-" a secas no cuenta); o
+si una fuente contiene `;`, `,`, un espacio o un carácter de control —
 cualquiera de esos, sin validar, permitiría cerrar una directiva e INYECTAR
 una nueva en el header.
 

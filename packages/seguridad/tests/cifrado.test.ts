@@ -167,6 +167,29 @@ describe("cifrar / descifrar", () => {
     });
   });
 
+  describe("fix P.C: claveBuffer con una clave de un tipo que no es Clave", () => {
+    it("un number/undefined/null como clave: ErrorSeguridad clave_invalida, no un TypeError crudo", () => {
+      for (const claveInvalida of [42, undefined, null]) {
+        expect(() => cifrar("x", claveInvalida as never)).toThrow(ErrorSeguridad);
+        try {
+          cifrar("x", claveInvalida as never);
+        } catch (error) {
+          expect((error as ErrorSeguridad).codigo).toBe("clave_invalida");
+        }
+      }
+    });
+
+    it("un array plano de 32 números (no Uint8Array): ErrorSeguridad clave_invalida", () => {
+      const arrayPlano = Array.from({ length: 32 }, (_, i) => i);
+      expect(() => cifrar("x", arrayPlano as never)).toThrow(ErrorSeguridad);
+      try {
+        cifrar("x", arrayPlano as never);
+      } catch (error) {
+        expect((error as ErrorSeguridad).codigo).toBe("clave_invalida");
+      }
+    });
+  });
+
   describe("fix round 1 (M8): base64 estricto para la clave y para iv/tag/datos", () => {
     it("una clave en base64url (con '-'/'_') se rechaza: clave_invalida", () => {
       const claveEstandar = randomBytes(32).toString("base64");

@@ -115,6 +115,22 @@ describe("guard", () => {
     });
   });
 
+  describe("fix P.C: éxito no arrastra error/campo del resultado de la acción", () => {
+    it('un resultado exitoso que trae sus propias claves "error"/"campo" no las deja en el resultado final', async () => {
+      const accion = guard(async () => ({ id: "1", error: "esto no debería quedar", campo: "tampoco esto" }));
+      const resultado = await accion();
+      expect(resultado).toEqual({ ok: true, id: "1" });
+      expect(resultado).not.toHaveProperty("error");
+      expect(resultado).not.toHaveProperty("campo");
+    });
+
+    it('un resultado exitoso con SOLO "campo" (sin "error") tampoco lo deja', async () => {
+      const accion = guard(async () => ({ nombre: "x", campo: "sobrante" }));
+      const resultado = await accion();
+      expect(resultado).toEqual({ ok: true, nombre: "x" });
+    });
+  });
+
   describe("fix round 1 (M6): ErrorNegocio se detecta también entre copias distintas del paquete", () => {
     it("un objeto con name:'ErrorNegocio' pero SIN la marca no se trata como ErrorNegocio (se re-tira)", async () => {
       class ErrorNegocioFalso extends Error {

@@ -34,6 +34,13 @@
  * redirect/notFound. Ver `tests/next/sin-next-estatico.test.ts`, que
  * verifica (leyendo el código fuente, no ejecutándolo) que ningún archivo de
  * `src/next/` importa `next` de forma estática salvo este `import()`.
+ *
+ * Si ESE `import()` tira (fix P.C: `next` roto o ausente en un caso donde
+ * igual se llegó a llamar `guard`), no hay `unstable_rethrow` que invocar —
+ * pero el error del import NUNCA reemplaza al error ORIGINAL que tiró `fn`:
+ * se relanza el original tal cual, sin convertirlo en `{ ok: false }` (no se
+ * pudo verificar si era un `redirect`/`notFound`) ni dejar que el error del
+ * import lo tape.
  */
 
 /** Marca de reconocimiento cruzada entre copias del paquete (ver `esErrorNegocio` más abajo). */
@@ -113,7 +120,11 @@ export type ResultadoGuard<T> = ResultadoOk<T> | ResultadoError;
  * - Si `fn` devuelve un objeto PLANO (`{...}`), se mezcla en
  *   `{ ...resultado, ok: true }` — con `ok` AL FINAL (fix round 1, M6), para
  *   que un `resultado` que por accidente (o por un bug de quien llama) traiga
- *   su propia clave `ok` nunca pise el `true` real.
+ *   su propia clave `ok` nunca pise el `true` real. Las claves `error`/
+ *   `campo` de `resultado` (si las trae) se DESCARTAN antes de mezclar (fix
+ *   P.C): son las mismas claves que usa la rama `ok: false` de acá abajo, así
+ *   que dejarlas pasar en un resultado EXITOSO confundiría a quien consume
+ *   `guard()`.
  * - Si `fn` devuelve un array o un primitivo (string, number, boolean, ...),
  *   se envuelve como `{ ok: true, valor: resultado }` — nunca se spreadea un
  *   array o un primitivo directo en el resultado (fix round 1, M6): eso daría
@@ -133,11 +144,31 @@ export function guard<Args extends unknown[], T>(
     try {
       const resultado = await fn(...args);
       if (resultado === undefined) return { ok: true } as ResultadoGuard<T>;
-      if (esObjetoPlano(resultado)) return { ...resultado, ok: true } as ResultadoGuard<T>;
+      if (esObjetoPlano(resultado)) {
+        // Fix P.C: si `resultado` trae sus propias claves "error"/"campo"
+        // (un bug de quien llama, o un objeto que por casualidad las usa
+        // para otra cosa), no pueden colarse en un resultado EXITOSO — eso
+        // confundiría a quien consume `guard()` (que espera `error`/`campo`
+        // únicamente en la rama `ok: false`). Se descartan ANTES del
+        // spread, nunca después: poner `ok: true` al final ya evita que
+        // pisen `ok`, pero por sí solo no las saca del objeto.
+        const { error: _error, campo: _campo, ...limpio } = resultado as Record<string, unknown>;
+        return { ...limpio, ok: true } as ResultadoGuard<T>;
+      }
       return { ok: true, valor: resultado } as ResultadoGuard<T>;
     } catch (error) {
-      const { unstable_rethrow } = await import("next/navigation.js");
-      unstable_rethrow(error);
+      // Fix P.C: si el import perezoso mismo FALLA (`next` no instalado, o
+      // roto de cualquier otra forma), no hay `unstable_rethrow` que llamar
+      // — pero el error de ESE import nunca puede pisar el error ORIGINAL
+      // que tiró `fn`: quien llama tiene que ver la causa real de su propio
+      // bug, no un "Cannot find module next/navigation" que la tapa.
+      let unstableRethrow: (error: unknown) => void;
+      try {
+        ({ unstable_rethrow: unstableRethrow } = await import("next/navigation.js"));
+      } catch {
+        throw error;
+      }
+      unstableRethrow(error);
       if (esErrorNegocio(error)) {
         return {
           ok: false,

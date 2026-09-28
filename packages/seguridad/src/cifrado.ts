@@ -105,8 +105,24 @@ function claveBuffer(clave: Clave): Buffer {
       );
     }
     buffer = decodificada;
-  } else {
+  } else if (clave instanceof Uint8Array) {
     buffer = Buffer.from(clave);
+  } else {
+    // Cualquier otra cosa (number, undefined, null, un array plano de
+    // números...) no es un `Clave` válido. `Buffer.from` de Node acepta
+    // varias de esas entradas igual (un array plano de números, por
+    // ejemplo) y con otras tira un `TypeError` crudo — ninguna de las dos
+    // es lo que se quiere acá: se rechaza ANTES, siempre con el mismo
+    // `ErrorSeguridad`.
+    const claveDesconocida: unknown = clave;
+    const descripcion =
+      typeof claveDesconocida === "object" && claveDesconocida !== null
+        ? (claveDesconocida.constructor?.name ?? "objeto")
+        : typeof claveDesconocida;
+    throw new ErrorSeguridad(
+      "clave_invalida",
+      `La clave tiene que ser un string en base64 estándar o un Uint8Array; recibió ${descripcion}.`,
+    );
   }
   if (buffer.length !== LARGO_CLAVE) {
     throw new ErrorSeguridad(
