@@ -84,6 +84,155 @@ export async function verSocio(id: string) {
     const texto = '"use server";\n\nexport async function incompleta() {\n  await exigirPermiso();';
     expect(detector(archivo(texto))).toEqual([]);
   });
+
+  it('sigue detectando un export async function con un comentario justo antes', () => {
+    const texto = `"use server";
+
+// borra un socio dado su id
+export async function borrarSocio(id: string) {
+  const socio = await buscarSocio(id);
+  return socio;
+}
+`;
+    const hallazgos = detector(archivo(texto));
+    expect(hallazgos).toHaveLength(1);
+    expect(hallazgos[0]!.detalle).toContain('borrarSocio');
+  });
+
+  it('no detecta un export async function con guarda y un comentario justo antes', () => {
+    const texto = `"use server";
+
+/** borra un socio dado su id */
+export async function borrarSocio(id: string) {
+  await exigirPermiso("socios.borrar");
+  return id;
+}
+`;
+    expect(detector(archivo(texto))).toEqual([]);
+  });
+
+  it('detecta un "export default async function" sin guarda', () => {
+    const texto = `"use server";
+
+export default async function borrarSocio(id: string) {
+  const socio = await buscarSocio(id);
+  return socio;
+}
+`;
+    const hallazgos = detector(archivo(texto));
+    expect(hallazgos).toHaveLength(1);
+    expect(hallazgos[0]!.detalle).toContain('borrarSocio');
+  });
+
+  it('detecta un "export default async function" anónimo sin guarda', () => {
+    const texto = `"use server";
+
+export default async function (id: string) {
+  const socio = await buscarSocio(id);
+  return socio;
+}
+`;
+    const hallazgos = detector(archivo(texto));
+    expect(hallazgos).toHaveLength(1);
+    expect(hallazgos[0]!.detalle).toContain('(anónima)');
+  });
+
+  it('no detecta un "export default async function" con guarda', () => {
+    const texto = `"use server";
+
+export default async function borrarSocio(id: string) {
+  await exigirPermiso("socios.borrar");
+  return id;
+}
+`;
+    expect(detector(archivo(texto))).toEqual([]);
+  });
+
+  it('detecta un "export const x = async (...) => { ... }" (bloque) sin guarda', () => {
+    const texto = `"use server";
+
+export const borrarSocio = async (id: string) => {
+  const socio = await buscarSocio(id);
+  return socio;
+};
+`;
+    const hallazgos = detector(archivo(texto));
+    expect(hallazgos).toHaveLength(1);
+    expect(hallazgos[0]!.detalle).toContain('borrarSocio');
+  });
+
+  it('no detecta un "export const x = async (...) => { ... }" (bloque) con guarda', () => {
+    const texto = `"use server";
+
+export const borrarSocio = async (id: string) => {
+  await exigirPermiso("socios.borrar");
+  return id;
+};
+`;
+    expect(detector(archivo(texto))).toEqual([]);
+  });
+
+  it('detecta un "export const x = async function (...) { ... }" sin guarda', () => {
+    const texto = `"use server";
+
+export const borrarSocio = async function (id: string) {
+  const socio = await buscarSocio(id);
+  return socio;
+};
+`;
+    const hallazgos = detector(archivo(texto));
+    expect(hallazgos).toHaveLength(1);
+    expect(hallazgos[0]!.detalle).toContain('borrarSocio');
+  });
+
+  it('no detecta un "export const x = async function (...) { ... }" con guarda', () => {
+    const texto = `"use server";
+
+export const borrarSocio = async function (id: string) {
+  await exigirPermiso("socios.borrar");
+  return id;
+};
+`;
+    expect(detector(archivo(texto))).toEqual([]);
+  });
+
+  it('detecta un arrow de cuerpo expresión sin guarda: "async () => algo()"', () => {
+    const texto = `"use server";
+
+export const borrarSocio = async (id: string) => borrarDeLaBase(id);
+`;
+    const hallazgos = detector(archivo(texto));
+    expect(hallazgos).toHaveLength(1);
+    expect(hallazgos[0]!.detalle).toContain('borrarSocio');
+  });
+
+  it('no detecta un arrow de cuerpo expresión cuando la expresión ES la guarda', () => {
+    const texto = `"use server";
+
+export const verSocio = async (id: string) => exigirPermiso("socios.ver");
+`;
+    expect(detector(archivo(texto))).toEqual([]);
+  });
+
+  it('detecta un arrow de un solo parámetro sin paréntesis, cuerpo expresión, sin guarda', () => {
+    const texto = `"use server";
+
+export const borrarSocio = async id => borrarDeLaBase(id);
+`;
+    const hallazgos = detector(archivo(texto));
+    expect(hallazgos).toHaveLength(1);
+    expect(hallazgos[0]!.detalle).toContain('borrarSocio');
+  });
+
+  it('no tira (defensivo) con un "export const x = async (" truncado', () => {
+    const texto = '"use server";\n\nexport const incompleta = async (';
+    expect(detector(archivo(texto))).toEqual([]);
+  });
+
+  it('no tira (defensivo) con un "export const x = async (...) => {" sin cerrar', () => {
+    const texto = '"use server";\n\nexport const incompleta = async () => {\n  await exigirPermiso();';
+    expect(detector(archivo(texto))).toEqual([]);
+  });
 });
 
 describe('sinSqlCrudoConOr', () => {

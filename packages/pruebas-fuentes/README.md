@@ -97,8 +97,18 @@ leerArchivos(["src/**/*.ts", "**/package.json"], "/ruta/al/repo");
 
 En un archivo con `"use server"` al principio (que publica cada export como
 endpoint alcanzable desde el navegador), exige que el PRIMER enunciado de
-cada función exportada `async` llame a una de `nombresGuarda` — sola o
-asignada (`const x = await exigirPermiso(...)`), con o sin `await`.
+cada export `async` llame a una de `nombresGuarda` — sola o asignada (`const
+x = await exigirPermiso(...)`), con o sin `await`. Reconoce estas formas
+(con o sin un comentario justo antes, que no le afecta):
+
+- `export async function nombre(...) { ... }`
+- `export default async function [nombre](...) { ... }`
+- `export const nombre = async (...) => { ... }`
+- `export const nombre = async function [nombre](...) { ... }`
+- `export const nombre = async (...) => expresion` (arrow de cuerpo
+  expresión: al no haber bloque ni "primer enunciado", se considera SIN
+  guarda salvo que la expresión ENTERA sea la llamada a la guarda, ej.
+  `async () => exigirPermiso(x)`)
 
 ```ts
 import { correrDetectores, guardaEnUseServer } from "@mafesoftware/pruebas-fuentes";
@@ -112,6 +122,11 @@ const archivos = [
 correrDetectores(archivos, [guardaEnUseServer({ nombresGuarda: ["exigirPermiso"] })]);
 // [{ regla: "guardaEnUseServer", archivo: "acciones.ts", linea: 3, detalle: "borrar() no empieza..." }]
 ```
+
+Límite conocido: no reconoce parámetros de tipo genéricos explícitos en un
+arrow (`async <T>(x: T) => ...`, sintaxis rara y además ambigua fuera de
+`.tsx`) ni un `export { nombre as default }` re-exportado más abajo — son
+formas infrecuentes en server actions.
 
 ### `sinSqlCrudoConOr(): Detector`
 

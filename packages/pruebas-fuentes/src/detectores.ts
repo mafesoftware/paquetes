@@ -13,11 +13,67 @@ export interface OpcionesGuardaEnUseServer {
 /** La directiva "use server" AL PRINCIPIO del archivo (ignorando comentarios/espacio previos). */
 const DIRECTIVA_USE_SERVER = /^\s*(?:\/\/[^\n]*\n|\/\*[\s\S]*?\*\/|\s)*["']use server["'];/;
 
+/** `export [default] async function nombre(...)` — declaración de función. */
+const RE_FUNCION_DECLARADA = /export\s+(?:default\s+)?async\s+function\b\s*(\w+)?\s*\(/g;
+
+/** `export const/let/var nombre = async ...` — el resto lo resuelve `analizarCabeceraAsync`. */
+const RE_FUNCION_ASIGNADA = /export\s+(?:const|let|var)\s+(\w+)\s*=\s*async\b\s*/g;
+
+/**
+ * Dado el texto YA blanqueado y la posición justo después de `async` (y su
+ * espacio), determina dónde empieza el cuerpo de la función y si es un
+ * bloque (`{ ... }`) o una expresión (arrow de cuerpo expresión). Cubre:
+ * `function [nombre](...)  { ... }`, `(...) => { ... }`, `(...) => expr`,
+ * `identificador => { ... }` e `identificador => expr`. Devuelve `null` si
+ * no reconoce la forma o está truncada (paréntesis/flecha sin cerrar).
+ */
+function analizarCabeceraAsync(limpio: string, pos: number): { esBloque: boolean; inicioCuerpo: number } | null {
+  const resto = limpio.slice(pos);
+
+  // `async function [nombre](...) { ... }` (function expression, con o sin nombre).
+  const mFuncionExpr = /^function\b\s*\w*\s*\(/.exec(resto);
+  if (mFuncionExpr) {
+    const indiceParenAbre = pos + mFuncionExpr[0].length - 1;
+    const indiceParenCierra = indiceCierre(limpio, indiceParenAbre, '(', ')');
+    if (indiceParenCierra === -1) return null;
+    const indiceLlaveAbre = limpio.indexOf('{', indiceParenCierra);
+    if (indiceLlaveAbre === -1) return null;
+    return { esBloque: true, inicioCuerpo: indiceLlaveAbre };
+  }
+
+  // Parámetros de arrow: entre paréntesis, o un único identificador sin paréntesis.
+  let indiceTrasParametros: number;
+  if (resto[0] === '(') {
+    const indiceParenCierra = indiceCierre(limpio, pos, '(', ')');
+    if (indiceParenCierra === -1) return null;
+    indiceTrasParametros = indiceParenCierra + 1;
+  } else {
+    const mIdent = /^\w+/.exec(resto);
+    if (!mIdent) return null;
+    indiceTrasParametros = pos + mIdent[0].length;
+  }
+
+  const mFlecha = /^\s*=>\s*/.exec(limpio.slice(indiceTrasParametros));
+  if (!mFlecha) return null;
+  const inicioCuerpo = indiceTrasParametros + mFlecha[0].length;
+  return { esBloque: limpio[inicioCuerpo] === '{', inicioCuerpo };
+}
+
 /**
  * En un archivo con `"use server"` al principio (que publica cada export como
- * endpoint alcanzable desde el navegador), el PRIMER enunciado de cada
- * función exportada `async` tiene que llamar a una de `nombresGuarda` — sola
- * o asignada (`const x = await exigirPermiso(...)`), con o sin `await`.
+ * endpoint alcanzable desde el navegador), el PRIMER enunciado — o, si es un
+ * arrow de cuerpo expresión, la expresión entera — de cada export `async`
+ * tiene que llamar a una de `nombresGuarda` — sola o asignada (`const x =
+ * await exigirPermiso(...)`), con o sin `await`. Cubre estas formas:
+ *
+ * - `export async function nombre(...) { ... }`
+ * - `export default async function [nombre](...) { ... }`
+ * - `export const nombre = async (...) => { ... }`
+ * - `export const nombre = async function [nombre](...) { ... }`
+ * - `export const nombre = async (...) => expresion` (cuerpo expresión: se
+ *   considera SIN guarda salvo que la expresión misma sea la llamada a la
+ *   guarda, ej. `async () => exigirPermiso(x)`; no hay "primer enunciado"
+ *   posible porque no hay bloque).
  *
  * Falso negativo documentado: si la guarda se llama más abajo en el cuerpo
  * (no como primer enunciado), esto NO lo detecta — a propósito, porque
@@ -26,7 +82,10 @@ const DIRECTIVA_USE_SERVER = /^\s*(?:\/\/[^\n]*\n|\/\*[\s\S]*?\*\/|\s)*["']use s
  * subjetivo. Falso positivo conocido: una guarda envuelta en un helper local
  * de una sola línea (`await miGuarda()` donde `miGuarda` internamente llama a
  * `exigirPermiso`) no matchea por nombre — hay que pasar el nombre real en
- * `nombresGuarda`.
+ * `nombresGuarda`. Límite conocido: no reconoce parámetros de tipo genéricos
+ * explícitos en un arrow (`async <T>(x: T) => ...`, sintaxis rara y además
+ * ambigua fuera de `.tsx`) ni `export { nombre as default }` re-exportado —
+ * son formas infrecuentes en server actions.
  */
 export function guardaEnUseServer(opciones: OpcionesGuardaEnUseServer): Detector {
   const { nombresGuarda } = opciones;
@@ -42,10 +101,22 @@ export function guardaEnUseServer(opciones: OpcionesGuardaEnUseServer): Detector
 
     const hallazgos: Hallazgo[] = [];
     const limpio = blanquear(texto);
-    const reFuncion = /export\s+async\s+function\s+(\w+)\s*\(/g;
+
+    const agregarSiNoGuarda = (cuerpoLimpio: string, nombreMostrado: string, indiceReferencia: number): void => {
+      if (!patronGuarda.test(cuerpoLimpio)) {
+        hallazgos.push({
+          regla: 'guardaEnUseServer',
+          archivo: ruta,
+          linea: numeroDeLinea(texto, indiceReferencia),
+          detalle: `${nombreMostrado} no empieza llamando a una guarda (${nombresGuarda.join(', ')}); "use server" la publica como endpoint alcanzable desde el navegador`,
+        });
+      }
+    };
+
+    RE_FUNCION_DECLARADA.lastIndex = 0;
     let m: RegExpExecArray | null;
-    while ((m = reFuncion.exec(limpio))) {
-      const nombreFn = m[1]!;
+    while ((m = RE_FUNCION_DECLARADA.exec(limpio))) {
+      const nombreFn = m[1] ?? '(anónima)';
       const indiceParenAbre = m.index + m[0].length - 1;
       const indiceParenCierra = indiceCierre(limpio, indiceParenAbre, '(', ')');
       if (indiceParenCierra === -1) continue;
@@ -55,15 +126,27 @@ export function guardaEnUseServer(opciones: OpcionesGuardaEnUseServer): Detector
       if (indiceLlaveCierra === -1) continue;
 
       const cuerpoLimpio = limpio.slice(indiceLlaveAbre + 1, indiceLlaveCierra).replace(/^\s+/, '');
-      if (!patronGuarda.test(cuerpoLimpio)) {
-        hallazgos.push({
-          regla: 'guardaEnUseServer',
-          archivo: ruta,
-          linea: numeroDeLinea(texto, indiceLlaveAbre),
-          detalle: `${nombreFn}() no empieza llamando a una guarda (${nombresGuarda.join(', ')}); "use server" la publica como endpoint alcanzable desde el navegador`,
-        });
-      }
+      agregarSiNoGuarda(cuerpoLimpio, `${nombreFn}()`, indiceLlaveAbre);
     }
+
+    RE_FUNCION_ASIGNADA.lastIndex = 0;
+    while ((m = RE_FUNCION_ASIGNADA.exec(limpio))) {
+      const nombreFn = m[1]!;
+      const analisis = analizarCabeceraAsync(limpio, m.index + m[0].length);
+      if (!analisis) continue;
+      const { esBloque, inicioCuerpo } = analisis;
+
+      let cuerpoLimpio: string;
+      if (esBloque) {
+        const indiceLlaveCierra = indiceCierre(limpio, inicioCuerpo, '{', '}');
+        if (indiceLlaveCierra === -1) continue;
+        cuerpoLimpio = limpio.slice(inicioCuerpo + 1, indiceLlaveCierra).replace(/^\s+/, '');
+      } else {
+        cuerpoLimpio = limpio.slice(inicioCuerpo).replace(/^\s+/, '');
+      }
+      agregarSiNoGuarda(cuerpoLimpio, `${nombreFn}()`, inicioCuerpo);
+    }
+
     return hallazgos;
   };
 }
