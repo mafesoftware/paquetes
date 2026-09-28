@@ -1,6 +1,6 @@
 {
   "name": "@mafesoftware/archivos-s3",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "Subida directa a S3 con URL prefirmada (POST a un prefijo pending/), promoción a su clave final, descarga por URL firmada con autorización POR REGISTRO (nunca por prefijo — la lección de ediflow: un prefijo dejaba leer los archivos de otro tenant) y borrado en lote. Núcleo puro: el S3Client se inyecta por parámetro, credenciales y bucket entran siempre por argumento, nunca por process.env.",
   "type": "module",
   "license": "MIT",
