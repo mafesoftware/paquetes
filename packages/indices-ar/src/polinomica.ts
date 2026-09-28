@@ -17,11 +17,16 @@ export interface ComponentePolinomica {
  * actual / índice_i base)` — por ejemplo, `0.45 × MO + 0.45 × Mat + 0.10 ×
  * GG`, cada término la razón (`factorEntre`, 8 decimales) de ese componente.
  *
- * Devuelve un string decimal de 8 decimales, exacto en `bigint` de punta a
- * punta: cada razón se calcula con `factorEntre` de `plata-ar`, la
- * ponderación y la suma se hacen en aritmética entera exacta (escalando
- * cada decimal a una escala común, nunca por `number`), y el redondeo
- * comercial a 8 decimales pasa una sola vez, al final.
+ * Devuelve un string decimal, exacto en `bigint` de punta a punta (nunca
+ * pasa por `number`) — pero con DOS pasos de redondeo, no uno solo:
+ * `factorEntre` (de `plata-ar`) ya redondea comercial cada razón a 8
+ * decimales por componente ANTES de ponderar; la ponderación y la suma de
+ * esos factores ya redondeados se hacen después en aritmética entera exacta
+ * (escalando cada decimal a una escala común), y el resultado se redondea
+ * comercial una SEGUNDA vez, acá, a 8 decimales. El error introducido por el
+ * redondeo por componente es a lo sumo `0.5e-8` por término, así que el
+ * total (los pesos suman ~1) queda acotado en ~`0.5e-8`, más el `0.5e-8` de
+ * este segundo redondeo: `≤ ~1e-8` en total, no cero.
  *
  * **Los pesos tienen que sumar 1, con tolerancia ±1e-8** — si no, tira
  * `ErrorIndices("pesos_no_suman_uno")`: una fórmula cuyos pesos no cierran

@@ -3,7 +3,7 @@
  *
  * Interno del paquete (como `escala-factor.ts` en `plata-ar`): la forma
  * `{ negativo, valorAbs, escala }` es un detalle de implementación de
- * `valorPolinomica`, `puntosIndice`, `saldoDesdePuntos` y `aplicarTope` —
+ * `valorPolinomica`, `puntosIndice`, `saldoDesdePuntos` y `ajusteConTope` —
  * no se re-exporta desde `index.ts`.
  *
  * Un decimal `"123.45"` se representa como `valorAbs = 12345n`,

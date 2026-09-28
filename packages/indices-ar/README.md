@@ -59,7 +59,8 @@ periodoReferencia("2026-09-10", { tipo: "ultimo_publicado" }, "2026-08"); // "20
 
 La diferencia entre el monto ajustado con el valor DEFINITIVO (publicado
 después) y con el valor USADO al liquidar (modalidades
-provisorio/definitivo, spec 02 §3.2).
+provisorio/definitivo, spec 02 §3.2). **Solo para el caso SIN tope** — si el
+contrato tiene `topePct`, usar `diferenciaDeAjusteConTope` (más abajo).
 
 ```ts
 import { diferenciaDeAjuste } from "@mafesoftware/indices-ar";
@@ -84,21 +85,44 @@ accionAlPublicarDefinitivo("provisorio", true); // "diferencia_proxima_cuota"
 accionAlPublicarDefinitivo("definitivo", true); // "documento_ajuste"
 ```
 
-### `aplicarTope({ ajusteAcumuladoPct, topePct, ajusteNuevo, montoBase })` / `soloPositivo(ajuste)`
+### `ajusteConTope({ montoBase, valorBase, valorRef, topePct, soloPositivo? })`
 
-El tope opcional de un contrato (spec 02 §3.2): cuánto de `ajusteNuevo` cabe
-antes de que el acumulado supere `topePct` de `montoBase`; el resto queda
-"absorbido por la desarrolladora". Solo limita ajustes hacia ARRIBA — uno
-negativo (deflación) pasa entero.
+El ajuste de una cuota por índice, YA con el tope del contrato aplicado
+(spec 02 §3.2, ruling del controlador: el tope limita el ajuste TOTAL de una
+cuota, no un acumulado independiente por período). Capa `ajusteSinTope` (la
+salida completa de `calcularAjuste`) a `[soloPositivo ? 0 : -∞, round(montoBase
+× topePct / 100)]`, exacto en `bigint`.
 
 ```ts
-import { aplicarTope, soloPositivo } from "@mafesoftware/indices-ar";
+import { ajusteConTope } from "@mafesoftware/indices-ar";
 
-aplicarTope({ ajusteAcumuladoPct: "12", topePct: "15", ajusteNuevo: 5_000_000n, montoBase: 100_000_000n });
-// { ajusteAplicado: 3_000_000n, excedenteAbsorbido: 2_000_000n }
+ajusteConTope({ montoBase: 10_000_000n, valorBase: "100", valorRef: "120", topePct: "15" });
+// { factor: "1.2", ajusteSinTope: 2_000_000n, ajusteAplicado: 1_500_000n, absorbido: 500_000n }
 
-soloPositivo(-50_000n); // 0n
-soloPositivo(50_000n); // 50_000n
+ajusteConTope({ montoBase: 10_000_000n, valorBase: "100", valorRef: "90", topePct: "15", soloPositivo: true });
+// deflación con soloPositivo: nunca un crédito.
+// { factor: "0.9", ajusteSinTope: -1_000_000n, ajusteAplicado: 0n, absorbido: -1_000_000n }
+```
+
+### `diferenciaDeAjusteConTope({ montoBase, valorBase, valorUsado, valorDefinitivo, topePct, soloPositivo? })`
+
+La diferencia entre el valor USADO y el DEFINITIVO, CON el tope ya aplicado
+a cada uno por separado ANTES de restar —
+`ajusteConTope(definitivo).ajusteAplicado - ajusteConTope(usado).ajusteAplicado`.
+Usar esta función (no `diferenciaDeAjuste`) siempre que el contrato tenga
+`topePct` y/o `soloPositivo`: restar los montos ajustados completos sin
+capar cada lado antes puede dar un crédito o cargo que el tope ya había
+evitado.
+
+```ts
+import { diferenciaDeAjusteConTope } from "@mafesoftware/indices-ar";
+
+// Provisorio capado al 15% (índice +20%) y definitivo publicado en +18%
+// (todavía por encima del 15%): la cuota nunca cobró más del tope real.
+diferenciaDeAjusteConTope({
+  montoBase: 10_000_000n, valorBase: "100",
+  valorUsado: "120", valorDefinitivo: "118", topePct: "15",
+}); // 0n — no un crédito de $2.000 (eso hacía el viejo aplicarTope + diferenciaDeAjuste sin capar cada lado)
 ```
 
 ### `valorPolinomica(componentes)`
@@ -107,7 +131,10 @@ soloPositivo(50_000n); // 50_000n
 un índice propio armado con componentes de otros índices (ej. `0.45` mano
 de obra + `0.45` materiales + `0.10` gastos generales). Los pesos tienen
 que sumar 1 (±1e-8) — si no, tira `ErrorIndices`. Devuelve un string de 8
-decimales, exacto en `bigint` de punta a punta.
+decimales, en aritmética `bigint` exacta (nunca `number`) pero con DOS
+pasos de redondeo, no uno: cada razón (`factorEntre`) ya redondea comercial
+a 8 decimales por componente, y el resultado final se redondea comercial
+una segunda vez — el error total queda acotado en `≤ ~1e-8`, no es cero.
 
 ```ts
 import { valorPolinomica } from "@mafesoftware/indices-ar";
@@ -190,6 +217,14 @@ const v = await valorVigente(db, valoresIndice, { tenantId, indice: "UVA", perio
   `tenantId`, busca directo el global. No exige transacción (es una
   lectura).
 
+**Supuesto de forma del resultado**: `valorVigente` ejecuta SQL crudo
+(`db.execute(sql\`...\`)`) y asume que el resultado tiene la forma
+`{ rows: [...] }` — la que devuelven los drivers `node-postgres`
+(`drizzle-orm/node-postgres`) y `neon-serverless`
+(`drizzle-orm/neon-serverless`), los mismos que usa el resto del monorepo
+(`numeradores`, `outbox`). Un driver que devuelva las filas como array
+directo (por ejemplo `postgres.js`) no funciona sin adaptar esa línea.
+
 ## `/fuentes`
 
 Lectores de fuentes públicas con `fetch` **inyectado** (nunca
@@ -208,7 +243,15 @@ const r2 = await leerCotizaciones({ fetch });
 
 - **`leerUvaCer({ fetch, desde?, hasta? })`**: lee UVA (id de variable 31) y
   CER (id 30) de la API pública de Estadísticas Monetarias del BCRA
-  (`api.bcra.gob.ar/estadisticas/v4.0/monetarias/{id}`).
+  (`api.bcra.gob.ar/estadisticas/v4.0/monetarias/{id}`). **La API pagina de
+  a 1000 filas** (`metadata.resultset.count/offset/limit` en la respuesta);
+  esta función NO sigue esa paginación — trae una sola página. Con un rango
+  `desde`/`hasta` de más de ~3 años de datos diarios (~1000 días), o sin
+  `desde`/`hasta` (rango por defecto del BCRA, que puede superar el límite),
+  puede devolver una serie incompleta sin que `leerUvaCer` lo detecte ni lo
+  señale — quien llama con rangos largos tiene que paginar manualmente
+  (`desde`/`hasta` más acotados, varias llamadas) hasta que se implemente
+  acá.
 - **`leerCotizaciones({ fetch })`**: lee dolarapi.com (`/v1/dolares`),
   filtrado a las cuatro casas que usa el producto: `oficial`, `blue`, `mep`
   (`"bolsa"` en dolarapi) y `ccl` (`"contadoconliqui"`).

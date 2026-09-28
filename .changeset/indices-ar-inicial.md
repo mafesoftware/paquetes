@@ -16,21 +16,33 @@ UVA, CER, IPC, ICL) — spec 02 §3.
   incluido `null` si todavía no se publicó nada).
 - `diferenciaDeAjuste(montoBase, valorBase, valorUsado, valorDefinitivo)`:
   la diferencia entre ajustar con el valor definitivo y con el usado —
-  modalidades provisorio/definitivo.
+  modalidades provisorio/definitivo. Solo para el caso SIN tope; con tope,
+  usar `diferenciaDeAjusteConTope` (más abajo).
 - `ModalidadAjuste` (`"disponible" | "provisorio" | "definitivo"`) y
   `accionAlPublicarDefinitivo(modalidad, cuotaCobrada)` ->
   `"nada" | "recalcular" | "diferencia_proxima_cuota" |
   "documento_ajuste"`: una cuota no cobrada siempre se recalcula; una
   cobrada depende de la modalidad.
-- `aplicarTope({ ajusteAcumuladoPct, topePct, ajusteNuevo, montoBase })`:
-  cuánto de un ajuste nuevo cabe antes de superar el tope acumulado, y
-  cuánto queda "absorbido" — solo limita hacia arriba, un ajuste negativo
-  pasa entero. `soloPositivo(ajuste)`.
+- `ajusteConTope({ montoBase, valorBase, valorRef, topePct, soloPositivo? })`:
+  el ajuste completo (`calcularAjuste`) YA capado — el tope limita el ajuste
+  TOTAL de la cuota (spec 02 §3.2, ruling del controlador), no un acumulado
+  aparte por período. `soloPositivo: true` capa además una deflación a 0.
+  Devuelve `{ factor, ajusteSinTope, ajusteAplicado, absorbido }`.
+  `diferenciaDeAjusteConTope({ montoBase, valorBase, valorUsado,
+  valorDefinitivo, topePct, soloPositivo? })`: `ajusteConTope(definitivo)
+  .ajusteAplicado - ajusteConTope(usado).ajusteAplicado` — cada lado capado
+  ANTES de restar, para que un contrato con tope no calcule un crédito o
+  cargo que el tope ya había evitado en su momento. (Reemplaza al `aplicarTope`
+  original: ese tomaba `ajusteAcumuladoPct` + `ajusteNuevo` sueltos y dejaba
+  pasar entera cualquier corrección negativa sin mirar contra qué venía
+  capada la cuota anterior — daba créditos que el cliente no debía recibir.)
 - `valorPolinomica(componentes)`: `Σ peso_i × (actual_i / base_i)`, exacto
-  en `bigint` de punta a punta (cada razón vía `factorEntre`, la
-  ponderación y la suma en aritmética entera exacta, redondeo comercial a
-  8 decimales una sola vez al final). Tira `ErrorIndices
-  ("pesos_no_suman_uno")` si los pesos no suman 1 (±1e-8).
+  en `bigint` de punta a punta (nunca `number`) pero con DOS redondeos: cada
+  razón vía `factorEntre` ya redondea comercial a 8 decimales por
+  componente, y la suma ponderada (aritmética entera exacta) se redondea
+  comercial una segunda vez al final — error total acotado en `≤ ~1e-8`, no
+  cero. Tira `ErrorIndices("pesos_no_suman_uno")` si los pesos no suman 1
+  (±1e-8).
 - `puntosIndice(saldo, valorBase)` / `saldoDesdePuntos(puntos, valorActual)`:
   saldo de un boleto en unidades índice, y su inverso.
 - `ErrorIndices` / `CodigoErrorIndices`. Los errores de `plata-ar`
@@ -51,9 +63,12 @@ UVA, CER, IPC, ICL) — spec 02 §3.
   - `tablaCotizaciones({ tenant?, nombre?, columnasExtra? })`: misma
     convención de tenant nullable, sobre `(fecha, fuente)`.
   - `valorVigente(db, tabla, { tenantId?, indice, periodo })`: el override
-    del tenant si existe, si no el global.
+    del tenant si existe, si no el global. Asume la forma de resultado de
+    `node-postgres`/`neon-serverless` (`{ rows: [...] }`), documentado en
+    el README.
 - `/fuentes`: `leerUvaCer({ fetch, desde?, hasta? })` (BCRA, API pública de
-  estadísticas monetarias v4.0, ids 31/30) y `leerCotizaciones({ fetch })`
-  (dolarapi.com, filtrado a oficial/blue/mep/ccl) — `fetch` siempre
-  inyectado, ninguna de las dos tira: devuelven `{ ok: true; valores } |
-  { ok: false; categoria: "red" | "http" | "formato" }`.
+  estadísticas monetarias v4.0, ids 31/30 — sigue automáticamente la
+  paginación de 1000 filas de `metadata.resultset`) y `leerCotizaciones({
+  fetch })` (dolarapi.com, filtrado a oficial/blue/mep/ccl) — `fetch`
+  siempre inyectado, ninguna de las dos tira: devuelven `{ ok: true;
+  valores } | { ok: false; categoria: "red" | "http" | "formato" }`.

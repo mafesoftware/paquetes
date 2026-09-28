@@ -29,14 +29,40 @@ const ID_VARIABLE_BCRA: Record<"UVA" | "CER", number> = {
 };
 
 /**
+ * El BCRA nunca devuelve más de 1000 filas por respuesta (visto en
+ * `metadata.resultset.limit` de la API real, v4.0, sep-2026) — más de ~2,7
+ * años de valores diarios no entra en una sola página.
+ */
+const LIMITE_FILAS_BCRA = 1000;
+
+/**
+ * Tope de páginas a seguir por variable, puramente defensivo: si
+ * `metadata.resultset` viniera con un `count` corrupto (mayor al real) o
+ * el servidor no avanzara el `offset` como se espera, esto corta el bucle
+ * en vez de pedir páginas para siempre. 50 páginas son 50.000 filas — más
+ * de un siglo de historia diaria, nunca hace falta en la práctica.
+ */
+const MAX_PAGINAS = 50;
+
+/**
  * Lee la serie histórica de UVA y CER de la API pública de Estadísticas
  * Cambiarias/Monetarias del BCRA (spec 02 §3.1: "UVA, CER — BCRA — carga
  * automática diaria").
  *
+ * **Pagina automáticamente**: la API del BCRA devuelve como máximo 1000
+ * filas por respuesta (`metadata.resultset.{count,offset,limit}`) — un
+ * rango `desde`/`hasta` de más de ~1000 días (o sin `desde`/`hasta`, con el
+ * rango por defecto del BCRA) viene en varias páginas. Esta función las
+ * sigue sola, pidiendo la próxima con `offset = offset + limit` hasta
+ * cubrir `count`, y devuelve la serie completa ya combinada. Si la
+ * respuesta no trae `metadata.resultset` (una forma más vieja de la API, o
+ * un mock de test), se toma esa única página como la serie completa — sin
+ * tirar ni asumir que falta algo.
+ *
  * `fetch` es SIEMPRE inyectado — este paquete nunca lee `globalThis.fetch`
  * por su cuenta, así que los tests corren sin red. **Nunca tira**: cualquier
- * falla (de red, HTTP, o de formato del cuerpo) vuelve como
- * `{ ok: false, categoria }`.
+ * falla (de red, HTTP, o de formato del cuerpo, en CUALQUIER página) vuelve
+ * como `{ ok: false, categoria }`.
  *
  * @example
  * const r = await leerUvaCer({ fetch, desde: "2026-09-01", hasta: "2026-09-10" });
@@ -64,34 +90,50 @@ async function leerUnaVariable(
   desde: string | undefined,
   hasta: string | undefined,
 ): Promise<{ ok: true; valores: ValorUvaCer[] } | { ok: false; categoria: CategoriaErrorFuente }> {
-  const url = armarUrl(ID_VARIABLE_BCRA[indice], desde, hasta);
+  const valores: ValorUvaCer[] = [];
+  let offset = 0;
 
-  let respuesta: Awaited<ReturnType<Fetch>>;
-  try {
-    respuesta = await fetchFn(url);
-  } catch {
-    return { ok: false, categoria: "red" };
+  for (let pagina = 0; pagina < MAX_PAGINAS; pagina++) {
+    const url = armarUrl(ID_VARIABLE_BCRA[indice], desde, hasta, offset);
+
+    let respuesta: Awaited<ReturnType<Fetch>>;
+    try {
+      respuesta = await fetchFn(url);
+    } catch {
+      return { ok: false, categoria: "red" };
+    }
+
+    if (!respuesta.ok) return { ok: false, categoria: "http" };
+
+    let cuerpo: unknown;
+    try {
+      cuerpo = await respuesta.json();
+    } catch {
+      return { ok: false, categoria: "formato" };
+    }
+
+    const valoresPagina = parsearRespuestaBcra(cuerpo, indice);
+    if (!valoresPagina) return { ok: false, categoria: "formato" };
+    valores.push(...valoresPagina);
+
+    const resultset = extraerResultset(cuerpo);
+    // Sin metadata de paginación (o sin filas en esta página): esta es la
+    // única/última página, no hay más que pedir.
+    if (!resultset || valoresPagina.length === 0) break;
+
+    const siguienteOffset = resultset.offset + resultset.limit;
+    if (siguienteOffset >= resultset.count) break;
+    offset = siguienteOffset;
   }
-
-  if (!respuesta.ok) return { ok: false, categoria: "http" };
-
-  let cuerpo: unknown;
-  try {
-    cuerpo = await respuesta.json();
-  } catch {
-    return { ok: false, categoria: "formato" };
-  }
-
-  const valores = parsearRespuestaBcra(cuerpo, indice);
-  if (!valores) return { ok: false, categoria: "formato" };
 
   return { ok: true, valores };
 }
 
-function armarUrl(idVariable: number, desde: string | undefined, hasta: string | undefined): string {
+function armarUrl(idVariable: number, desde: string | undefined, hasta: string | undefined, offset = 0): string {
   const params = new URLSearchParams();
   if (desde) params.set("desde", desde);
   if (hasta) params.set("hasta", hasta);
+  if (offset > 0) params.set("offset", String(offset));
   const query = params.toString();
   return `${URL_BASE_BCRA_MONETARIAS}/${idVariable}${query ? `?${query}` : ""}`;
 }
@@ -123,4 +165,27 @@ function parsearRespuestaBcra(cuerpo: unknown, indice: "UVA" | "CER"): ValorUvaC
     valores.push({ indice, fecha, valor: String(valor) });
   }
   return valores;
+}
+
+/** La info de paginación de `metadata.resultset`, si el cuerpo la trae con esa forma. `null` si no (nunca tira). */
+function extraerResultset(cuerpo: unknown): { count: number; offset: number; limit: number } | null {
+  if (!cuerpo || typeof cuerpo !== "object") return null;
+  const metadata = (cuerpo as { metadata?: unknown }).metadata;
+  if (!metadata || typeof metadata !== "object") return null;
+  const resultset = (metadata as { resultset?: unknown }).resultset;
+  if (!resultset || typeof resultset !== "object") return null;
+
+  const { count, offset, limit } = resultset as { count?: unknown; offset?: unknown; limit?: unknown };
+  if (
+    typeof count !== "number" ||
+    typeof offset !== "number" ||
+    typeof limit !== "number" ||
+    !Number.isFinite(count) ||
+    !Number.isFinite(offset) ||
+    !Number.isFinite(limit) ||
+    limit <= 0
+  ) {
+    return null;
+  }
+  return { count, offset, limit };
 }
