@@ -93,6 +93,11 @@ cuota, no un acumulado independiente por período). Capa `ajusteSinTope` (la
 salida completa de `calcularAjuste`) a `[soloPositivo ? 0 : -∞, round(montoBase
 × topePct / 100)]`, exacto en `bigint`.
 
+Tira `ErrorIndices("valor_invalido")` si `montoBase < 0`, si `topePct < 0`, o
+si `topePct` no tiene forma de decimal válido — un tope o un monto base
+negativo no tienen sentido de negocio. `diferenciaDeAjusteConTope` valida
+igual (delega en `ajusteConTope` para cada lado).
+
 ```ts
 import { ajusteConTope } from "@mafesoftware/indices-ar";
 
@@ -244,14 +249,21 @@ const r2 = await leerCotizaciones({ fetch });
 - **`leerUvaCer({ fetch, desde?, hasta? })`**: lee UVA (id de variable 31) y
   CER (id 30) de la API pública de Estadísticas Monetarias del BCRA
   (`api.bcra.gob.ar/estadisticas/v4.0/monetarias/{id}`). **La API pagina de
-  a 1000 filas** (`metadata.resultset.count/offset/limit` en la respuesta);
-  esta función NO sigue esa paginación — trae una sola página. Con un rango
-  `desde`/`hasta` de más de ~3 años de datos diarios (~1000 días), o sin
-  `desde`/`hasta` (rango por defecto del BCRA, que puede superar el límite),
-  puede devolver una serie incompleta sin que `leerUvaCer` lo detecte ni lo
-  señale — quien llama con rangos largos tiene que paginar manualmente
-  (`desde`/`hasta` más acotados, varias llamadas) hasta que se implemente
-  acá.
+  a 1000 filas** (`metadata.resultset.count/offset/limit` en la respuesta) y
+  esta función SÍ sigue esa paginación sola: pide la próxima página con
+  `offset = offset + limit` hasta cubrir `count`, y devuelve la serie
+  completa ya combinada — un rango `desde`/`hasta` de más de ~1000 días (o
+  sin `desde`/`hasta`, con el rango por defecto del BCRA) no requiere que
+  quien llama pagine a mano. Si la respuesta no trae
+  `metadata.resultset` (una forma más vieja de la API), se toma esa única
+  página como la serie completa.
+
+  La paginación desconfía del servidor: si `resultset.offset` no coincide
+  con el offset recién pedido, o el próximo offset calculado no avanza
+  (`offset + limit` no es mayor al offset pedido — por ejemplo un `limit`
+  inválido, `0` o negativo), o se agotan 50 páginas sin llegar a cubrir
+  `count`, `leerUvaCer` corta y devuelve `{ ok: false, categoria: "formato"
+  }` en vez de una serie incompleta disfrazada de éxito.
 - **`leerCotizaciones({ fetch })`**: lee dolarapi.com (`/v1/dolares`),
   filtrado a las cuatro casas que usa el producto: `oficial`, `blue`, `mep`
   (`"bolsa"` en dolarapi) y `ccl` (`"contadoconliqui"`).

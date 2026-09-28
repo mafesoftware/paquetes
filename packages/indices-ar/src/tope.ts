@@ -1,6 +1,7 @@
 import { redondearComercial } from "@mafesoftware/plata-ar";
 import { calcularAjuste } from "./ajuste.js";
 import { analizarDecimal } from "./decimal.js";
+import { ErrorIndices } from "./errores.js";
 
 /** Entrada de `ajusteConTope`. */
 export interface OpcionesAjusteConTope {
@@ -66,6 +67,11 @@ export interface ResultadoAjusteConTope {
  * `number`) y se redondea comercial al centavo con `redondearComercial` de
  * `plata-ar` — mismo redondeo que `aplicarFactor`.
  *
+ * Tira `ErrorIndices("valor_invalido")` si `montoBase < 0`, si `topePct < 0`,
+ * o si `topePct` no tiene forma de decimal válido (delegado en
+ * `analizarDecimal`) — un tope negativo o un monto base negativo no tienen
+ * sentido de negocio, y dejarlos pasar produciría un límite que no limita.
+ *
  * @example
  * // Tope 15% sobre $100.000 (10_000_000 centavos), índice +20%:
  * ajusteConTope({ montoBase: 10_000_000n, valorBase: "100", valorRef: "120", topePct: "15" });
@@ -80,6 +86,10 @@ export interface ResultadoAjusteConTope {
 export function ajusteConTope(opciones: OpcionesAjusteConTope): ResultadoAjusteConTope {
   const { montoBase, valorBase, valorRef, topePct, soloPositivo = false } = opciones;
 
+  if (montoBase < 0n) {
+    throw new ErrorIndices("valor_invalido", `ajusteConTope: montoBase (${montoBase}) no puede ser negativo.`);
+  }
+
   const { factor, ajuste: ajusteSinTope } = calcularAjuste(montoBase, valorBase, valorRef);
   const limite = pctDeMonto(topePct, montoBase, "ajusteConTope: topePct");
 
@@ -93,7 +103,11 @@ export function ajusteConTope(opciones: OpcionesAjusteConTope): ResultadoAjusteC
 /** `pct`% de `montoBase`, redondeado comercial al centavo. Exacto en `bigint`: `pct` nunca pasa por `number`. */
 function pctDeMonto(pct: string, montoBase: bigint, contexto: string): bigint {
   const d = analizarDecimal(pct, contexto);
-  const numerador = (d.negativo ? -montoBase : montoBase) * d.valorAbs;
+  if (d.negativo) {
+    throw new ErrorIndices("valor_invalido", `${contexto}: "${pct}" no puede ser negativo.`);
+  }
+  // `d.negativo` ya está descartado arriba: acá siempre es `montoBase × pct`, sin signo que resolver.
+  const numerador = montoBase * d.valorAbs;
   const denominador = 10n ** BigInt(d.escala + 2); // +2: "%" es /100.
   return redondearComercial(numerador, denominador);
 }
@@ -125,6 +139,11 @@ export interface OpcionesDiferenciaDeAjusteConTope {
  * provisorio/definitivo puras): ahí la resta directa de los montos
  * ajustados es exactamente lo que corresponde, porque no hay nada capado
  * de por medio.
+ *
+ * Valida `montoBase`/`topePct` igual que `ajusteConTope` (tira
+ * `ErrorIndices("valor_invalido")` si `montoBase < 0`, `topePct < 0`, o
+ * `topePct` no es un decimal válido) — delega en esa función para cada
+ * lado, así que la validación es una sola.
  *
  * @example
  * // Provisorio capado al 15% (índice +20%) y definitivo publicado en +18%

@@ -59,6 +59,12 @@ const MAX_PAGINAS = 50;
  * un mock de test), se toma esa única página como la serie completa — sin
  * tirar ni asumir que falta algo.
  *
+ * La paginación desconfía del servidor: si `resultset.offset` no coincide
+ * con el offset pedido, o el próximo offset calculado no avanza
+ * (`offset + limit <= offset` pedido), o se agota `MAX_PAGINAS` sin llegar a
+ * `count`, esto corta y devuelve `{ ok: false, categoria: "formato" }` en
+ * vez de una serie incompleta disfrazada de éxito.
+ *
  * `fetch` es SIEMPRE inyectado — este paquete nunca lee `globalThis.fetch`
  * por su cuenta, así que los tests corren sin red. **Nunca tira**: cualquier
  * falla (de red, HTTP, o de formato del cuerpo, en CUALQUIER página) vuelve
@@ -119,14 +125,24 @@ async function leerUnaVariable(
     const resultset = extraerResultset(cuerpo);
     // Sin metadata de paginación (o sin filas en esta página): esta es la
     // única/última página, no hay más que pedir.
-    if (!resultset || valoresPagina.length === 0) break;
+    if (!resultset || valoresPagina.length === 0) return { ok: true, valores };
+
+    // El servidor tiene que confirmar que respondió al offset que pedimos —
+    // si no (ignora el query param, siempre contesta la primera página), no
+    // hay forma confiable de saber si ya cubrimos todo `count`.
+    if (resultset.offset !== offset) return { ok: false, categoria: "formato" };
 
     const siguienteOffset = resultset.offset + resultset.limit;
-    if (siguienteOffset >= resultset.count) break;
+    // El próximo offset tiene que avanzar de verdad: si no, seguir pidiendo
+    // repetiría la misma página para siempre.
+    if (siguienteOffset <= offset) return { ok: false, categoria: "formato" };
+    if (siguienteOffset >= resultset.count) return { ok: true, valores };
     offset = siguienteOffset;
   }
 
-  return { ok: true, valores };
+  // Se agotó MAX_PAGINAS sin llegar a cubrir `count`: la serie está
+  // incompleta, no es un éxito silencioso.
+  return { ok: false, categoria: "formato" };
 }
 
 function armarUrl(idVariable: number, desde: string | undefined, hasta: string | undefined, offset = 0): string {
@@ -182,10 +198,13 @@ function extraerResultset(cuerpo: unknown): { count: number; offset: number; lim
     typeof limit !== "number" ||
     !Number.isFinite(count) ||
     !Number.isFinite(offset) ||
-    !Number.isFinite(limit) ||
-    limit <= 0
+    !Number.isFinite(limit)
   ) {
     return null;
   }
+  // OJO: `limit <= 0` (o negativo) NO se descarta acá — se deja pasar a
+  // propósito para que `leerUnaVariable` lo atrape como "el próximo offset
+  // no avanza" (`categoria: "formato"`), en vez de tratarlo como si no
+  // hubiera metadata de paginación y devolver esta página como éxito.
   return { count, offset, limit };
 }

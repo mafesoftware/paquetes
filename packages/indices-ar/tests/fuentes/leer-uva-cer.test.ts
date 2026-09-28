@@ -229,6 +229,85 @@ describe("leerUvaCer", () => {
     expect(r.valores.filter((v) => v.indice === "UVA")).toHaveLength(1);
   });
 
+  it("resultset.offset no coincide con el offset pedido: categoria formato, corta apenas lo detecta", async () => {
+    const fetchMock = vi
+      .fn<Fetch>()
+      // Primera página: offset 0, coincide con lo pedido (0). Hay más por venir (count 4, limit 2).
+      .mockResolvedValueOnce(
+        respuesta(
+          fixtureBcraPagina(
+            31,
+            [
+              { fecha: "2026-09-01", valor: 2100 },
+              { fecha: "2026-09-02", valor: 2101 },
+            ],
+            { count: 4, offset: 0, limit: 2 },
+          ),
+        ),
+      )
+      // Segunda página: se pidió offset=2, pero el servidor contesta offset:0 (lo ignoró).
+      .mockResolvedValueOnce(
+        respuesta(
+          fixtureBcraPagina(31, [{ fecha: "2026-09-01", valor: 2100 }], { count: 4, offset: 0, limit: 2 }),
+        ),
+      );
+
+    const r = await leerUvaCer({ fetch: fetchMock });
+    expect(r).toEqual({ ok: false, categoria: "formato" });
+    expect(fetchMock).toHaveBeenCalledTimes(2); // no siguió pidiendo páginas para CER.
+  });
+
+  it("el próximo offset no avanza (limit inválido, ej. 0): categoria formato", async () => {
+    const fetchMock = vi
+      .fn<Fetch>()
+      .mockResolvedValueOnce(
+        respuesta(
+          fixtureBcraPagina(31, [{ fecha: "2026-09-01", valor: 2100 }], { count: 5000, offset: 0, limit: 0 }),
+        ),
+      );
+
+    const r = await leerUvaCer({ fetch: fetchMock });
+    expect(r).toEqual({ ok: false, categoria: "formato" });
+    expect(fetchMock).toHaveBeenCalledTimes(1); // ni siquiera necesitó una segunda página para detectarlo.
+  });
+
+  it("servidor que siempre contesta offset:0, count:5000 (ignora el offset pedido): formato, a lo sumo 1-2 pedidos por variable", async () => {
+    const fetchMock = vi.fn<Fetch>().mockResolvedValue(
+      respuesta(
+        fixtureBcraPagina(
+          31,
+          [
+            { fecha: "2026-09-01", valor: 2100 },
+            { fecha: "2026-09-02", valor: 2101 },
+          ],
+          { count: 5000, offset: 0, limit: 2 },
+        ),
+      ),
+    );
+
+    const r = await leerUvaCer({ fetch: fetchMock });
+    expect(r).toEqual({ ok: false, categoria: "formato" });
+    // Primera página: offset pedido 0 coincide (0). Segunda: se pide offset=2,
+    // el servidor sigue contestando offset:0 -> mismatch detectado ahí mismo.
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("se agota MAX_PAGINAS sin llegar a cubrir count: categoria formato, no éxito silencioso", async () => {
+    // Servidor "bien portado": respeta el offset pedido y avanza de a `limit`,
+    // pero `count` es tan grande que nunca se cubre dentro de MAX_PAGINAS (50).
+    const fetchMock = vi.fn<Fetch>().mockImplementation(async (input: string | URL) => {
+      const url = new URL(String(input));
+      const offset = Number(url.searchParams.get("offset") ?? "0");
+      return respuesta(
+        fixtureBcraPagina(31, [{ fecha: "2026-09-01", valor: 2100 }], { count: 1_000_000, offset, limit: 1000 }),
+      );
+    });
+
+    const r = await leerUvaCer({ fetch: fetchMock });
+    expect(r).toEqual({ ok: false, categoria: "formato" });
+    expect(fetchMock).toHaveBeenCalledTimes(50); // MAX_PAGINAS, solo para UVA (nunca llegó a pedir CER).
+  });
+
   it("falla en la segunda página (la primera salió bien): propaga esa falla", async () => {
     const fetchMock = vi
       .fn<Fetch>()

@@ -50,6 +50,18 @@ describe("ajusteConTope", () => {
       ajusteConTope({ montoBase: MONTO_BASE, valorBase: VALOR_BASE, valorRef: "105", topePct: "no-es-numero" }),
     ).toThrow(ErrorIndices);
   });
+
+  it("topePct negativo tira ErrorIndices (valor_invalido)", () => {
+    expect(() =>
+      ajusteConTope({ montoBase: MONTO_BASE, valorBase: VALOR_BASE, valorRef: "105", topePct: "-15" }),
+    ).toThrow(ErrorIndices);
+  });
+
+  it("montoBase negativo tira ErrorIndices (valor_invalido)", () => {
+    expect(() =>
+      ajusteConTope({ montoBase: -MONTO_BASE, valorBase: VALOR_BASE, valorRef: "105", topePct: TOPE }),
+    ).toThrow(ErrorIndices);
+  });
 });
 
 describe("diferenciaDeAjusteConTope", () => {
@@ -131,5 +143,29 @@ describe("diferenciaDeAjusteConTope", () => {
     });
     // usado: 500_000 aplicado; definitivo: -1_000_000 sin tope, pero soloPositivo lo capa a 0
     expect(diferencia).toBe(0n - 500_000n);
+  });
+
+  it("topePct negativo tira ErrorIndices (valor_invalido)", () => {
+    expect(() =>
+      diferenciaDeAjusteConTope({
+        montoBase: MONTO_BASE,
+        valorBase: VALOR_BASE,
+        valorUsado: "105",
+        valorDefinitivo: "120",
+        topePct: "-15",
+      }),
+    ).toThrow(ErrorIndices);
+  });
+
+  it("montoBase negativo tira ErrorIndices (valor_invalido)", () => {
+    expect(() =>
+      diferenciaDeAjusteConTope({
+        montoBase: -MONTO_BASE,
+        valorBase: VALOR_BASE,
+        valorUsado: "105",
+        valorDefinitivo: "120",
+        topePct: TOPE,
+      }),
+    ).toThrow(ErrorIndices);
   });
 });
