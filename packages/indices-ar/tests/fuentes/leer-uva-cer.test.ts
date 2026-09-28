@@ -206,6 +206,21 @@ describe("leerUvaCer", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2); // una página por índice, no más.
   });
 
+  it("metadata.resultset con forma inesperada (limit ausente): se ignora, toma la página como completa", async () => {
+    const fetchMock = vi.fn<Fetch>().mockResolvedValue(
+      respuesta({
+        status: 200,
+        metadata: { resultset: { count: 4000, offset: 0 } }, // sin "limit": forma inválida
+        results: [{ idVariable: 31, detalle: [{ fecha: "2026-09-10", valor: 2113.2 }] }],
+      }),
+    );
+    const r = await leerUvaCer({ fetch: fetchMock });
+    expect(r.ok).toBe(true);
+    if (!r.ok) throw new Error("no debería fallar");
+    expect(r.valores.filter((v) => v.indice === "UVA")).toHaveLength(1);
+    expect(fetchMock).toHaveBeenCalledTimes(2); // una por índice, no siguió paginando con la info rota.
+  });
+
   it("cuerpo sin metadata.resultset (forma vieja de la API): toma la única página como serie completa, sin pedir otra", async () => {
     const fetchMock = vi.fn<Fetch>().mockResolvedValue(respuesta({ results: [{ idVariable: 31, detalle: [{ fecha: "2026-09-10", valor: 2113.2 }] }] }));
     const r = await leerUvaCer({ fetch: fetchMock });
