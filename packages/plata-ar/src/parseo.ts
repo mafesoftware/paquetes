@@ -14,6 +14,13 @@ export type ResultadoParseoImporte = { ok: true; centavos: bigint } | { ok: fals
  * miles y decimales) no llega a 20 caracteres. El tope existe para que un
  * texto larguísimo (pegado por error, o adversarial) se rechace de un saque,
  * ANTES de correr cualquier análisis sobre él.
+ *
+ * Cuenta el texto CRUDO, tal cual llega — espacios (u otro whitespace)
+ * alrededor incluidos, ANTES de recortarlos: `parsearImporte(" ".repeat(1000)
+ * + "5")` se rechaza por largo (1001 > 64), no porque el "5" del final sea
+ * inválido. Nada en el resto del parseo recorta ese whitespace antes de este
+ * chequeo, así que un texto que "parece corto" pero viene con relleno
+ * alrededor cuenta con el relleno y todo.
  */
 export const LONGITUD_MAXIMA_IMPORTE = 64;
 

@@ -44,7 +44,10 @@ factores, reparto) siga siendo exacto en cualquier motor. `engines.node` de
 este paquete ya pide `>=20`.
 
 `parsearImporte` acepta hasta `LONGITUD_MAXIMA_IMPORTE` (64) caracteres;
-un texto más largo se rechaza antes de analizarlo (ver `parseo.ts`).
+un texto más largo se rechaza antes de analizarlo (ver `parseo.ts`). Cuenta
+el texto CRUDO tal cual llega, espacios alrededor incluidos — sin recortar
+nada antes: un importe corto con mucho relleno de espacios ("padding") cuenta
+ese relleno para el límite.
 
 La documentación de cada función está en `src/index.ts`, con **el motivo de
 cada decisión** al lado. Los tests (`tests/`) son la otra mitad de la
