@@ -120,10 +120,26 @@ function verificarNucleo(dir: string, errores: string[]): void {
       }
     }
 
-    if (/process\.env/.test(contenido)) {
+    // El chequeo de pureza de "process.env" ignora comentarios (JSDoc y de
+    // línea): un archivo que solo MENCIONA "process.env" para documentar por
+    // qué NO lo usa (como este mismo comentario) no es una violación — solo
+    // lo es si aparece en código real.
+    if (/process\.env/.test(quitarComentarios(contenido))) {
       errores.push(`src/${rel} (núcleo) usa process.env, no permitido fuera de src/drizzle/ o src/next/`);
     }
   }
+}
+
+/**
+ * Quita comentarios de bloque (`/* ... *\/`, incluido JSDoc) y de línea
+ * (`// ...`) de `contenido`, para que el chequeo de `process.env` (arriba)
+ * no confunda una MENCIÓN en un comentario con un uso real en código.
+ * Heurística simple (no parsea el string ni distingue un "//" dentro de un
+ * string literal de uno real) — suficiente para lo que este verificador
+ * necesita: código real de paquetes propios, no arbitrario de terceros.
+ */
+function quitarComentarios(contenido: string): string {
+  return contenido.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
 }
 
 function importa(contenido: string, especificador: string): boolean {
