@@ -1,6 +1,6 @@
 {
   "name": "@mafesoftware/accesos",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Reglas de control de acceso y cola offline idempotente. Puro.",
   "license": "MIT",
   "type": "module",

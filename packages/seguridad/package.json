@@ -1,6 +1,6 @@
 {
   "name": "@mafesoftware/seguridad",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "Primitivas de seguridad para los productos de MAFE Software: comparación en tiempo constante, cifrado versionado AES-256-GCM, pases firmados con vencimiento, CSP/cabeceras y auth de cron/guard() para Next.js. Sin process.env en el núcleo.",
   "type": "module",
   "license": "MIT",

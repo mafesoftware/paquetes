@@ -98,7 +98,20 @@ jobs:
           # Variable de config de npm (npm_config_provenance): equivalente a
           # pasarle `--provenance` a cada `npm publish` que dispare
           # `changeset publish` dentro de `bun run release`, sin tener que
-          # tocar ese comando. Con Trusted Publisher configurado en npmjs.com
-          # (ver README § Publicar) no hace falta NPM_TOKEN: la identidad la
-          # prueba el OIDC de `permissions.id-token: write` de este job.
+          # tocar ese comando. La provenance sale del `id-token: write` de
+          # este job (Sigstore/OIDC de Actions) sea cual sea la vía de
+          # autenticación contra npm — no depende de si esa autenticación es
+          # por Trusted Publisher o por NODE_AUTH_TOKEN (ver abajo).
           NPM_CONFIG_PROVENANCE: true
+          # NODE_AUTH_TOKEN: lo que lee el .npmrc que genera `actions/setup-node`
+          # (con `registry-url` seteado más arriba) para autenticar cualquier
+          # `npm publish`. Respaldo mientras el Trusted Publisher (README §
+          # Publicar, paso 2) todavía no está configurado para TODOS los
+          # paquetes — se configura uno por uno, y solo después de que cada
+          # uno ya exista en npm. Con Trusted Publisher ya configurado para un
+          # paquete, esa vía (OIDC, sin token) tiene prioridad igual; este
+          # token no la reemplaza, la respalda para los que todavía no lo
+          # tienen. `NPM_TOKEN` además, por si algún paso corre `npm` fuera
+          # del `.npmrc` que arma `setup-node` (no debería, pero no cuesta).
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}

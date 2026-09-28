@@ -1,6 +1,6 @@
 {
   "name": "@mafesoftware/cuotas",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Motor de cuotas: periodos, recargo por mora e imputacion de pagos. Puro.",
   "license": "MIT",
   "type": "module",

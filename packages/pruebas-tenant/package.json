@@ -1,6 +1,6 @@
 {
   "name": "@mafesoftware/pruebas-tenant",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "Harness de aislamiento entre tenants: probarAislamiento(...) corre un registro de casos como tenant B contra un id de A y clasifica el resultado (o la excepción) como \"no encontrado\" o fuga. Núcleo puro; describeAislamiento (subpath /vitest, vitest como peerDependency opcional) registra un it() por caso.",
   "type": "module",
   "license": "MIT",

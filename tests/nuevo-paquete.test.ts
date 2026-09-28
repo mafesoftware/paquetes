@@ -87,7 +87,7 @@ describe('scripts/nuevo-paquete.ts', () => {
         expect(vitestConfig).not.toContain('/drizzle');
 
         const packageJson = JSON.parse(readFileSync(join(destino, 'package.json'), 'utf8'));
-        expect(packageJson.dependencies).toEqual({ '@mafesoftware/una-base': 'workspace:*' });
+        expect(packageJson.dependencies).toEqual({ '@mafesoftware/una-base': 'workspace:^' });
         expect(packageJson.scripts.typecheck).toBe('tsc -p tsconfig.json --noEmit');
 
         const resultado = verificarPaquete(destino);
@@ -125,8 +125,8 @@ describe('scripts/nuevo-paquete.ts', () => {
 
         const packageJson = JSON.parse(readFileSync(join(destino, 'package.json'), 'utf8'));
         expect(packageJson.dependencies).toEqual({
-          '@mafesoftware/base-a': 'workspace:*',
-          '@mafesoftware/base-b': 'workspace:*',
+          '@mafesoftware/base-a': 'workspace:^',
+          '@mafesoftware/base-b': 'workspace:^',
         });
       } finally {
         rmSync(raiz, { recursive: true, force: true });

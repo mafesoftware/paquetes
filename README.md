@@ -65,7 +65,7 @@ Genera `packages/<nombre>` con la estructura estándar (`package.json`, `src/ind
 `--con-dependencias` declara que el paquete nuevo depende de otro(s) de este
 mismo monorepo (sin el scope `@mafesoftware/`, ej.
 `--con-dependencias=tenant` o `--con-dependencias=plata-ar,fechas-ar`) como
-`"workspace:*"`. Cada dependencia listada tiene que existir ya en `packages/`
+`"workspace:^"`. Cada dependencia listada tiene que existir ya en `packages/`
 — si no, `crearPaquete` tira en vez de dejar pasar un typo en silencio. Con
 al menos una dependencia, además genera el par de `tsconfig` (typecheck
 contra la FUENTE de la dependencia, build contra su `dist` ya compilado) y
@@ -157,20 +157,30 @@ Trusted publishing exige que el paquete **ya exista** en npm y tenga el
 paso manual único, del usuario, la única vez que este monorepo usa el CLI de
 `npm` (no `bun`):
 
-### 1. Primera publicación de un paquete nuevo (manual, una sola vez)
+### 1. Primera publicación (todos los paquetes que falten, una sola vez)
+
+`scripts/publicar-primera-vez.ts` automatiza esto para TODOS los paquetes de
+una vez (no uno por uno a mano): construye el plan (los `packages/*` no
+privados cuya versión actual todavía no está en el registro), reescribe
+`"workspace:"` a versiones reales (backup + restore automático, incluso si
+algo falla a mitad de camino), y publica cada uno con `npm publish --access
+public --provenance=false` en orden de dependencias.
 
 Desde la terminal del usuario, con su cuenta npm `mafe-software` ya logueada
 (`npm whoami` debe devolver `mafe-software`; si no, `npm login`):
 
 ```sh
-cd packages/<nombre-del-paquete>
-bun run build
-npm publish --access public
+bun scripts/publicar-primera-vez.ts --dry-run   # primero, en seco: ver el plan sin publicar
+bun scripts/publicar-primera-vez.ts             # de verdad (pide confirmación y/N; --si la salta)
 ```
 
-(Sin `--provenance`: para la primera publicación no hace falta —la provenance
-la agrega el CI en publicaciones siguientes— y sin trusted publisher configurado
-todavía, `--provenance` fallaría igual.)
+Sin `--provenance` (para la primera publicación no hace falta —la provenance
+la agrega el CI en publicaciones siguientes— y sin Trusted Publisher
+configurado todavía en npmjs.com, `--provenance` fallaría igual). Es seguro
+volver a correrlo si algo falla a mitad de camino: los paquetes que ya
+quedaron publicados se saltean (el plan se recalcula contra el registro cada
+vez). `bun scripts/publicar-primera-vez.ts --help` documenta el resto de las
+opciones.
 
 ### 2. Configurar el Trusted Publisher en npmjs.com
 
@@ -186,8 +196,43 @@ Para **cada paquete**, en `https://www.npmjs.com/package/@mafesoftware/<nombre>`
 Cada PR mergeado a `main` que trae un changeset dispara `release.yml`: agrupa
 los pendientes en el PR "Version Packages" (bump de versión + CHANGELOG). Al
 mergear ese PR, el mismo workflow publica cada paquete con `npm publish
---provenance` por OIDC — no hace falta tocar la terminal del usuario ni ningún
-token.
+--provenance` — no hace falta tocar la terminal del usuario. La identidad
+ante npm la puede probar el Trusted Publisher (OIDC, sin token — paso 2, una
+vez configurado PARA ESE PAQUETE) o el `NPM_TOKEN` del paso siguiente; la
+provenance (`NPM_CONFIG_PROVENANCE=true` + `permissions.id-token: write`) es
+independiente de cuál de las dos se use para autenticar.
+
+### 3.b. `NPM_TOKEN`: mientras se configura el Trusted Publisher de cada paquete
+
+El Trusted Publisher (paso 2) se configura **paquete por paquete**, y solo
+DESPUÉS de que ese paquete ya exista en npm — con ~20 paquetes en la primera
+tanda, `release.yml` va a intentar publicar antes de que estén todos
+configurados. Para que no dependa de ir configurando cada uno a mano antes de
+que un release automático funcione, `release.yml` también acepta un
+`NPM_TOKEN` clásico como autenticación de respaldo (la provenance sigue
+saliendo del `id-token: write` del job, no del token — un token clásico +
+OIDC de Actions es una combinación soportada por npm para `--provenance`).
+
+Configurar una sola vez, del usuario, con su cuenta `mafe-software`:
+
+1. En `https://www.npmjs.com/settings/mafe-software/tokens` → *Generate New
+   Token* → *Granular Access Token*: scope `@mafesoftware` (todos los
+   paquetes, actuales y futuros), permisos de **Read and write**, tipo
+   **Automation** (para poder usarlo en CI sin 2FA interactivo).
+2. Agregarlo como secret del repo (con la cuenta de GitHub `mafesoftware`,
+   ver `~/.claude/CLAUDE.md`):
+   ```sh
+   gh secret set NPM_TOKEN --repo mafesoftware/paquetes
+   ```
+   (pega el token cuando lo pida, o `--body <token>`/`< archivo`).
+
+Con el secret ya seteado, `release.yml` lo pasa como `NODE_AUTH_TOKEN` (lo
+que espera `actions/setup-node` con `registry-url` seteado, que es lo que usa
+`npm publish` para autenticarse) y como `NPM_TOKEN` (por si algún paso llama
+a `npm` fuera de ese setup) al paso "Versionar o publicar". Una vez que el
+Trusted Publisher esté configurado para TODOS los paquetes, este token deja
+de ser necesario para publicar (pero no hace falta apurarse a sacarlo: no
+molesta que sigan las dos vías disponibles).
 
 ### 4. Housekeeping: rotar el token viejo de npm
 

@@ -1,6 +1,6 @@
 {
   "name": "@mafesoftware/pruebas-fuentes",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "Detectores de reglas de código fuente (heurísticas por regex/tokens) para correr dentro de un test de vitest de la app consumidora: guardas de \"use server\", fragmentos sql con or suelto, ?? 0 en plata, setHours, server-only en datos, imports de datos en \"use client\", dependencias file:/link:. Núcleo puro; leerArchivos es Node-only.",
   "type": "module",
   "license": "MIT",

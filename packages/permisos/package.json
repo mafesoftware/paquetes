@@ -1,6 +1,6 @@
 {
   "name": "@mafesoftware/permisos",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Presets de rol y modulos por plan, con excepciones. Puro.",
   "license": "MIT",
   "type": "module",

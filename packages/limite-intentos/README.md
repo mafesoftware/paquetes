@@ -68,6 +68,26 @@ try {
 }
 ```
 
+`ErrorLimiteIntentos` también se re-exporta desde el subpath `/drizzle`, para
+quien ya importa de ahí `registrarIntento`/`consultarIntento` y no quiere un
+segundo import del núcleo solo para el `instanceof`:
+
+```ts
+import { ErrorLimiteIntentos, registrarIntento } from "@mafesoftware/limite-intentos/drizzle";
+import { claveCuenta } from "@mafesoftware/limite-intentos";
+
+try {
+  await registrarIntento(db, limiteIntentos, {
+    clave: claveCuenta(email),
+    maximo: 0, // inválido: dispara ErrorLimiteIntentos antes de tocar la base
+    ventanaMs: 15 * 60_000,
+    bloqueoMs: 15 * 60_000,
+  });
+} catch (error) {
+  if (error instanceof ErrorLimiteIntentos) error.codigo; // "opciones_invalidas"
+}
+```
+
 ### Drizzle (`@mafesoftware/limite-intentos/drizzle`)
 
 #### `tablaIntentos(opciones?: { nombre?; columnasExtra? }): TablaIntentos`

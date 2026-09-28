@@ -13,7 +13,7 @@ export interface OpcionesNuevoPaquete {
   raiz?: string;
   /**
    * Nombres de OTROS paquetes de este monorepo (sin el scope `@mafesoftware/`,
-   * ej. `"tenant"`) de los que este paquete depende como `workspace:*`. Cada
+   * ej. `"tenant"`) de los que este paquete depende como `workspace:^`. Cada
    * uno tiene que existir ya en `packages/<nombre>` — si no, `crearPaquete`
    * tira (evita un typo silencioso). Con al menos una dependencia, se genera
    * el par de tsconfig (typecheck contra la fuente de la dependencia, build
@@ -129,7 +129,11 @@ function packageJson(nombre: string, dependencias: string[] = []): Record<string
   };
 
   if (dependencias.length > 0) {
-    base.dependencies = Object.fromEntries(dependencias.map((dependencia) => [`@mafesoftware/${dependencia}`, 'workspace:*']));
+    // "workspace:^" (no "workspace:*"): `scripts/reescribir-workspace.ts` lo
+    // reescribe a "^x.y.z" al publicar, que permite actualizaciones
+    // compatibles de la dependencia sin forzar una nueva publicación del
+    // paquete que la consume (ver changeset "workspace-caret-no-star").
+    base.dependencies = Object.fromEntries(dependencias.map((dependencia) => [`@mafesoftware/${dependencia}`, 'workspace:^']));
   }
 
   return base;

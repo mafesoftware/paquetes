@@ -1,6 +1,6 @@
 {
   "name": "@mafesoftware/numeradores",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "Numeración correlativa sin huecos (comprobantes, órdenes de pago, órdenes de compra) por tenant + ámbito + tipo, segura bajo concurrencia: formatearNumero (sin truncar), esChoqueDeUnico/conReintento en el núcleo y, en /drizzle, tablaNumeradores + siguienteNumero (atómico, exige transacción) + configurarNumerador.",
   "type": "module",
   "license": "MIT",

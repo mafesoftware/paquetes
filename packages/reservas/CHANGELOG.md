@@ -1,5 +1,38 @@
 # Changelog
 
+## 0.1.1
+
+### Patch Changes
+
+- a8db00c: Agrega la LICENSE (copia de la de la raíz, MIT) a cada `packages/*` que
+  todavía no la tenía en su checkout — `arca-ar`/`correo`/`mercadopago-ar` ya
+  la tenían. `npm`/`bun pm pack` ya subían la LICENSE de la raíz al tarball
+  publicado aunque no estuviera acá (confirmado con un pack en seco), pero
+  `tests/estructura.test.ts` ahora también exige que cada paquete la tenga en
+  su checkout, y `scripts/nuevo-paquete.ts` la copia sola para los paquetes
+  nuevos.
+- a8db00c: Las dependencias internas del monorepo pasan de `"workspace:*"` a
+  `"workspace:^"`. `scripts/reescribir-workspace.ts` (que corre `bun run
+  release` antes de `changeset publish`) ya sabía convertir las dos formas —
+  `"workspace:*"` a la versión exacta, `"workspace:^"` a `"^" + la versión —
+  pero `"workspace:*"` publicado como versión exacta fija el internal
+  dependency a un único patch, y cada bump de `plata-ar`/`fechas-ar`/`tenant`
+  obligaría a republicar TODO lo que depende de ellos aunque el cambio sea
+  compatible. Con `"workspace:^"`, el paquete publicado queda con
+  `"^x.y.z"`, que permite actualizaciones compatibles de la dependencia sin
+  forzar una nueva publicación del que la consume.
+  
+  Sin cambios de comportamiento: `bun run lint:paquetes` (el chequeo de
+  `bun pm pack` + reescritura) y `tests/reescribir-workspace.test.ts` ya
+  cubrían este caso.
+- Updated dependencies [f05e1fc]
+- Updated dependencies [a8db00c]
+- Updated dependencies [1050024]
+- Updated dependencies [7d3a1fd]
+- Updated dependencies [a8db00c]
+  - @mafesoftware/fechas-ar@0.2.0
+  - @mafesoftware/plata-ar@0.2.0
+
 ## 0.1.0
 
 Motor de disponibilidad, turnos y lista de espera: grilla de un día
