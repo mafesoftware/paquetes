@@ -221,6 +221,49 @@ describe("crearPase / verificarPase", () => {
     });
   });
 
+  describe("fix P.C: crearPase con sello vacío o no-string", () => {
+    it("sello vacío: tira ErrorSeguridad pase_invalido", () => {
+      expect(() => crearPase({ proposito: "x", sujeto: "u", venceEn: Date.now() + 1000, sello: "" }, SECRETO)).toThrow(
+        ErrorSeguridad,
+      );
+      try {
+        crearPase({ proposito: "x", sujeto: "u", venceEn: Date.now() + 1000, sello: "" }, SECRETO);
+      } catch (error) {
+        expect((error as ErrorSeguridad).codigo).toBe("pase_invalido");
+      }
+    });
+
+    it("sello no-string (undefined/número): tira ErrorSeguridad pase_invalido, no un TypeError crudo", () => {
+      expect(() =>
+        crearPase({ proposito: "x", sujeto: "u", venceEn: Date.now() + 1000, sello: undefined as never }, SECRETO),
+      ).toThrow(ErrorSeguridad);
+      expect(() =>
+        crearPase({ proposito: "x", sujeto: "u", venceEn: Date.now() + 1000, sello: 123 as never }, SECRETO),
+      ).toThrow(ErrorSeguridad);
+    });
+  });
+
+  describe("fix P.C: verificarPase nunca tira con opciones/token hostiles", () => {
+    it("verificarPase(token, secreto, undefined): configuracion, no tira", () => {
+      const token = crearPase({ proposito: "x", sujeto: "u", venceEn: Date.now() + 60_000, sello: "s" }, SECRETO);
+      expect(() => verificarPase(token, SECRETO, undefined as never)).not.toThrow();
+      expect(verificarPase(token, SECRETO, undefined as never)).toEqual({ ok: false, motivo: "configuracion" });
+    });
+
+    it("un token cuyo toString() tira: formato, no propaga la excepción", () => {
+      const tokenHostil = {
+        toString() {
+          throw new Error("toString roto a propósito");
+        },
+      };
+      expect(() => verificarPase(tokenHostil as never, SECRETO, { proposito: "x", selloActual: "s" })).not.toThrow();
+      expect(verificarPase(tokenHostil as never, SECRETO, { proposito: "x", selloActual: "s" })).toEqual({
+        ok: false,
+        motivo: "formato",
+      });
+    });
+  });
+
   describe("fix round 1 (I4): ahora/venceEn inválidos", () => {
     it("crearPase con venceEn = NaN: tira ErrorSeguridad pase_invalido", () => {
       expect(() => crearPase({ proposito: "x", sujeto: "u", venceEn: NaN, sello: "s" }, SECRETO)).toThrow(ErrorSeguridad);

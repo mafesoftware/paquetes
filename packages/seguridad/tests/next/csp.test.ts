@@ -90,6 +90,36 @@ describe("politicaCsp", () => {
       expect(() => politicaCsp("n", { "script_src": ["'self'"] })).toThrow(ErrorSeguridad);
     });
   });
+
+  describe("fix P.C: extras con valor no-array, caracteres de control, y directiva solo '-'", () => {
+    it("un valor de extras que es un string (no un array) tira ErrorSeguridad csp_invalida", () => {
+      // Antes: un string es iterable, así que `for (const fuente of fuentes)`
+      // recorría CARACTERES sueltos ("s", "e", "l", "f"...) en vez de tratar
+      // el valor entero como una sola fuente mal formada — nunca tiraba.
+      expect(() => politicaCsp("n", { "style-src": "https://fonts.googleapis.com" as unknown as string[] })).toThrow(
+        ErrorSeguridad,
+      );
+      try {
+        politicaCsp("n", { "style-src": "https://fonts.googleapis.com" as unknown as string[] });
+      } catch (error) {
+        expect((error as ErrorSeguridad).codigo).toBe("csp_invalida");
+      }
+    });
+
+    it("una fuente con un carácter de control (\\p{Cc}, ej. NUL o un byte de escape) tira ErrorSeguridad csp_invalida", () => {
+      expect(() => politicaCsp("n", { "style-src": ["https://x.com\u0000"] })).toThrow(ErrorSeguridad);
+      expect(() => politicaCsp("n", { "style-src": ["https://x.com\u0007"] })).toThrow(ErrorSeguridad);
+    });
+
+    it('una directiva de extras que es solo "-" se rechaza (no es un nombre de directiva real)', () => {
+      expect(() => politicaCsp("n", { "-": ["'self'"] })).toThrow(ErrorSeguridad);
+      try {
+        politicaCsp("n", { "-": ["'self'"] });
+      } catch (error) {
+        expect((error as ErrorSeguridad).codigo).toBe("csp_invalida");
+      }
+    });
+  });
 });
 
 describe("generarNonce", () => {

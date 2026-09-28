@@ -20,6 +20,13 @@
  * `;`, una `,` o un espacio: `politicaCsp` ahora tira `ErrorSeguridad`
  * (`codigo: "csp_invalida"`) ante cualquiera de esos casos, en vez de armar
  * una CSP corrupta en silencio.
+ *
+ * Fix P.C: dos casos más de la misma familia. Un valor de `extras` que es un
+ * STRING en vez de un array (`{ "style-src": "https://x.com" }`, un error de
+ * tipeo fácil) es iterable igual que un array — sin chequearlo, se
+ * recorrería CARÁCTER por carácter en vez de tratarse como una sola fuente
+ * mal formada. Y un carácter de control (`\p{Cc}`: NUL, ESC, ...) en una
+ * fuente tampoco tiene por qué aparecer ahí — se lo trata igual que `;`/`,`.
  */
 import { randomBytes } from "node:crypto";
 import { ErrorSeguridad } from "../errores.js";
@@ -29,10 +36,10 @@ export type ExtrasCsp = Record<string, string[]>;
 
 /** Un nonce válido es lo que `generarNonce()` produce: base64 (estándar o url-safe), con o sin relleno `=` al final. Nada de `;`, `,` ni espacios. */
 const NONCE_VALIDO = /^[A-Za-z0-9+/_-]+={0,2}$/;
-/** Una directiva CSP es una palabra en minúsculas con guiones (`script-src`, `frame-ancestors`, ...). */
-const DIRECTIVA_VALIDA = /^[a-z-]+$/;
-/** Lo que NUNCA puede aparecer dentro de una fuente: son los caracteres que separan directivas/fuentes en el header. */
-const CARACTER_PROHIBIDO_EN_FUENTE = /[;,\s]/;
+/** Una directiva CSP es una palabra en minúsculas con guiones (`script-src`, `frame-ancestors`, ...), con AL MENOS una letra: "-" a secas (o "--") no es un nombre de directiva real. */
+const DIRECTIVA_VALIDA = /^[a-z]+(?:-[a-z]+)*$/;
+/** Lo que NUNCA puede aparecer dentro de una fuente: los caracteres que separan directivas/fuentes en el header, y cualquier carácter de control (`\p{Cc}`: NUL, ESC, bytes de control varios) — ninguno tiene razón de estar en una fuente real, y algunos podrían confundir a un parser/proxy corriente abajo que no normalice igual que este header. */
+const CARACTER_PROHIBIDO_EN_FUENTE = /[;,\s\p{Cc}]/u;
 
 function directivasBase(nonce: string): Array<[string, string[]]> {
   return [
@@ -60,9 +67,12 @@ function directivasBase(nonce: string): Array<[string, string[]]> {
  * hoja de estilos de Google Fonts. Las fuentes repetidas no se duplican.
  *
  * Tira `ErrorSeguridad` (`codigo: "csp_invalida"`) si `nonce` no tiene forma
- * de nonce, si el nombre de una directiva de `extras` no es
- * `[a-z-]+`, o si una fuente contiene `;`, `,` o un espacio — ver la
- * cabecera del archivo.
+ * de nonce; si el valor de una directiva de `extras` no es un ARRAY (un
+ * string se recorrería carácter por carácter, silenciosamente); si el
+ * nombre de una directiva de `extras` no es una o más etiquetas
+ * `[a-z]+` separadas por un solo guion (un "-" a secas, o "--", NO
+ * cuentan); o si una fuente contiene `;`, `,`, un espacio, o un carácter
+ * de control (`\p{Cc}`) — ver la cabecera del archivo.
  */
 export function politicaCsp(nonce: string, extras: ExtrasCsp = {}): string {
   if (typeof nonce !== "string" || !NONCE_VALIDO.test(nonce)) {
@@ -78,6 +88,12 @@ export function politicaCsp(nonce: string, extras: ExtrasCsp = {}): string {
       throw new ErrorSeguridad(
         "csp_invalida",
         `Nombre de directiva CSP inválido: "${nombre}" (solo letras minúsculas y guiones, ej: "style-src").`,
+      );
+    }
+    if (!Array.isArray(fuentes)) {
+      throw new ErrorSeguridad(
+        "csp_invalida",
+        `Las fuentes de "${nombre}" tienen que ser un array de strings (recibió ${typeof fuentes}) — un string suelto se recorrería carácter por carácter.`,
       );
     }
     for (const fuente of fuentes) {

@@ -124,7 +124,7 @@ function comoMs(fecha: Date | number): number {
  *
  * Tira `ErrorSeguridad`:
  * - `"secreto_invalido"`: `secreto` no es un string de al menos 32 caracteres.
- * - `"pase_invalido"`: `venceEn` no es una fecha/epoch finita (`NaN`, `Invalid Date`, `Infinity`).
+ * - `"pase_invalido"`: `venceEn` no es una fecha/epoch finita (`NaN`, `Invalid Date`, `Infinity`), o `sello` no es un string no vacío.
  */
 export function crearPase(pase: DatosPase, secreto: string): string {
   if (!secretoValido(secreto)) {
@@ -136,6 +136,9 @@ export function crearPase(pase: DatosPase, secreto: string): string {
   const venceEn = comoMs(pase.venceEn);
   if (!Number.isFinite(venceEn)) {
     throw new ErrorSeguridad("pase_invalido", `venceEn no es una fecha/epoch válida: ${String(pase.venceEn)}.`);
+  }
+  if (typeof pase.sello !== "string" || pase.sello.length === 0) {
+    throw new ErrorSeguridad("pase_invalido", `sello tiene que ser un string no vacío (recibió: ${JSON.stringify(pase.sello)}).`);
   }
 
   const cuerpo: CuerpoPase = {
@@ -166,10 +169,26 @@ export function verificarPase(
 ): ResultadoPase {
   if (!secretoValido(secreto)) return { ok: false, motivo: "configuracion" };
 
+  // `opciones` lo arma la APP, no quien ataca — pero una llamada desde JS sin
+  // chequeo de tipos puede pasar `undefined` a secas (ej.
+  // `verificarPase(token, secreto, undefined)`); acceder a `opciones.ahora`
+  // en ese caso tiraría un TypeError crudo. Es la misma categoría que un
+  // `secreto` mal configurado: "configuracion", nunca una excepción.
+  if (opciones === null || typeof opciones !== "object") return { ok: false, motivo: "configuracion" };
+
   const ahora = opciones.ahora === undefined ? Date.now() : comoMs(opciones.ahora);
   if (!Number.isFinite(ahora)) return { ok: false, motivo: "configuracion" };
 
-  const tokenTexto = typeof token === "string" ? token : String(token ?? "");
+  // `token` es hostil por definición (lo manda cualquiera): un objeto cuyo
+  // `toString`/`Symbol.toPrimitive` tira (en vez de un string real) no puede
+  // convertir el `String(token ?? "")` de abajo en una excepción sin
+  // atrapar — es un formato inválido como cualquier otro.
+  let tokenTexto: string;
+  try {
+    tokenTexto = typeof token === "string" ? token : String(token ?? "");
+  } catch {
+    return { ok: false, motivo: "formato" };
+  }
   if (tokenTexto.length === 0 || tokenTexto.length > MAX_TOKEN_LARGO) return { ok: false, motivo: "formato" };
 
   const partes = tokenTexto.split(".");
