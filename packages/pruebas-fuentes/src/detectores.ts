@@ -20,12 +20,54 @@ const RE_FUNCION_DECLARADA = /export\s+(?:default\s+)?async\s+function\b\s*(\w+)
 const RE_FUNCION_ASIGNADA = /export\s+(?:const|let|var)\s+(\w+)\s*=\s*async\b\s*/g;
 
 /**
+ * Dado texto YA blanqueado y una posición justo después del `)` que cierra
+ * una lista de parámetros, si el siguiente carácter no blanco es `:`, salta
+ * la anotación de tipo de retorno contando anidamiento de `<>`, `()`, `[]` y
+ * `{}` — así un tipo con SU PROPIA llave (ej. `Promise<{ ok: true } | { ok:
+ * false }>`) no se confunde con el cuerpo de la función. Se detiene en el
+ * primer `=>` o `{` que aparece a NIVEL 0 (fuera de cualquiera de esos
+ * pares): eso es la flecha del arrow o la llave del cuerpo, según lo que
+ * venga después decida cada llamador. Si no hay `:`, devuelve `pos` sin
+ * moverse.
+ *
+ * Límite conocido (documentado, no se persigue): un tipo de retorno que sea
+ * ÉL MISMO un tipo función sin paréntesis envolventes (`: () => void =>
+ * ...`, sintaxis rara y ambigua) puede confundir la flecha del tipo con la
+ * del arrow real. En código de aplicación normal el tipo función va entre
+ * paréntesis o dentro de un genérico, y ahí sí queda bien contado.
+ */
+function saltarTipoRetorno(limpio: string, pos: number): number {
+  let i = pos;
+  while (i < limpio.length && /\s/.test(limpio[i]!)) i++;
+  if (limpio[i] !== ':') return pos;
+  i++;
+
+  let profundidad = 0;
+  while (i < limpio.length) {
+    if (profundidad === 0) {
+      if (limpio[i] === '{') return i;
+      if (limpio[i] === '=' && limpio[i + 1] === '>') return i;
+    }
+    const c = limpio[i];
+    if (c === '<' || c === '(' || c === '[' || c === '{') {
+      profundidad++;
+    } else if (c === '>' || c === ')' || c === ']' || c === '}') {
+      profundidad = Math.max(0, profundidad - 1);
+    }
+    i++;
+  }
+  return i;
+}
+
+/**
  * Dado el texto YA blanqueado y la posición justo después de `async` (y su
  * espacio), determina dónde empieza el cuerpo de la función y si es un
  * bloque (`{ ... }`) o una expresión (arrow de cuerpo expresión). Cubre:
  * `function [nombre](...)  { ... }`, `(...) => { ... }`, `(...) => expr`,
- * `identificador => { ... }` e `identificador => expr`. Devuelve `null` si
- * no reconoce la forma o está truncada (paréntesis/flecha sin cerrar).
+ * `identificador => { ... }` e `identificador => expr` — con o sin una
+ * anotación de tipo de retorno explícita entre el `)` de los parámetros y
+ * la flecha o la llave (`saltarTipoRetorno`). Devuelve `null` si no
+ * reconoce la forma o está truncada (paréntesis/flecha sin cerrar).
  */
 function analizarCabeceraAsync(limpio: string, pos: number): { esBloque: boolean; inicioCuerpo: number } | null {
   const resto = limpio.slice(pos);
@@ -36,7 +78,8 @@ function analizarCabeceraAsync(limpio: string, pos: number): { esBloque: boolean
     const indiceParenAbre = pos + mFuncionExpr[0].length - 1;
     const indiceParenCierra = indiceCierre(limpio, indiceParenAbre, '(', ')');
     if (indiceParenCierra === -1) return null;
-    const indiceLlaveAbre = limpio.indexOf('{', indiceParenCierra);
+    const posTrasTipo = saltarTipoRetorno(limpio, indiceParenCierra + 1);
+    const indiceLlaveAbre = limpio.indexOf('{', posTrasTipo);
     if (indiceLlaveAbre === -1) return null;
     return { esBloque: true, inicioCuerpo: indiceLlaveAbre };
   }
@@ -53,9 +96,10 @@ function analizarCabeceraAsync(limpio: string, pos: number): { esBloque: boolean
     indiceTrasParametros = pos + mIdent[0].length;
   }
 
-  const mFlecha = /^\s*=>\s*/.exec(limpio.slice(indiceTrasParametros));
+  const posTrasTipo = saltarTipoRetorno(limpio, indiceTrasParametros);
+  const mFlecha = /^\s*=>\s*/.exec(limpio.slice(posTrasTipo));
   if (!mFlecha) return null;
-  const inicioCuerpo = indiceTrasParametros + mFlecha[0].length;
+  const inicioCuerpo = posTrasTipo + mFlecha[0].length;
   return { esBloque: limpio[inicioCuerpo] === '{', inicioCuerpo };
 }
 
@@ -74,6 +118,13 @@ function analizarCabeceraAsync(limpio: string, pos: number): { esBloque: boolean
  *   considera SIN guarda salvo que la expresión misma sea la llamada a la
  *   guarda, ej. `async () => exigirPermiso(x)`; no hay "primer enunciado"
  *   posible porque no hay bloque).
+ *
+ * Cualquiera de estas formas puede llevar una anotación de tipo de retorno
+ * explícita entre el `)` de los parámetros y la flecha o la llave (ej.
+ * `async (x: string): Promise<void> => { ... }` o `async function f(x):
+ * Promise<{ ok: true } | { ok: false }> { ... }`) — `saltarTipoRetorno` la
+ * salta contando anidamiento de `<>()[]{}`, así una llave DENTRO del tipo
+ * (como el objeto de esa unión) no se confunde con la llave del cuerpo.
  *
  * Falso negativo documentado: si la guarda se llama más abajo en el cuerpo
  * (no como primer enunciado), esto NO lo detecta — a propósito, porque
@@ -120,7 +171,8 @@ export function guardaEnUseServer(opciones: OpcionesGuardaEnUseServer): Detector
       const indiceParenAbre = m.index + m[0].length - 1;
       const indiceParenCierra = indiceCierre(limpio, indiceParenAbre, '(', ')');
       if (indiceParenCierra === -1) continue;
-      const indiceLlaveAbre = limpio.indexOf('{', indiceParenCierra);
+      const posTrasTipo = saltarTipoRetorno(limpio, indiceParenCierra + 1);
+      const indiceLlaveAbre = limpio.indexOf('{', posTrasTipo);
       if (indiceLlaveAbre === -1) continue;
       const indiceLlaveCierra = indiceCierre(limpio, indiceLlaveAbre, '{', '}');
       if (indiceLlaveCierra === -1) continue;

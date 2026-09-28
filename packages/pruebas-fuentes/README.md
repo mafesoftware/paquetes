@@ -110,6 +110,13 @@ x = await exigirPermiso(...)`), con o sin `await`. Reconoce estas formas
   guarda salvo que la expresión ENTERA sea la llamada a la guarda, ej.
   `async () => exigirPermiso(x)`)
 
+Cualquiera de estas formas puede llevar una anotación de tipo de retorno
+explícita entre el `)` de los parámetros y la flecha o la llave (ej. `async
+(x: string): Promise<void> => { ... }` o `async function f(x):
+Promise<{ ok: true } | { ok: false }> { ... }`) sin que eso le impida
+reconocer el cuerpo: una llave DENTRO del tipo (como la del objeto de esa
+unión) no se confunde con la llave del cuerpo real.
+
 ```ts
 import { correrDetectores, guardaEnUseServer } from "@mafesoftware/pruebas-fuentes";
 

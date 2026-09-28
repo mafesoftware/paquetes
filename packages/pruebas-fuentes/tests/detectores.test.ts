@@ -233,6 +233,112 @@ export const borrarSocio = async id => borrarDeLaBase(id);
     const texto = '"use server";\n\nexport const incompleta = async () => {\n  await exigirPermiso();';
     expect(detector(archivo(texto))).toEqual([]);
   });
+
+  it('detecta un arrow con tipo de retorno explícito (bloque) sin guarda', () => {
+    const texto = `"use server";
+
+export const borrarSocio = async (id: string): Promise<void> => {
+  await borrarDeLaBase(id);
+};
+`;
+    const hallazgos = detector(archivo(texto));
+    expect(hallazgos).toHaveLength(1);
+    expect(hallazgos[0]!.detalle).toContain('borrarSocio');
+  });
+
+  it('no detecta un arrow con tipo de retorno explícito (bloque) con guarda', () => {
+    const texto = `"use server";
+
+export const borrarSocio = async (id: string): Promise<void> => {
+  await exigirPermiso("socios.borrar");
+};
+`;
+    expect(detector(archivo(texto))).toEqual([]);
+  });
+
+  it('detecta un arrow con tipo de retorno explícito (cuerpo expresión) sin guarda', () => {
+    const texto = `"use server";
+
+export const borrarSocio = async (id: string): Promise<void> => borrarDeLaBase(id);
+`;
+    const hallazgos = detector(archivo(texto));
+    expect(hallazgos).toHaveLength(1);
+    expect(hallazgos[0]!.detalle).toContain('borrarSocio');
+  });
+
+  it('no detecta un arrow con tipo de retorno explícito (cuerpo expresión) cuando la expresión ES la guarda', () => {
+    const texto = `"use server";
+
+export const verSocio = async (id: string): Promise<unknown> => exigirPermiso("socios.ver");
+`;
+    expect(detector(archivo(texto))).toEqual([]);
+  });
+
+  it('no confunde una llave del tipo de retorno (unión de objetos) con la del cuerpo: función declarada, sin guarda', () => {
+    const texto = `"use server";
+
+export async function operar(id: string): Promise<{ ok: true } | { ok: false }> {
+  return { ok: false };
+}
+`;
+    const hallazgos = detector(archivo(texto));
+    expect(hallazgos).toHaveLength(1);
+    expect(hallazgos[0]!.detalle).toContain('operar');
+  });
+
+  it('no confunde una llave del tipo de retorno (unión de objetos) con la del cuerpo: función declarada, con guarda', () => {
+    const texto = `"use server";
+
+export async function operar(id: string): Promise<{ ok: true } | { ok: false }> {
+  await exigirPermiso("operar");
+  return { ok: true };
+}
+`;
+    expect(detector(archivo(texto))).toEqual([]);
+  });
+
+  it('no confunde una llave del tipo de retorno (unión de objetos) con la del cuerpo: function expression, sin guarda', () => {
+    const texto = `"use server";
+
+export const operar = async function (id: string): Promise<{ ok: true } | { ok: false }> {
+  return { ok: false };
+};
+`;
+    const hallazgos = detector(archivo(texto));
+    expect(hallazgos).toHaveLength(1);
+    expect(hallazgos[0]!.detalle).toContain('operar');
+  });
+
+  it('no confunde una llave del tipo de retorno (unión de objetos) con la del cuerpo: function expression, con guarda', () => {
+    const texto = `"use server";
+
+export const operar = async function (id: string): Promise<{ ok: true } | { ok: false }> {
+  await exigirPermiso("operar");
+  return { ok: true };
+};
+`;
+    expect(detector(archivo(texto))).toEqual([]);
+  });
+
+  it('regresión con forma tipo "validarDesdePorteria" de gestionflow: parámetros multilínea, tipo de retorno unión de objetos multilínea, con guarda', () => {
+    // Excerpt propio (no copiado), con la misma forma que causaba el falso
+    // positivo real: parámetros con default en varias líneas, cierre del
+    // `)`, salto de línea, y recién ahí ": Promise<{...} | {...}> {".
+    const texto = `"use server";
+
+export async function validarAcceso(
+  dispositivoId: string,
+  credencial: string,
+  sentido: "ingreso" | "egreso",
+  forzar = false
+): Promise<{ ok: true; motivo?: string } | { ok: false; error: string }> {
+  await exigirPermiso("accesos.operar");
+  if (forzar) await exigirPermiso("accesos.forzar");
+  return { ok: true };
+}
+`;
+    expect(detector(archivo(texto))).toEqual([]);
+  });
 });
 
 describe('sinSqlCrudoConOr', () => {
