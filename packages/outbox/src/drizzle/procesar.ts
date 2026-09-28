@@ -134,8 +134,36 @@ interface FilaReclamada {
   estadoResultante: "procesando" | "fallido";
 }
 
-/** Lo que devuelve la consulta de reclamo TAL CUAL (antes de normalizar `bloqueadoHasta` a `Date` — ver `reclamarLote`). */
-type FilaReclamadaCruda = Omit<FilaReclamada, "bloqueadoHasta"> & { bloqueadoHasta: string | null };
+/** Lo que devuelve la consulta de reclamo TAL CUAL (antes de normalizar `bloqueadoHasta` a `Date` y de ordenar — ver `reclamarLote`). `claveOrden` es `coalesce(proximo_intento_en, programado_para)`, la MISMA clave del `ORDER BY` de la consulta — se pide de vuelta para poder ordenar en JS (ver `ordenarPorClaveDeReclamo`). */
+type FilaReclamadaCruda = Omit<FilaReclamada, "bloqueadoHasta"> & { bloqueadoHasta: string | null; claveOrden: string };
+
+/** La forma mínima que necesita `ordenarPorClaveDeReclamo`: un id (para el desempate) y la clave de orden FIFO, ya como epoch ms. */
+export interface ClaveOrdenReclamo {
+  id: string;
+  claveOrdenMs: number;
+}
+
+/**
+ * Ordena por `claveOrdenMs` ascendente (la misma clave que pide el `ORDER
+ * BY` de la consulta de reclamo — `coalesce(proximo_intento_en,
+ * programado_para)`), con el `id` como desempate estable para que el orden
+ * sea determinístico incluso con dos filas de la MISMA clave.
+ *
+ * Existe porque un `UPDATE ... RETURNING` no garantiza conservar el orden
+ * del `ORDER BY` de la CTE que lo alimenta (el plan puede unir "candidatos"
+ * con la tabla en cualquier orden) — así que `reclamarLote` no puede
+ * confiar solo en el SQL para el orden FIFO que necesita el resto de
+ * `procesarOutbox` (la cola del pool, "Cola del pool y lease" en su JSDoc).
+ * Exportada para poder testearla sin Postgres; no se re-exporta desde
+ * `src/drizzle/index.ts` (no es parte de la API pública del paquete).
+ */
+export function ordenarPorClaveDeReclamo<T extends ClaveOrdenReclamo>(filas: readonly T[]): T[] {
+  return [...filas].sort((a, b) => {
+    const diferencia = a.claveOrdenMs - b.claveOrdenMs;
+    if (diferencia !== 0) return diferencia;
+    return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+  });
+}
 
 /** El resumen "en cero" — `advertencias` se arma aparte (depende de las opciones validadas de CADA corrida), así que se pasa siempre explícito, nunca se comparte una instancia fija. */
 function resumenVacio(advertencias: string[]): ResumenProcesarOutbox {
@@ -245,7 +273,10 @@ function resumenVacio(advertencias: string[]): ResumenProcesarOutbox {
  *    nuevo, `intentos + 1`. `SKIP LOCKED` es lo que hace que dos
  *    `procesarOutbox` concurrentes se REPARTAN el trabajo en vez de
  *    pisarse. Esta fase es TAN CORTA como sea posible (nada de llamadas de
- *    red adentro).
+ *    red adentro). El `ORDER BY` de la CTE fija QUÉ filas se reclaman, pero
+ *    un `UPDATE ... RETURNING` no garantiza conservar ESE orden en el
+ *    resultado — así que, antes de devolverlas, se reordenan en JS por la
+ *    misma clave (`ordenarPorClaveDeReclamo`), con el id como desempate.
  * 2. **Envío y registro** (fuera de esa transacción, con un tope de
  *    `concurrencia` simultáneos, una transacción corta POR FILA para el
  *    `UPDATE` final, cerrojada como se explicó arriba).
@@ -306,9 +337,6 @@ export async function procesarOutbox(opciones: OpcionesProcesarOutbox): Promise<
   if (!Number.isInteger(leaseMs)) {
     throw new ErrorOutbox("opciones_invalidas", `procesarOutbox: "leaseMs" tiene que ser un entero finito (fue ${leaseMs}).`);
   }
-  if (!(leaseMs > 0)) {
-    throw new ErrorOutbox("opciones_invalidas", `procesarOutbox: "leaseMs" tiene que ser > 0 (fue ${leaseMs}).`);
-  }
   // I2: piso de 5 s — con un lease más corto no queda margen razonable para
   // "timeoutMs" más el colchón de 1 s de "Cola del pool y lease" (JSDoc de
   // arriba); casi cualquier `timeoutMs` válido terminaría liberando TODO,
@@ -328,10 +356,9 @@ export async function procesarOutbox(opciones: OpcionesProcesarOutbox): Promise<
   if (!(timeoutMs >= 1000)) {
     throw new ErrorOutbox("opciones_invalidas", `procesarOutbox: "timeoutMs" tiene que ser >= 1000 (fue ${timeoutMs}).`);
   }
-  // I1: `<= leaseMs / 2`, no solo `< leaseMs` (la validación de la ronda
-  // anterior) — ver el JSDoc de la opción para el porqué (un `timeoutMs`
-  // cercano a `leaseMs` deja "Cola del pool y lease" sin margen real para
-  // distinguir "alcanza" de "no alcanza").
+  // I1: `<= leaseMs / 2`, no solo `< leaseMs` — ver el JSDoc de la opción
+  // para el porqué (un `timeoutMs` cercano a `leaseMs` deja "Cola del pool y
+  // lease" sin margen real para distinguir "alcanza" de "no alcanza").
   if (!(timeoutMs <= leaseMs / 2)) {
     throw new ErrorOutbox(
       "opciones_invalidas",
@@ -584,7 +611,8 @@ async function reclamarLote(
       ${tabla}.${colIntentos} as intentos,
       ${tabla}.${colMaxIntentos} as "maxIntentos",
       ${tabla}.${colBloqueadoHasta} as "bloqueadoHasta",
-      ${tabla}.${colEstado} as "estadoResultante"
+      ${tabla}.${colEstado} as "estadoResultante",
+      coalesce(${tabla}.${colProximoIntentoEn}, ${tabla}.${colProgramadoPara}) as "claveOrden"
   `;
 
   const resultado = (await tx.execute(consulta)) as unknown as { rows: FilaReclamadaCruda[] };
@@ -596,11 +624,20 @@ async function reclamarLote(
   // acá, una vez, para que el resto de este archivo pueda tratar
   // `bloqueadoHasta` como el `Date` que dice su tipo — reproducido con
   // Postgres real: sin esto, `fila.bloqueadoHasta.getTime()` tira
-  // `TypeError` (ver la ronda de fix 2 de este paquete).
-  return resultado.rows.map((fila) => ({
+  // `TypeError`.
+  const filas = resultado.rows.map((fila) => ({
     ...fila,
     bloqueadoHasta: fila.bloqueadoHasta === null ? null : new Date(fila.bloqueadoHasta),
+    claveOrdenMs: new Date(fila.claveOrden).getTime(),
   }));
+
+  // El `ORDER BY` de la CTE "candidatos" de arriba fija QUÉ filas se
+  // reclaman, pero no garantiza el orden en el que las devuelve este
+  // `UPDATE ... RETURNING` (ver `ordenarPorClaveDeReclamo`) — se ordena acá,
+  // en JS, ANTES de que la cola del pool (`procesarConLimite`, más abajo)
+  // las procese, para que el orden FIFO documentado sea real y no un
+  // efecto de qué plan haya elegido Postgres esta vez.
+  return ordenarPorClaveDeReclamo(filas).map(({ claveOrden: _claveOrden, claveOrdenMs: _claveOrdenMs, ...resto }) => resto);
 }
 
 /**
