@@ -712,9 +712,9 @@ describe("procesarOutbox: la cola del pool respeta el lease — L1 (Postgres)", 
 
       // Este escenario (concurrencia: 1, lote: 4) es EXACTAMENTE el caso que
       // motiva la advertencia de I1/I2: leaseMs (6000) < timeoutMs * ceil(lote
-      // / concurrencia) (2000 * 4 = 8000) — de ahí que la mitad de las filas
-      // terminen "liberados" en vez de intentadas. La advertencia tiene que
-      // aparecer acá, coherente con lo que de verdad pasó.
+      // / concurrencia) + 1000 (2000 * 4 + 1000 = 9000) — de ahí que la mitad
+      // de las filas terminen "liberados" en vez de intentadas. La
+      // advertencia tiene que aparecer acá, coherente con lo que de verdad pasó.
       expect(resumenA).toEqual({
         reclamados: 4,
         enviados: 0,

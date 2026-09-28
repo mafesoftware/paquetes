@@ -220,7 +220,8 @@ describe("procesarOutbox: valida las opciones antes de tocar db/tabla", () => {
     const espiaError = vi.spyOn(console, "error").mockImplementation(() => {});
     try {
       // leaseMs: 10_000, timeoutMs: 5000 (el máximo permitido), lote: 10, concurrencia: 1
-      // -> timeoutMs * ceil(lote/concurrencia) = 5000 * 10 = 50_000 > leaseMs (10_000).
+      // -> timeoutMs * ceil(lote/concurrencia) + 1000 (el colchón) =
+      //    5000 * 10 + 1000 = 50_001 > leaseMs (10_000).
       const resumen = await procesarOutbox({
         db: undefined as never,
         tabla: undefined as never,
@@ -255,7 +256,7 @@ describe("procesarOutbox: valida las opciones antes de tocar db/tabla", () => {
 
   it('con TODAS las opciones por defecto (sin pasar lote/leaseMs/timeoutMs/concurrencia), "advertencias" da [] — ronda de fix 3b: el controller marcó que los defaults del paquete NO pueden dispararse su propia advertencia', async () => {
     // lote: 20, concurrencia: 5 (olas = 4), leaseMs: 600_000, timeoutMs:
-    // 60_000 -> 60_000 * 4 = 240_000 <= 600_000: sin advertencia.
+    // 60_000 -> 60_000 * 4 + 1000 (el colchón) = 241_000 <= 600_000: sin advertencia.
     const resumen = await procesarOutbox({ db: undefined as never, tabla: undefined as never, transportes: {} });
     expect(resumen.advertencias).toEqual([]);
     expect(resumen.errores).toBe(1); // sigue fallando por la base (db undefined) — la validación y la advertencia van ANTES de tocarla
