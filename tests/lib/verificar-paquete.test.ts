@@ -75,4 +75,10 @@ describe('verificarPaquete', () => {
     expect(resultado.ok).toBe(false);
     expect(resultado.errores.some((e) => /process\.env/.test(e))).toBe(true);
   });
+
+  it('fix P.C: NO falla si "process.env" aparece SOLO dentro de un comentario (JSDoc o de línea)', () => {
+    const resultado = verificarPaquete(ruta('paquete-bueno-comentario-process-env'));
+    expect(resultado.errores).toEqual([]);
+    expect(resultado.ok).toBe(true);
+  });
 });
