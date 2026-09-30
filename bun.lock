@@ -274,6 +274,13 @@
         "drizzle-orm",
       ],
     },
+    "packages/tesoreria": {
+      "name": "@mafesoftware/tesoreria",
+      "version": "0.0.0",
+      "dependencies": {
+        "@mafesoftware/plata-ar": "workspace:^",
+      },
+    },
   },
   "packages": {
     "@andrewbranch/untar.js": ["@andrewbranch/untar.js@1.0.4", "", {}, "sha512-pVXSwPsLuw8IGLo2Di0EaOfsk+ntVvpkk942J/sHYIkwvtKUakEcPh7HBgZ6tuimgzKSEHgCvO4XgQ05DEbwDw=="],
@@ -543,6 +550,8 @@
     "@mafesoftware/seguridad": ["@mafesoftware/seguridad@workspace:packages/seguridad"],
 
     "@mafesoftware/tenant": ["@mafesoftware/tenant@workspace:packages/tenant"],
+
+    "@mafesoftware/tesoreria": ["@mafesoftware/tesoreria@workspace:packages/tesoreria"],
 
     "@manypkg/find-root": ["@manypkg/find-root@3.1.0", "", { "dependencies": { "@manypkg/tools": "^2.1.0" } }, "sha512-BcSqCyKhBVZ5YkSzOiheMCV41kqAFptW6xGqYSTjkVTl9XQpr+pqHhwgGCOHQtjDCv7Is6EFyA14Sm5GVbVABA=="],
 
