@@ -193,6 +193,14 @@
       "name": "@mafesoftware/permisos",
       "version": "0.1.2",
     },
+    "packages/planes-pago": {
+      "name": "@mafesoftware/planes-pago",
+      "version": "0.0.0",
+      "dependencies": {
+        "@mafesoftware/fechas-ar": "workspace:^",
+        "@mafesoftware/plata-ar": "workspace:^",
+      },
+    },
     "packages/plata-ar": {
       "name": "@mafesoftware/plata-ar",
       "version": "0.2.1",
@@ -509,6 +517,8 @@
     "@mafesoftware/outbox": ["@mafesoftware/outbox@workspace:packages/outbox"],
 
     "@mafesoftware/permisos": ["@mafesoftware/permisos@workspace:packages/permisos"],
+
+    "@mafesoftware/planes-pago": ["@mafesoftware/planes-pago@workspace:packages/planes-pago"],
 
     "@mafesoftware/plata-ar": ["@mafesoftware/plata-ar@workspace:packages/plata-ar"],
 

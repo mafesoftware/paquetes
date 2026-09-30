@@ -1,0 +1,49 @@
+{
+  "name": "@mafesoftware/planes-pago",
+  "version": "0.0.0",
+  "description": "Generación y validación de planes de pago en cuotas: reparto del total por sistema (iguales, variación geométrica o manual), vencimientos por periodicidad movidos al siguiente día hábil, y chequeo de que la suma de las condiciones pactadas (con conversión de moneda si hace falta) cierre exacta contra el total acordado. Núcleo puro: sin DB, sin framework.",
+  "type": "module",
+  "license": "MIT",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "README.md",
+    "CHANGELOG.md"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mafesoftware/paquetes.git",
+    "directory": "packages/planes-pago"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@mafesoftware/plata-ar": "workspace:^",
+    "@mafesoftware/fechas-ar": "workspace:^"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "keywords": [
+    "planes-de-pago",
+    "cuotas",
+    "financiacion",
+    "centavos",
+    "multi-tenant"
+  ]
+}
