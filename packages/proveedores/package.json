@@ -1,0 +1,50 @@
+{
+  "name": "@mafesoftware/proveedores",
+  "version": "0.0.0",
+  "description": "Dominio de proveedores para un ERP/SaaS multi-tenant argentino: totales de un documento (ítems, IVA, percepciones, validación con tolerancia de $1), prorrateo por porcentaje entre proyectos, la decisión de archivar un proveedor con saldo pendiente, y el balance/aprobación de una orden de pago. Núcleo puro: sin DB, sin framework.",
+  "type": "module",
+  "license": "MIT",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "README.md",
+    "CHANGELOG.md"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mafesoftware/paquetes.git",
+    "directory": "packages/proveedores"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@mafesoftware/plata-ar": "workspace:^"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "keywords": [
+    "proveedores",
+    "iva",
+    "prorrateo",
+    "ordenes-de-pago",
+    "argentina",
+    "multi-tenant"
+  ],
+  "sideEffects": false
+}
