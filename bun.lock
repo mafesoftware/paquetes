@@ -70,6 +70,13 @@
       "name": "@mafesoftware/carnet-qr",
       "version": "0.1.2",
     },
+    "packages/clientes": {
+      "name": "@mafesoftware/clientes",
+      "version": "0.0.0",
+      "dependencies": {
+        "@mafesoftware/documentos-ar": "workspace:^",
+      },
+    },
     "packages/correo": {
       "name": "@mafesoftware/correo",
       "version": "0.2.1",
@@ -471,6 +478,8 @@
     "@mafesoftware/auditoria": ["@mafesoftware/auditoria@workspace:packages/auditoria"],
 
     "@mafesoftware/carnet-qr": ["@mafesoftware/carnet-qr@workspace:packages/carnet-qr"],
+
+    "@mafesoftware/clientes": ["@mafesoftware/clientes@workspace:packages/clientes"],
 
     "@mafesoftware/correo": ["@mafesoftware/correo@workspace:packages/correo"],
 
