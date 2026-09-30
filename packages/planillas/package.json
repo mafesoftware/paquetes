@@ -1,6 +1,6 @@
 {
   "name": "@mafesoftware/planillas",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "Motor genérico de importación de planillas .xlsx (mapeo de columnas desordenadas, validación fila por fila, idempotencia por clave natural) y exportación .csv/.xlsx (BOM, separador ';', anti-inyección de fórmulas) para los productos de MAFE Software.",
   "type": "module",
   "license": "MIT",

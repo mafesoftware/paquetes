@@ -1,6 +1,6 @@
 {
   "name": "@mafesoftware/clientes",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "Validacion de documento (DNI/CUIT) y normalizacion para detectar duplicados (email/telefono/documento) de clientes o prospectos. Nucleo puro: sin DB ni framework, compone @mafesoftware/documentos-ar para el digito verificador.",
   "type": "module",
   "license": "MIT",
