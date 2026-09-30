@@ -79,6 +79,14 @@
         "vitest": "^3.2.4",
       },
     },
+    "packages/cuenta-corriente": {
+      "name": "@mafesoftware/cuenta-corriente",
+      "version": "0.0.0",
+      "dependencies": {
+        "@mafesoftware/fechas-ar": "workspace:^",
+        "@mafesoftware/plata-ar": "workspace:^",
+      },
+    },
     "packages/cuotas": {
       "name": "@mafesoftware/cuotas",
       "version": "0.1.2",
@@ -473,6 +481,8 @@
     "@mafesoftware/carnet-qr": ["@mafesoftware/carnet-qr@workspace:packages/carnet-qr"],
 
     "@mafesoftware/correo": ["@mafesoftware/correo@workspace:packages/correo"],
+
+    "@mafesoftware/cuenta-corriente": ["@mafesoftware/cuenta-corriente@workspace:packages/cuenta-corriente"],
 
     "@mafesoftware/cuotas": ["@mafesoftware/cuotas@workspace:packages/cuotas"],
 
