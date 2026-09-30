@@ -1,0 +1,51 @@
+{
+  "name": "@mafesoftware/cuenta-corriente",
+  "version": "0.0.0",
+  "description": "Cuenta corriente de un plan de cuotas: interés por mora (con gracia y tramos de tasa), imputación automática de un cobro (interés → ajuste → capital), gestión de cobranza (aging + promesas de pago), libro de movimientos con saldo corrido por moneda, resumen de cuenta y la máquina de estados de liquidación de una cuota. Núcleo puro: sin base de datos, sin framework.",
+  "type": "module",
+  "license": "MIT",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "README.md",
+    "CHANGELOG.md"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mafesoftware/paquetes.git",
+    "directory": "packages/cuenta-corriente"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@mafesoftware/plata-ar": "workspace:^",
+    "@mafesoftware/fechas-ar": "workspace:^"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "keywords": [
+    "cuenta-corriente",
+    "mora",
+    "imputacion",
+    "cobranza",
+    "cuotas",
+    "multi-tenant"
+  ],
+  "sideEffects": false
+}
