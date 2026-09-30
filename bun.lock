@@ -190,6 +190,13 @@
       "name": "@mafesoftware/plata-ar",
       "version": "0.2.1",
     },
+    "packages/proveedores": {
+      "name": "@mafesoftware/proveedores",
+      "version": "0.0.0",
+      "dependencies": {
+        "@mafesoftware/plata-ar": "workspace:^",
+      },
+    },
     "packages/pruebas-fuentes": {
       "name": "@mafesoftware/pruebas-fuentes",
       "version": "0.1.1",
@@ -495,6 +502,8 @@
     "@mafesoftware/permisos": ["@mafesoftware/permisos@workspace:packages/permisos"],
 
     "@mafesoftware/plata-ar": ["@mafesoftware/plata-ar@workspace:packages/plata-ar"],
+
+    "@mafesoftware/proveedores": ["@mafesoftware/proveedores@workspace:packages/proveedores"],
 
     "@mafesoftware/pruebas-fuentes": ["@mafesoftware/pruebas-fuentes@workspace:packages/pruebas-fuentes"],
 
