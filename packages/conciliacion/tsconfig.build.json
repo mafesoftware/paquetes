@@ -1,0 +1,22 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "outDir": "dist",
+    "rootDir": "src",
+    "noEmit": false,
+    // Limpia el "paths" que hereda (vía tsconfig.json) de
+    // ../../tsconfig.base.json: ESE paths resuelve las dependencias
+    // `workspace:*` de este paquete contra su código FUENTE, que queda
+    // fuera de "rootDir": "src" y TS lo rechaza con TS6059 ("not under
+    // rootDir") en cuanto intenta tipar la emisión. Con "paths" vacío, TS
+    // cae a la resolución NORMAL de node_modules: el símlink de workspace
+    // y su "exports" -> "./dist/...". Esto funciona porque
+    // `bun run --filter './packages/*' build` corre en orden topológico
+    // (las dependencias antes que este paquete), así que ya están
+    // buildeadas cuando le toca a este paquete. "tsconfig.json" (typecheck,
+    // sin build) sigue usando el "paths" con código fuente, porque en CI
+    // el paso de typecheck corre ANTES que el de build.
+    "paths": {}
+  },
+  "include": ["src"]
+}

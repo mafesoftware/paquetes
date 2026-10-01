@@ -1,0 +1,22 @@
+[
+  {
+    "cuenta": "12345/6",
+    "moneda": "ARS",
+    "lineas": [
+      {
+        "fecha": "2026-09-14",
+        "descripcion": "SALDO ANTERIOR",
+        "importe": 0,
+        "saldo": 80000000,
+        "referencia": null
+      },
+      {
+        "fecha": "2026-09-15",
+        "descripcion": "RETIRO CAJERO",
+        "importe": -2500000,
+        "saldo": 77500000,
+        "referencia": "CAJ01"
+      }
+    ]
+  }
+]

@@ -1,0 +1,22 @@
+[
+  {
+    "cuenta": "0-000123/45",
+    "moneda": "ARS",
+    "lineas": [
+      {
+        "fecha": "2026-09-12",
+        "descripcion": "ACREDITACION HABERES",
+        "importe": 123456789,
+        "saldo": 123456789,
+        "referencia": "HAB01"
+      },
+      {
+        "fecha": "2026-09-13",
+        "descripcion": "COMPRA TARJETA DEBITO",
+        "importe": -4567890,
+        "saldo": 118888899,
+        "referencia": "TAR02"
+      }
+    ]
+  }
+]

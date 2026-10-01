@@ -1,0 +1,22 @@
+[
+  {
+    "cuenta": "300-9988776-5",
+    "moneda": "ARS",
+    "lineas": [
+      {
+        "fecha": "2026-09-16",
+        "descripcion": "Transferencia enviada",
+        "importe": -6000000,
+        "saldo": 30000000,
+        "referencia": null
+      },
+      {
+        "fecha": "2026-09-17",
+        "descripcion": "Interes acreditado",
+        "importe": 150025,
+        "saldo": 30150025,
+        "referencia": null
+      }
+    ]
+  }
+]

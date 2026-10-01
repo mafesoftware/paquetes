@@ -1,0 +1,22 @@
+[
+  {
+    "cuenta": "0123-4-456789",
+    "moneda": "ARS",
+    "lineas": [
+      {
+        "fecha": "2026-09-05",
+        "descripcion": "Deposito en efectivo",
+        "importe": 25000000,
+        "saldo": 25000000,
+        "referencia": "DEP01"
+      },
+      {
+        "fecha": "2026-09-06",
+        "descripcion": "Pago de servicios",
+        "importe": -3200050,
+        "saldo": 21799950,
+        "referencia": "SERV02"
+      }
+    ]
+  }
+]
