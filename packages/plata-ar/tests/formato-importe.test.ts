@@ -1,5 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { formatearPlata } from "../src/index.ts";
+import { formatearImporteExacto, formatearPlata } from "../src/index.ts";
+
+describe("formatearImporteExacto se exporta desde el index público", () => {
+  // Bug de empaquetado: index.ts no re-exportaba formato.ts, así que
+  // `formatearImporteExacto` quedaba inalcanzable para quien consume el
+  // paquete publicado, aunque `formatearPlata` la usara por dentro.
+  it("formatearImporteExacto(centavos, moneda) formatea en bigint exacto", () => {
+    expect(formatearImporteExacto(123_456n, "ARS")).toMatch(/^\$\s1\.234,56$/);
+  });
+});
 
 describe("formatearPlata (Importe | bigint, API 0.2)", () => {
   it('{centavos:-5000n, moneda:"USD"} -> "-US$ 50,00"', () => {

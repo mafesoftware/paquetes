@@ -39,6 +39,7 @@ export * from "./factor.js";
 export * from "./reparto.js";
 export * from "./moneda.js";
 export * from "./parseo.js";
+export * from "./formato.js";
 
 import type { Importe, Moneda } from "./moneda.js";
 import { formatearImporteExacto } from "./formato.js";
