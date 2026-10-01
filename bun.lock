@@ -24,10 +24,6 @@
         "@mafesoftware/fechas-ar": "workspace:*",
       },
     },
-    "packages/aprobaciones": {
-      "name": "@mafesoftware/aprobaciones",
-      "version": "0.0.0",
-    },
     "packages/arca-ar": {
       "name": "@mafesoftware/arca-ar",
       "version": "0.2.1",
@@ -74,13 +70,6 @@
       "name": "@mafesoftware/carnet-qr",
       "version": "0.1.2",
     },
-    "packages/cheques": {
-      "name": "@mafesoftware/cheques",
-      "version": "0.0.0",
-      "dependencies": {
-        "@mafesoftware/fechas-ar": "workspace:^",
-      },
-    },
     "packages/clientes": {
       "name": "@mafesoftware/clientes",
       "version": "0.1.0",
@@ -88,8 +77,8 @@
         "@mafesoftware/documentos-ar": "workspace:^",
       },
     },
-    "packages/compras": {
-      "name": "@mafesoftware/compras",
+    "packages/contabilidad": {
+      "name": "@mafesoftware/contabilidad",
       "version": "0.0.0",
       "dependencies": {
         "@mafesoftware/plata-ar": "workspace:^",
@@ -530,8 +519,6 @@
 
     "@mafesoftware/accesos": ["@mafesoftware/accesos@workspace:packages/accesos"],
 
-    "@mafesoftware/aprobaciones": ["@mafesoftware/aprobaciones@workspace:packages/aprobaciones"],
-
     "@mafesoftware/arca-ar": ["@mafesoftware/arca-ar@workspace:packages/arca-ar"],
 
     "@mafesoftware/archivos-s3": ["@mafesoftware/archivos-s3@workspace:packages/archivos-s3"],
@@ -540,11 +527,9 @@
 
     "@mafesoftware/carnet-qr": ["@mafesoftware/carnet-qr@workspace:packages/carnet-qr"],
 
-    "@mafesoftware/cheques": ["@mafesoftware/cheques@workspace:packages/cheques"],
-
     "@mafesoftware/clientes": ["@mafesoftware/clientes@workspace:packages/clientes"],
 
-    "@mafesoftware/compras": ["@mafesoftware/compras@workspace:packages/compras"],
+    "@mafesoftware/contabilidad": ["@mafesoftware/contabilidad@workspace:packages/contabilidad"],
 
     "@mafesoftware/correo": ["@mafesoftware/correo@workspace:packages/correo"],
 
