@@ -1,0 +1,39 @@
+{
+  "name": "@mafesoftware/compras",
+  "version": "0.0.0",
+  "description": "Compras de obra, núcleo puro: ciclo de vida de un pedido de compra (requisicion), cuadro comparativo de cotizaciones (armarComparativo) y ciclo de vida + totales con IVA de una orden de compra. Aritmetica de Cantidad (decimal como string) compartida por los tres. Sin DB ni framework.",
+  "type": "module",
+  "license": "MIT",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "README.md",
+    "CHANGELOG.md",
+    "sql"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mafesoftware/paquetes.git",
+    "directory": "packages/compras"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@mafesoftware/plata-ar": "workspace:^"
+  }
+}
