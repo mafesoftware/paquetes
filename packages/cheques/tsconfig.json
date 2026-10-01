@@ -1,0 +1,18 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    // Sin "rootDir" acá a propósito: este archivo es el que usa
+    // `bun run typecheck` (vía "paths" de ../../tsconfig.base.json, que
+    // resuelve las dependencias `workspace:*` de este paquete contra su
+    // CÓDIGO FUENTE, no contra dist — todavía no están buildeadas en el
+    // paso de typecheck de CI). Si tuviera "rootDir": "src" como
+    // tsconfig.build.json, TS rechazaría esos archivos de la dependencia
+    // con TS6059 ("not under rootDir") aunque no vaya a emitir nada.
+    // tsconfig.build.json (que sí necesita "rootDir": "src", para el dist)
+    // extiende este archivo y limpia "paths" para no pisar este problema —
+    // ver su comentario. Patrón copiado de packages/numeradores.
+    "types": ["node"]
+  },
+  "include": ["src"]
+}

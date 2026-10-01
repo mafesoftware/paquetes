@@ -74,6 +74,13 @@
       "name": "@mafesoftware/carnet-qr",
       "version": "0.1.2",
     },
+    "packages/cheques": {
+      "name": "@mafesoftware/cheques",
+      "version": "0.0.0",
+      "dependencies": {
+        "@mafesoftware/fechas-ar": "workspace:^",
+      },
+    },
     "packages/clientes": {
       "name": "@mafesoftware/clientes",
       "version": "0.1.0",
@@ -532,6 +539,8 @@
     "@mafesoftware/auditoria": ["@mafesoftware/auditoria@workspace:packages/auditoria"],
 
     "@mafesoftware/carnet-qr": ["@mafesoftware/carnet-qr@workspace:packages/carnet-qr"],
+
+    "@mafesoftware/cheques": ["@mafesoftware/cheques@workspace:packages/cheques"],
 
     "@mafesoftware/clientes": ["@mafesoftware/clientes@workspace:packages/clientes"],
 
