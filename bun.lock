@@ -24,6 +24,10 @@
         "@mafesoftware/fechas-ar": "workspace:*",
       },
     },
+    "packages/aprobaciones": {
+      "name": "@mafesoftware/aprobaciones",
+      "version": "0.0.0",
+    },
     "packages/arca-ar": {
       "name": "@mafesoftware/arca-ar",
       "version": "0.2.1",
@@ -70,11 +74,25 @@
       "name": "@mafesoftware/carnet-qr",
       "version": "0.1.2",
     },
+    "packages/cheques": {
+      "name": "@mafesoftware/cheques",
+      "version": "0.0.0",
+      "dependencies": {
+        "@mafesoftware/fechas-ar": "workspace:^",
+      },
+    },
     "packages/clientes": {
       "name": "@mafesoftware/clientes",
       "version": "0.1.0",
       "dependencies": {
         "@mafesoftware/documentos-ar": "workspace:^",
+      },
+    },
+    "packages/compras": {
+      "name": "@mafesoftware/compras",
+      "version": "0.0.0",
+      "dependencies": {
+        "@mafesoftware/plata-ar": "workspace:^",
       },
     },
     "packages/conciliacion": {
@@ -85,6 +103,13 @@
         "@mafesoftware/plata-ar": "workspace:^",
         "exceljs": "^4.4.0",
         "pdfjs-dist": "^6.3.289",
+      },
+    },
+    "packages/contabilidad": {
+      "name": "@mafesoftware/contabilidad",
+      "version": "0.0.0",
+      "dependencies": {
+        "@mafesoftware/plata-ar": "workspace:^",
       },
     },
     "packages/correo": {
@@ -261,6 +286,27 @@
         "@mafesoftware/fechas-ar": "workspace:*",
         "@mafesoftware/plata-ar": "workspace:*",
       },
+    },
+    "packages/retenciones-ar": {
+      "name": "@mafesoftware/retenciones-ar",
+      "version": "0.1.0",
+      "dependencies": {
+        "@mafesoftware/plata-ar": "workspace:^",
+        "@mafesoftware/tenant": "workspace:^",
+      },
+      "devDependencies": {
+        "@types/pg": "^8.15.5",
+        "drizzle-kit": "~0.31",
+        "drizzle-orm": "~0.45.2",
+        "fast-check": "^4.10.2",
+        "pg": "^8.23.0",
+      },
+      "peerDependencies": {
+        "drizzle-orm": ">=0.45 <0.46",
+      },
+      "optionalPeers": [
+        "drizzle-orm",
+      ],
     },
     "packages/seguridad": {
       "name": "@mafesoftware/seguridad",
@@ -522,6 +568,8 @@
 
     "@mafesoftware/accesos": ["@mafesoftware/accesos@workspace:packages/accesos"],
 
+    "@mafesoftware/aprobaciones": ["@mafesoftware/aprobaciones@workspace:packages/aprobaciones"],
+
     "@mafesoftware/arca-ar": ["@mafesoftware/arca-ar@workspace:packages/arca-ar"],
 
     "@mafesoftware/archivos-s3": ["@mafesoftware/archivos-s3@workspace:packages/archivos-s3"],
@@ -530,9 +578,15 @@
 
     "@mafesoftware/carnet-qr": ["@mafesoftware/carnet-qr@workspace:packages/carnet-qr"],
 
+    "@mafesoftware/cheques": ["@mafesoftware/cheques@workspace:packages/cheques"],
+
     "@mafesoftware/clientes": ["@mafesoftware/clientes@workspace:packages/clientes"],
 
+    "@mafesoftware/compras": ["@mafesoftware/compras@workspace:packages/compras"],
+
     "@mafesoftware/conciliacion": ["@mafesoftware/conciliacion@workspace:packages/conciliacion"],
+
+    "@mafesoftware/contabilidad": ["@mafesoftware/contabilidad@workspace:packages/contabilidad"],
 
     "@mafesoftware/correo": ["@mafesoftware/correo@workspace:packages/correo"],
 
@@ -571,6 +625,8 @@
     "@mafesoftware/pruebas-tenant": ["@mafesoftware/pruebas-tenant@workspace:packages/pruebas-tenant"],
 
     "@mafesoftware/reservas": ["@mafesoftware/reservas@workspace:packages/reservas"],
+
+    "@mafesoftware/retenciones-ar": ["@mafesoftware/retenciones-ar@workspace:packages/retenciones-ar"],
 
     "@mafesoftware/seguridad": ["@mafesoftware/seguridad@workspace:packages/seguridad"],
 
