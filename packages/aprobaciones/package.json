@@ -1,0 +1,48 @@
+{
+  "name": "@mafesoftware/aprobaciones",
+  "version": "0.0.0",
+  "description": "Motor puro de aprobaciones por niveles: circuitos versionados (con condiciones de monto/proyecto/rubro/proveedor), elegirCircuito y estadoSolicitud a partir de los votos emitidos, con auto-aprobacion bloqueada. Sin DB ni framework.",
+  "type": "module",
+  "license": "MIT",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "README.md",
+    "CHANGELOG.md",
+    "sql"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mafesoftware/paquetes.git",
+    "directory": "packages/aprobaciones"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.build.json --noEmit"
+  },
+  "dependencies": {},
+  "engines": {
+    "node": ">=20"
+  },
+  "sideEffects": false,
+  "keywords": [
+    "aprobaciones",
+    "circuitos",
+    "workflow",
+    "niveles",
+    "multi-tenant"
+  ]
+}

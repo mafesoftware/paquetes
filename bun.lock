@@ -24,6 +24,10 @@
         "@mafesoftware/fechas-ar": "workspace:*",
       },
     },
+    "packages/aprobaciones": {
+      "name": "@mafesoftware/aprobaciones",
+      "version": "0.0.0",
+    },
     "packages/arca-ar": {
       "name": "@mafesoftware/arca-ar",
       "version": "0.2.1",
@@ -72,7 +76,7 @@
     },
     "packages/clientes": {
       "name": "@mafesoftware/clientes",
-      "version": "0.0.0",
+      "version": "0.1.0",
       "dependencies": {
         "@mafesoftware/documentos-ar": "workspace:^",
       },
@@ -88,7 +92,7 @@
     },
     "packages/cuenta-corriente": {
       "name": "@mafesoftware/cuenta-corriente",
-      "version": "0.0.0",
+      "version": "0.1.0",
       "dependencies": {
         "@mafesoftware/fechas-ar": "workspace:^",
         "@mafesoftware/plata-ar": "workspace:^",
@@ -203,7 +207,7 @@
     },
     "packages/planes-pago": {
       "name": "@mafesoftware/planes-pago",
-      "version": "0.0.0",
+      "version": "0.1.0",
       "dependencies": {
         "@mafesoftware/fechas-ar": "workspace:^",
         "@mafesoftware/plata-ar": "workspace:^",
@@ -211,18 +215,18 @@
     },
     "packages/planillas": {
       "name": "@mafesoftware/planillas",
-      "version": "0.0.0",
+      "version": "0.1.0",
       "dependencies": {
         "exceljs": "^4.4.0",
       },
     },
     "packages/plata-ar": {
       "name": "@mafesoftware/plata-ar",
-      "version": "0.2.1",
+      "version": "0.2.2",
     },
     "packages/proveedores": {
       "name": "@mafesoftware/proveedores",
-      "version": "0.0.0",
+      "version": "0.1.0",
       "dependencies": {
         "@mafesoftware/plata-ar": "workspace:^",
       },
@@ -283,7 +287,7 @@
     },
     "packages/tesoreria": {
       "name": "@mafesoftware/tesoreria",
-      "version": "0.0.0",
+      "version": "0.1.0",
       "dependencies": {
         "@mafesoftware/plata-ar": "workspace:^",
       },
@@ -511,6 +515,8 @@
     "@loaderkit/resolve": ["@loaderkit/resolve@1.0.6", "", { "dependencies": { "@braidai/lang": "^1.0.0" } }, "sha512-G8FdIoF5CypfwmD9rl8BXod5HDn8JqB0CCNBXDTaRZ+yRYhARrrSToX1zg1zy9jX3zLqigsELwhT4gNtkdQAUg=="],
 
     "@mafesoftware/accesos": ["@mafesoftware/accesos@workspace:packages/accesos"],
+
+    "@mafesoftware/aprobaciones": ["@mafesoftware/aprobaciones@workspace:packages/aprobaciones"],
 
     "@mafesoftware/arca-ar": ["@mafesoftware/arca-ar@workspace:packages/arca-ar"],
 
