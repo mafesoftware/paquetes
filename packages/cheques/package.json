@@ -1,0 +1,50 @@
+{
+  "name": "@mafesoftware/cheques",
+  "version": "0.0.0",
+  "description": "Cartera de cheques (propios/terceros, fisico/echeq): transicionCheque (estados y transiciones, dos vocabularios disjuntos segun tipo), proyeccionSaldoBancario (saldo bancario proyectado) y validarFechaPago/validarFechaDeposito/validarMonedaCajaValores. Nucleo puro, montos en centavos (bigint).",
+  "type": "module",
+  "license": "MIT",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "README.md",
+    "CHANGELOG.md",
+    "sql"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mafesoftware/paquetes.git",
+    "directory": "packages/cheques"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@mafesoftware/fechas-ar": "workspace:^"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "sideEffects": false,
+  "keywords": [
+    "cheques",
+    "tesoreria",
+    "echeq",
+    "cartera",
+    "multi-tenant"
+  ]
+}
