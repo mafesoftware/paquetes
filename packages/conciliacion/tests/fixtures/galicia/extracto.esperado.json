@@ -1,0 +1,29 @@
+[
+  {
+    "cuenta": "4001-8001234-5",
+    "moneda": "ARS",
+    "lineas": [
+      {
+        "fecha": "2026-09-01",
+        "descripcion": "SALDO ANTERIOR",
+        "importe": 0,
+        "saldo": 100000000,
+        "referencia": null
+      },
+      {
+        "fecha": "2026-09-02",
+        "descripcion": "TRANSFERENCIA RECIBIDA",
+        "importe": 15000000,
+        "saldo": 115000000,
+        "referencia": "REF001"
+      },
+      {
+        "fecha": "2026-09-03",
+        "descripcion": "PAGO PROVEEDOR SA",
+        "importe": -8500000,
+        "saldo": 106500000,
+        "referencia": "REF002"
+      }
+    ]
+  }
+]

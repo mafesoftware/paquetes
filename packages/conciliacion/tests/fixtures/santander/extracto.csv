@@ -1,0 +1,4 @@
+SANTANDER;CUENTA;0123-4-456789;ARS
+Fecha;Concepto;Importe;Saldo;Referencia
+05/09/2026;Deposito en efectivo;250000,00;250000,00;DEP01
+06/09/2026;Pago de servicios;-32000,50;217999,50;SERV02
