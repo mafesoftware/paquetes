@@ -1,6 +1,6 @@
 {
   "name": "@mafesoftware/aprobaciones",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "Motor puro de aprobaciones por niveles: circuitos versionados (con condiciones de monto/proyecto/rubro/proveedor), elegirCircuito y estadoSolicitud a partir de los votos emitidos, con auto-aprobacion bloqueada. Sin DB ni framework.",
   "type": "module",
   "license": "MIT",
