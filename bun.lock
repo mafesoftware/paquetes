@@ -259,6 +259,27 @@
         "@mafesoftware/plata-ar": "workspace:*",
       },
     },
+    "packages/retenciones-ar": {
+      "name": "@mafesoftware/retenciones-ar",
+      "version": "0.1.0",
+      "dependencies": {
+        "@mafesoftware/plata-ar": "workspace:^",
+        "@mafesoftware/tenant": "workspace:^",
+      },
+      "devDependencies": {
+        "@types/pg": "^8.15.5",
+        "drizzle-kit": "~0.31",
+        "drizzle-orm": "~0.45.2",
+        "fast-check": "^4.10.2",
+        "pg": "^8.23.0",
+      },
+      "peerDependencies": {
+        "drizzle-orm": ">=0.45 <0.46",
+      },
+      "optionalPeers": [
+        "drizzle-orm",
+      ],
+    },
     "packages/seguridad": {
       "name": "@mafesoftware/seguridad",
       "version": "0.1.1",
@@ -568,6 +589,8 @@
     "@mafesoftware/pruebas-tenant": ["@mafesoftware/pruebas-tenant@workspace:packages/pruebas-tenant"],
 
     "@mafesoftware/reservas": ["@mafesoftware/reservas@workspace:packages/reservas"],
+
+    "@mafesoftware/retenciones-ar": ["@mafesoftware/retenciones-ar@workspace:packages/retenciones-ar"],
 
     "@mafesoftware/seguridad": ["@mafesoftware/seguridad@workspace:packages/seguridad"],
 
