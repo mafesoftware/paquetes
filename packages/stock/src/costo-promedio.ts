@@ -24,6 +24,19 @@ export function costoPromedio(s: SaldoStock, ingreso: { cantidad: Cantidad; cost
   return { cantidad, valor, costoUnitario: costoUnitarioDivision(valor, cantidad) };
 }
 
+/**
+ * Repone `cantidad` con un valor total FIJO e historico. A diferencia de
+ * `costoPromedio`, no reconstruye ese valor desde un costo unitario
+ * redondeado: suma `valorFijo` exacto. Es la inversa contable de un egreso
+ * ya valorizado, incluso cuando aquel egreso vacio el saldo y se llevo un
+ * centavo residual que no puede representarse en el unitario.
+ */
+export function ingresoAValorFijo(s: SaldoStock, cantidadIngreso: Cantidad, valorFijo: bigint): SaldoStock & { costoUnitario: bigint } {
+  const cantidad = sumarCantidades([s.cantidad, cantidadIngreso]);
+  const valor = s.valor + valorFijo;
+  return { cantidad, valor, costoUnitario: costoUnitarioDivision(valor, cantidad) };
+}
+
 /** `valor / cantidad` con redondeo comercial al centavo — cantidad como fracción exacta (`Cantidad` tiene hasta 4 decimales). Exportada para quien cierre un inventario (costo del ajuste "alta" de un sobrante). */
 export function costoUnitarioDivision(valor: bigint, cantidad: Cantidad): bigint {
   const escala = 10_000n; // 4 decimales de `Cantidad`

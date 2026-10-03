@@ -6,7 +6,7 @@
  * Depende de `@mafesoftware/plata-ar` (`redondearComercial` para la
  * aritmética de `Cantidad`, nunca reimplementada acá).
  *
- * - **`costoPromedio` / `egresoAPromedio` / `egresoAValorFijo` /
+ * - **`costoPromedio` / `ingresoAValorFijo` / `egresoAPromedio` / `egresoAValorFijo` /
  *   `costoUnitarioDivision`**: el saldo de un material en un almacén
  *   (cantidad + valor), cómo lo mezcla un ingreso (costo promedio
  *   ponderado, CPP) y cómo sale un egreso — al costo promedio vigente o a
@@ -23,5 +23,5 @@
  */
 
 export type { Cantidad } from "./cantidades.js";
-export { costoPromedio, costoUnitarioDivision, egresoAPromedio, egresoAValorFijo, restarCantidad, compararCantidad, type SaldoStock, type ResultadoEgreso } from "./costo-promedio.js";
+export { costoPromedio, ingresoAValorFijo, costoUnitarioDivision, egresoAPromedio, egresoAValorFijo, restarCantidad, compararCantidad, type SaldoStock, type ResultadoEgreso } from "./costo-promedio.js";
 export { diferenciaInventario, bajoMinimo, type DiferenciaInventario } from "./inventario.js";

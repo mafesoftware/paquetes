@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { costoPromedio, egresoAPromedio, egresoAValorFijo, type SaldoStock } from "../src/costo-promedio.js";
+import { costoPromedio, egresoAPromedio, egresoAValorFijo, ingresoAValorFijo, type SaldoStock } from "../src/costo-promedio.js";
 
 /**
  * Costo promedio ponderado, sin perder el centavo. Todos los importes en
@@ -97,5 +97,14 @@ describe("egresoAValorFijo", () => {
     if (!resultado.ok) throw new Error("no debería fallar");
     expect(resultado.valorEgreso).toBe(1_000_00n);
     expect(resultado.resto).toEqual({ cantidad: "0.0000", valor: 0n });
+  });
+});
+
+describe("ingresoAValorFijo", () => {
+  it("repone cantidad y valor historico exactos sin recalcular desde un unitario redondeado", () => {
+    const saldo: SaldoStock = { cantidad: "4", valor: 40_000n };
+    const resultado = ingresoAValorFijo(saldo, "3", 100_001n);
+
+    expect(resultado).toEqual({ cantidad: "7.0000", valor: 140_001n, costoUnitario: 20_000n });
   });
 });

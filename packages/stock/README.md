@@ -39,7 +39,7 @@ bun test
 ### Costo promedio ponderado (CPP)
 
 ```ts
-import { costoPromedio, egresoAPromedio, egresoAValorFijo, type SaldoStock } from "@mafesoftware/stock";
+import { costoPromedio, ingresoAValorFijo, egresoAPromedio, egresoAValorFijo, type SaldoStock } from "@mafesoftware/stock";
 
 let saldo: SaldoStock = { cantidad: "0", valor: 0n };
 
@@ -69,6 +69,16 @@ operación anterior al costo ORIGINAL de esa operación (ej.: anular una
 recepción al precio pactado en la orden de compra), no al costo promedio
 vigente del saldo — mismo chequeo de disponibilidad, y el valor egresado se
 acota a `s.valor` para no dejarlo negativo.
+
+`ingresoAValorFijo(s, cantidad, valorFijo)` hace la inversa: repone una salida
+sumando su valor total historico exacto, sin reconstruirlo desde un unitario
+redondeado. Esto evita perder el centavo residual cuando la salida original
+habia vaciado un saldo cuyo valor no era divisible exactamente por la cantidad.
+
+```ts
+ingresoAValorFijo({ cantidad: "4", valor: 40_000n }, "3", 100_001n);
+// { cantidad: "7.0000", valor: 140_001n, costoUnitario: 20_000n }
+```
 
 `costoUnitarioDivision(valor, cantidad)` expone el cociente
 `valor / cantidad` con el mismo redondeo — útil para valorizar un ajuste al
