@@ -93,6 +93,9 @@ export function egresoAPromedio(s: SaldoStock, cantidad: Cantidad): ResultadoEgr
 export function egresoAValorFijo(s: SaldoStock, cantidad: Cantidad, valorFijo: bigint): ResultadoEgreso {
   const disponible = compararCantidad(cantidad, s.cantidad);
   if (disponible > 0) return { ok: false, error: "stock_insuficiente", disponible: s.cantidad };
+  if (disponible === 0) {
+    return { ok: true, valorEgreso: s.valor, resto: { cantidad: "0.0000", valor: 0n } };
+  }
   const cantidadRestante = restarCantidad(s.cantidad, cantidad);
   const valorEgreso = valorFijo > s.valor ? s.valor : valorFijo;
   const valorRestante = s.valor - valorEgreso;

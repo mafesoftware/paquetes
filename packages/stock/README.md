@@ -68,7 +68,9 @@ de menos): se lleva `s.valor` exacto en vez de recalcular
 operación anterior al costo ORIGINAL de esa operación (ej.: anular una
 recepción al precio pactado en la orden de compra), no al costo promedio
 vigente del saldo — mismo chequeo de disponibilidad, y el valor egresado se
-acota a `s.valor` para no dejarlo negativo.
+acota a `s.valor` para no dejarlo negativo. Si retira toda la cantidad, se
+lleva todo el valor disponible para no dejar centavos residuales con saldo
+físico cero.
 
 `ingresoAValorFijo(s, cantidad, valorFijo)` hace la inversa: repone una salida
 sumando su valor total historico exacto, sin reconstruirlo desde un unitario

@@ -98,6 +98,12 @@ describe("egresoAValorFijo", () => {
     expect(resultado.valorEgreso).toBe(1_000_00n);
     expect(resultado.resto).toEqual({ cantidad: "0.0000", valor: 0n });
   });
+
+  it("al vaciar la cantidad se lleva todo el valor y no deja centavos fantasma", () => {
+    const resultado = egresoAValorFijo({ cantidad: "2", valor: 250n }, "2", 200n);
+
+    expect(resultado).toEqual({ ok: true, valorEgreso: 250n, resto: { cantidad: "0.0000", valor: 0n } });
+  });
 });
 
 describe("ingresoAValorFijo", () => {
