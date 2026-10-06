@@ -1,6 +1,6 @@
 {
   "name": "@mafesoftware/cheques",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Cartera de cheques (propios/terceros, fisico/echeq): transicionCheque (estados y transiciones, dos vocabularios disjuntos segun tipo), proyeccionSaldoBancario (saldo bancario proyectado) y validarFechaPago/validarFechaDeposito/validarMonedaCajaValores. Nucleo puro, montos en centavos (bigint).",
   "type": "module",
   "license": "MIT",

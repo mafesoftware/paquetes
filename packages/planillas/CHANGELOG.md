@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.0
+
+### Minor Changes
+
+- 0aded29: Agrega `textoWinAnsi`: deja un texto apto para las fuentes estándar de PDF de `pdf-lib`, donde un solo carácter no WinAnsi (un emoji, una letra fuera de Latin-1) hace fallar todo el documento. Sale de Gestión360.
+
 ## 0.1.0
 
 ### Minor Changes

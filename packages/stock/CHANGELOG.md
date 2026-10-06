@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.2.0
+
+### Minor Changes
+
+- 7ba8fd6: Agrega `ingresoAValorFijo` para compensar un egreso reponiendo cantidad y valor historico exactos, sin perder centavos por reconstruir el total desde un costo unitario redondeado.
+
+### Patch Changes
+
+- 91970ee: Evita dejar valor residual cuando un egreso a valor fijo vacía toda la cantidad disponible.
+- Updated dependencies [0aded29]
+  - @mafesoftware/plata-ar@0.3.0
+
 ## 0.1.0
 
 ### Minor Changes

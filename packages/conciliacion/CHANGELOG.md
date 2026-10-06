@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.2.1
+
+### Patch Changes
+
+- Updated dependencies [0aded29]
+- Updated dependencies [0aded29]
+  - @mafesoftware/fechas-ar@0.3.0
+  - @mafesoftware/plata-ar@0.3.0
+
 ## 0.2.0
 
 ### Minor Changes

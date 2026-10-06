@@ -1,6 +1,6 @@
 {
   "name": "@mafesoftware/cuenta-corriente",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Cuenta corriente de un plan de cuotas: interés por mora (con gracia y tramos de tasa), imputación automática de un cobro (interés → ajuste → capital), gestión de cobranza (aging + promesas de pago), libro de movimientos con saldo corrido por moneda, resumen de cuenta y la máquina de estados de liquidación de una cuota. Núcleo puro: sin base de datos, sin framework.",
   "type": "module",
   "license": "MIT",

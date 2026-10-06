@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.0
+
+### Minor Changes
+
+- 0aded29: Agrega `periodoLargo` (`"2026-11"` → `"noviembre de 2026"`), `rangoDeDias` (`"14/11/26 al 16/11/26"`, para lo que dura más de un día) y `rangoHorario` (`"21:00 a 04:00 (+1 día)"`, horarios que cruzan la medianoche). Salen de Gestión360.
+
 ## 0.2.1
 
 ### Patch Changes
