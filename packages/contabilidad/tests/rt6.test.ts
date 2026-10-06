@@ -53,4 +53,29 @@ describe("ajustePorRT6", () => {
     const haber = resultado.lineas.reduce((a, l) => a + l.haber, 0n);
     expect(debe).toBe(haber);
   });
+
+  it("índice en baja (deflación: cierre < origen) → ajuste negativo: el no-PN se acredita y el PN se debita (balancea)", () => {
+    const resultado = ajustePorRT6(
+      [
+        { cuentaId: "1.2.1", esPatrimonioNeto: false, valorHistorico: 1_000_000_00n, indiceOrigen: "130", indiceCierre: "100" },
+        { cuentaId: "3.1.2", esPatrimonioNeto: true, valorHistorico: 500_000_00n, indiceOrigen: "130", indiceCierre: "100" },
+      ],
+      "5.7"
+    );
+
+    expect(resultado.detalle).toEqual([
+      { cuentaId: "1.2.1", coeficiente: "0.76923077", ajuste: -23_076_923n },
+      { cuentaId: "3.1.2", coeficiente: "0.76923077", ajuste: -11_538_461n },
+    ]);
+
+    expect(resultado.lineas).toEqual([
+      { cuentaId: "1.2.1", debe: 0n, haber: 23_076_923n, detalle: "RT 6 — reexpresión por inflación" },
+      { cuentaId: "3.1.2", debe: 11_538_461n, haber: 0n, detalle: "RT 6 — reexpresión por inflación" },
+      { cuentaId: "5.7", debe: 11_538_462n, haber: 0n, detalle: "RT 6 — resultado por exposición a la inflación (REI)" },
+    ]);
+
+    const debe = resultado.lineas.reduce((a, l) => a + l.debe, 0n);
+    const haber = resultado.lineas.reduce((a, l) => a + l.haber, 0n);
+    expect(debe).toBe(haber);
+  });
 });

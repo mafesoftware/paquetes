@@ -104,6 +104,15 @@ describe("saldoCorrido", () => {
     const corrido = saldoCorrido("activo", 2000n, movimientos);
     expect(corrido).toEqual([3000n, 2700n, 3200n]);
   });
+
+  it("cuenta de pasivo: el haber aumenta el saldo y el debe lo disminuye (signo invertido)", () => {
+    const movimientos = [
+      { debe: 0n, haber: 1000n },
+      { debe: 300n, haber: 0n },
+    ];
+    const corrido = saldoCorrido("pasivo", 0n, movimientos);
+    expect(corrido).toEqual([1000n, 700n]);
+  });
 });
 
 describe("totalPorProyecto", () => {

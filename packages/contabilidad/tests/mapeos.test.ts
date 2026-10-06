@@ -1,5 +1,27 @@
 import { describe, expect, it } from "vitest";
-import { calcularFaltantes, CLAVE, resolverCuenta, siguienteCodigoSubcuenta } from "../src/mapeos.js";
+import { calcularFaltantes, CLAVE, CLAVES_OTROS, resolverCuenta, siguienteCodigoSubcuenta } from "../src/mapeos.js";
+
+describe("CLAVE", () => {
+  it("arma cada clave parametrizada con el prefijo correcto", () => {
+    expect(CLAVE.caja("caja-1")).toBe("caja:caja-1");
+    expect(CLAVE.tipoOperacion("tipo-1")).toBe("tipo_operacion:tipo-1");
+    expect(CLAVE.rubro("rubro-1")).toBe("rubro:rubro-1");
+    expect(CLAVE.item("item-1")).toBe("item:item-1");
+    expect(CLAVE.ivaVentas("21")).toBe("iva_ventas:21");
+    expect(CLAVE.ivaVentas(21)).toBe("iva_ventas:21");
+    expect(CLAVE.ivaCompras("10.5")).toBe("iva_compras:10.5");
+    expect(CLAVE.retencionSufrida("ganancias")).toBe("retencion_sufrida:ganancias");
+    expect(CLAVE.retencionPracticada("ganancias")).toBe("retencion_practicada:ganancias");
+    expect(CLAVE.percepcionPracticada("caba")).toBe("percepcion_practicada:caba");
+    expect(CLAVE.venta("alquiler")).toBe("venta:alquiler");
+    expect(CLAVE.tarjeta("visa")).toBe("tarjeta:visa");
+  });
+
+  it("percepcionSufrida incluye la jurisdicción solo si se pasa", () => {
+    expect(CLAVE.percepcionSufrida("iibb")).toBe("percepcion_sufrida:iibb");
+    expect(CLAVE.percepcionSufrida("iibb", "caba")).toBe("percepcion_sufrida:iibb:caba");
+  });
+});
 
 describe("resolverCuenta", () => {
   it("devuelve la cuenta mapeada directamente", () => {
@@ -41,6 +63,21 @@ describe("calcularFaltantes", () => {
       mapeos: { [CLAVE.caja(cajaVieja.id)]: "cuenta-caja-vieja" },
     });
     expect(resultado.cajasSinCuenta).toEqual([{ clave: "caja:caja-nueva", descripcion: `Caja "Banco USD" no tiene cuenta asignada.` }]);
+  });
+
+  it("tipo de operación nuevo → aparece en 'tipos sin cuenta'", () => {
+    const resultado = calcularFaltantes({
+      cajas: [],
+      tiposOperacion: [{ id: "tipo-1", nombre: "Cobro" }],
+      rubros: [],
+      mapeos: {},
+    });
+    expect(resultado.tiposSinCuenta).toEqual([{ clave: "tipo_operacion:tipo-1", descripcion: `Tipo de operación "Cobro" no tiene cuenta asignada.` }]);
+  });
+
+  it("claves fijas sin mapear aparecen en 'otros' (todas las de CLAVES_OTROS)", () => {
+    const resultado = calcularFaltantes({ cajas: [], tiposOperacion: [], rubros: [], mapeos: {} });
+    expect(resultado.otros.map((f) => f.clave)).toEqual([...CLAVES_OTROS]);
   });
 
   it("con todo mapeado, 0 faltantes (4 cajas y 25 rubros)", () => {
