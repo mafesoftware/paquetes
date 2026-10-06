@@ -53,4 +53,18 @@ describe("totalesOrdenCompra", () => {
     expect(totales.iva).toBe(31_500n);
     expect(totales.total).toBe(231_500n);
   });
+
+  it("alícuota negativa (ajuste a favor) resta del subtotal", () => {
+    const totales = totalesOrdenCompra([{ cantidad: "1", precio: 1_000_000n, alicuotaIva: "-10" }]);
+    expect(totales.subtotal).toBe(1_000_000n);
+    expect(totales.iva).toBe(-100_000n);
+    expect(totales.total).toBe(900_000n);
+  });
+
+  it("alícuota sin parte entera (\".5\" = medio por ciento) se calcula igual", () => {
+    const totales = totalesOrdenCompra([{ cantidad: "1", precio: 1_000_000n, alicuotaIva: ".5" }]);
+    expect(totales.subtotal).toBe(1_000_000n);
+    expect(totales.iva).toBe(5_000n);
+    expect(totales.total).toBe(1_005_000n);
+  });
 });

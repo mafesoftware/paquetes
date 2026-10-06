@@ -47,3 +47,19 @@ describe("porcentajeDe", () => {
     expect(porcentajeDe("500", "0")).toBe("0.0000");
   });
 });
+
+describe("formato inválido", () => {
+  it("una cantidad que no es un decimal de hasta 4 decimales tira error", () => {
+    expect(() => multiplicar("abc", 1n)).toThrow(/cantidad inválida/);
+  });
+
+  it("más de 4 decimales también tira error", () => {
+    expect(() => sumarCantidades(["1.23456"])).toThrow(/cantidad inválida/);
+  });
+});
+
+describe("restarCantidades con b ya negativo", () => {
+  it("resta un negativo es sumar: 10 − (−5) = 15", () => {
+    expect(restarCantidades("10", "-5")).toBe("15.0000");
+  });
+});
