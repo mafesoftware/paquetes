@@ -98,6 +98,26 @@ pesosParaPlanilla(123_456); // "1234,56" (para que Excel lo sume como número)
 `parsearPorcentaje` y una cantidad por `parsearCantidad`: pasarlos por el parser
 de plata los multiplica por cien, y un "10" tipeado llega como 1000.
 
+### Cantidades exactas (`cantidad.ts`)
+
+Una cantidad física que la base guarda como decimal exacto en texto (una
+columna `numeric`: `"150.000"`). Nunca pasa por `number`.
+
+```ts
+import { formatearCantidad, cantidadParaInput, normalizarCantidad } from "@mafesoftware/plata-ar";
+
+formatearCantidad("150.000");  // "150"   (no "150.000", que se lee ciento cincuenta MIL)
+formatearCantidad("1500.250"); // "1.500,25"
+cantidadParaInput("1500.250"); // "1500,25" (para precargar un <input>: sin puntos de miles)
+normalizarCantidad("1.500");   // "1500"    (lo tipeado → decimal con punto para la base)
+normalizarCantidad("2,5");     // "2.5"
+normalizarCantidad("2.5");     // "2.5"     (un punto que no agrupa miles es decimal)
+```
+
+`normalizarCantidad(cantidadParaInput(x))` devuelve siempre `x` sin ceros de
+relleno (test con fast-check). No valida: el rango y la cantidad de decimales
+los decide el esquema de la app.
+
 ### Reparto y operaciones
 
 ```ts

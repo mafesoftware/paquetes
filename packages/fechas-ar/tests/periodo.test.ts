@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import fc from "fast-check";
 import { ErrorFecha } from "../src/errores.ts";
-import { esPeriodo, etiquetaPeriodo, periodoDe, sumarPeriodos, type Periodo } from "../src/periodo.ts";
+import { esPeriodo, etiquetaPeriodo, periodoDe, periodoLargo, sumarPeriodos, type Periodo } from "../src/periodo.ts";
 
 describe("esPeriodo", () => {
   it("acepta YYYY-MM con mes 01..12", () => {
@@ -104,5 +104,15 @@ describe("propiedad: sumarPeriodos es aditivo", () => {
         },
       ),
     );
+  });
+});
+
+describe("periodoLargo", () => {
+  it("escribe el mes en prosa", () => {
+    expect(periodoLargo("2026-11")).toBe("noviembre de 2026");
+    expect(periodoLargo("2027-01")).toBe("enero de 2027");
+  });
+  it("rechaza un período inválido", () => {
+    expect(() => periodoLargo("2026-13" as Periodo)).toThrow(ErrorFecha);
   });
 });

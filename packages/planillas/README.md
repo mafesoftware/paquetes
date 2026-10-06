@@ -175,3 +175,22 @@ formateadas (texto plano, listo para mostrar).
 ```ts
 const buffer = await filasAExcel("Reporte", ["Código", "Nombre"], [["1", "Cemento"]]);
 ```
+
+### PDF
+
+#### `textoWinAnsi(valor: string): string`
+
+Las fuentes estándar de PDF (`StandardFonts.Helvetica` de `pdf-lib`)
+codifican en WinAnsi, y **un solo carácter fuera de eso hace fallar todo el
+PDF** (`WinAnsi cannot encode`): un emoji o una letra pegada desde otro
+sistema en el nombre de un cliente alcanza. Pasar por acá todo texto que
+venga de un usuario antes de `drawText`:
+
+```ts
+import { textoWinAnsi } from "@mafesoftware/planillas";
+
+textoWinAnsi("Señal — 10 €"); // "Señal — 10 €" (Latin-1 y puntuación WinAnsi quedan)
+textoWinAnsi("Erdős");        // "Erdos" (se le saca el diacrítico)
+textoWinAnsi("Fiesta 🎉");     // "Fiesta  " (lo imposible pasa a espacio)
+```
+

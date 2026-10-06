@@ -71,6 +71,20 @@ aMinutos("08:30");  // 510
 deMinutos(510);      // "08:30"
 ```
 
+### Rangos: varios días y horarios que cruzan la medianoche
+
+```ts
+import { rangoDeDias, rangoHorario } from "@mafesoftware/fechas-ar";
+
+rangoDeDias("2026-11-14", "2026-11-16"); // "14/11/26 al 16/11/26"
+rangoDeDias("2026-11-14", null);         // "14/11/26" (un solo día)
+rangoDeDias("2026-11-14", "2026-11-16", formatearFechaDeLaApp); // con el formato de días propio
+
+rangoHorario("21:00:00", "04:00:00");    // "21:00 a 04:00 (+1 día)" (trasnoche)
+rangoHorario("09:00", null);             // "desde las 09:00"
+rangoHorario(null, null);                // null
+```
+
 ## API 0.2
 
 Una tercera familia, de **calendario puro**: recibe y devuelve
@@ -94,13 +108,14 @@ try {
 ### Períodos mensuales (`periodo.ts`)
 
 ```ts
-import { esPeriodo, etiquetaPeriodo, periodoDe, sumarPeriodos, type Periodo } from "@mafesoftware/fechas-ar";
+import { esPeriodo, etiquetaPeriodo, periodoDe, periodoLargo, sumarPeriodos, type Periodo } from "@mafesoftware/fechas-ar";
 
 esPeriodo("2026-09");        // true
 esPeriodo("2026-13");        // false: no hay mes 13
 periodoDe("2026-09-24");     // "2026-09"
 sumarPeriodos("2026-11", 3); // "2027-02" (n negativo resta; n === 0 devuelve el mismo período)
 etiquetaPeriodo("2026-09");  // "sep-2026"
+periodoLargo("2026-11");     // "noviembre de 2026" (para títulos y textos corridos)
 ```
 
 ### Meses de cuota (`meses.ts`)

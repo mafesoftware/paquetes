@@ -95,3 +95,28 @@ export function etiquetaPeriodo(p: Periodo): string {
   const abrev = MESES_ABREV_ES[mes - 1]!;
   return `${abrev}-${anio}`;
 }
+
+const MESES_ES: readonly string[] = [
+  "enero",
+  "febrero",
+  "marzo",
+  "abril",
+  "mayo",
+  "junio",
+  "julio",
+  "agosto",
+  "septiembre",
+  "octubre",
+  "noviembre",
+  "diciembre",
+];
+
+/**
+ * El período en prosa: `"2026-11"` → `"noviembre de 2026"`. Para títulos y
+ * textos corridos ("Resultados de noviembre de 2026"), donde `"nov-2026"`
+ * se lee como código.
+ */
+export function periodoLargo(p: Periodo): string {
+  const { anio, mes } = validarPeriodo(p);
+  return `${MESES_ES[mes - 1]!} de ${anio}`;
+}

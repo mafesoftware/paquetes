@@ -513,3 +513,41 @@ export function deMinutos(minutos: number): string {
   const m = ((minutos % 1440) + 1440) % 1440;
   return `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
 }
+
+/**
+ * Un rango de días de calendario, para algo que dura más de un día (un
+ * evento de fin de semana, una estadía): `"14/11/26 al 16/11/26"`. Con `fin`
+ * vacío o igual a `inicio` es un solo día. `formatear` elige cómo se escribe
+ * cada día (por defecto `diaCorto`; pasar el formateador propio de la app
+ * si usa año de cuatro cifras).
+ *
+ * @example
+ * rangoDeDias("2026-11-14", "2026-11-16"); // "14/11/26 al 16/11/26"
+ * rangoDeDias("2026-11-14", null);         // "14/11/26"
+ */
+export function rangoDeDias(
+  inicio: string,
+  fin: string | null | undefined,
+  formatear: (dia: string) => string = (dia) => diaCorto(dia),
+): string {
+  return fin && fin !== inicio ? `${formatear(inicio)} al ${formatear(fin)}` : formatear(inicio);
+}
+
+/**
+ * Un horario de pared en una línea: `"21:00 a 04:00 (+1 día)"`. Un fin
+ * anterior al inicio cruza la medianoche (una trasnoche) y lo avisa con
+ * `(+1 día)`. Con un solo extremo: `"desde las 21:00"` / `"hasta las 04:00"`;
+ * sin ninguno, `null`. Acepta `"HH:MM"` o `"HH:MM:SS"` (lo que devuelve una
+ * columna `time` de Postgres).
+ *
+ * @example
+ * rangoHorario("21:00:00", "04:00:00"); // "21:00 a 04:00 (+1 día)"
+ * rangoHorario("09:00", null);          // "desde las 09:00"
+ */
+export function rangoHorario(inicio: string | null | undefined, fin: string | null | undefined): string | null {
+  const hora = (valor: string) => valor.slice(0, 5);
+  if (!inicio && !fin) return null;
+  if (!inicio) return `hasta las ${hora(fin!)}`;
+  if (!fin) return `desde las ${hora(inicio)}`;
+  return `${hora(inicio)} a ${hora(fin)}${hora(fin) < hora(inicio) ? " (+1 día)" : ""}`;
+}

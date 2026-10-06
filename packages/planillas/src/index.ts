@@ -31,3 +31,5 @@ export {
 
 export { type OpcionesCsv, filasACsv } from "./csv.js";
 export { filasAExcel } from "./excel.js";
+
+export { textoWinAnsi } from "./pdf.js";
