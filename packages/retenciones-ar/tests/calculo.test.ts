@@ -23,6 +23,15 @@ describe("aplicarPorcentaje", () => {
     // 19% de 830,00 = 157,70 exacto (sin drama de redondeo, pero confirma la fracción exacta)
     expect(aplicarPorcentaje(830_00n, "19")).toBe(157_70n);
   });
+
+  it("acepta porcentaje negativo (signo explícito)", () => {
+    expect(aplicarPorcentaje(100_000_00n, "-2")).toBe(-2_000_00n);
+  });
+
+  it("porcentaje solo decimal, sin parte entera (\".5\") — y con signo negativo", () => {
+    expect(aplicarPorcentaje(1_000_00n, ".5")).toBe(5_00n);
+    expect(aplicarPorcentaje(1_000_00n, "-.5")).toBe(-5_00n);
+  });
 });
 
 describe("aplicarExclusion", () => {
@@ -47,6 +56,10 @@ describe("formatearPesos", () => {
     expect(formatearPesos(8_283_000n)).toBe("82.830,00");
     expect(formatearPesos(15_000_000n)).toBe("150.000,00");
     expect(formatearPesos(0n)).toBe("0,00");
+  });
+
+  it("negativo → signo \"-\" adelante", () => {
+    expect(formatearPesos(-8_283_000n)).toBe("-82.830,00");
   });
 });
 
