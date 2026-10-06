@@ -155,3 +155,65 @@ describe("sugerirMatches — performance", () => {
     expect(duracionMs).toBeLessThan(1000);
   });
 });
+
+describe("sugerirMatches — regla referencia_cuit, casos ambiguos y de tolerancia", () => {
+  it("2 movimientos con el mismo CUIT y el mismo importe → ambiguo, ninguna regla sugiere nada", () => {
+    const linea: LineaExtracto = {
+      id: "L1",
+      fecha: "2026-01-01",
+      descripcion: "PAGO 30712345671",
+      importe: 100_000n,
+      saldo: null,
+      referencia: null,
+    };
+    const movs: MovConciliable[] = [
+      { id: "M1", fecha: "2026-01-01", importe: 100_000n, referencia: null, cuitContraparte: "30712345671" },
+      { id: "M2", fecha: "2026-01-01", importe: 100_000n, referencia: null, cuitContraparte: "30712345671" },
+    ];
+
+    const sugerencias = sugerirMatches([linea], movs, { toleranciaDias: 3, maxCombinacion: 4 });
+    expect(porLinea(sugerencias, "L1")).toBeUndefined();
+  });
+
+  it("CUIT e importe coinciden pero la fecha excede la tolerancia → sin sugerencia", () => {
+    const linea: LineaExtracto = {
+      id: "L1",
+      fecha: "2026-01-01",
+      descripcion: "PAGO 30712345671",
+      importe: 100_000n,
+      saldo: null,
+      referencia: null,
+    };
+    const movs: MovConciliable[] = [
+      { id: "M1", fecha: "2026-01-20", importe: 100_000n, referencia: null, cuitContraparte: "30712345671" },
+    ];
+
+    const sugerencias = sugerirMatches([linea], movs, { toleranciaDias: 2, maxCombinacion: 4 });
+    expect(porLinea(sugerencias, "L1")).toBeUndefined();
+  });
+
+  it("una línea repetida (mismo id) ya usada por una regla anterior se saltea en la siguiente vuelta del mismo loop", () => {
+    const lineaRepetida: LineaExtracto = {
+      id: "L1",
+      fecha: "2026-01-01",
+      descripcion: "PAGO 30712345671",
+      importe: 100_000n,
+      saldo: null,
+      referencia: null,
+    };
+    const movs: MovConciliable[] = [
+      { id: "M1", fecha: "2026-01-01", importe: 100_000n, referencia: null, cuitContraparte: "30712345671" },
+    ];
+
+    const sugerencias = sugerirMatches([lineaRepetida, lineaRepetida], movs, { toleranciaDias: 3, maxCombinacion: 4 });
+    expect(sugerencias).toHaveLength(1);
+    expect(sugerencias[0]).toMatchObject({ lineaIds: ["L1"], movimientoIds: ["M1"], regla: "referencia_cuit" });
+  });
+});
+
+describe("sugerirMatches — maxCombinacion < 2 omite la regla de combinación", () => {
+  it("una línea que solo matchearía por combinación queda sin sugerencia", () => {
+    const sugerencias = sugerirMatches(lineasDelBrief(), movimientosDelBrief(), { toleranciaDias: 3, maxCombinacion: 1 });
+    expect(porLinea(sugerencias, "L3")).toBeUndefined();
+  });
+});
