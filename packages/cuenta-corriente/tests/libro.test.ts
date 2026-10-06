@@ -37,6 +37,26 @@ describe("construirLibro", () => {
     expect(usd.map((f) => f.saldoCorridoCentavos)).toEqual([500_00n, 300_00n]);
   });
 
+  it("movimientos cargados en orden DESCENDENTE de fecha: igual se ordenan cronológicamente", () => {
+    const filas = construirLibro([
+      mov({ fecha: "2026-02-20", moneda: "ARS", tipo: "cuota", debitoCentavos: 50_000n, referenciaId: "segundo-en-fecha" }),
+      mov({ fecha: "2026-02-10", moneda: "ARS", tipo: "cuota", debitoCentavos: 100_000n, referenciaId: "primero-en-fecha" }),
+    ]);
+
+    expect(filas.map((f) => f.referenciaId)).toEqual(["primero-en-fecha", "segundo-en-fecha"]);
+    expect(filas.map((f) => f.saldoCorridoCentavos)).toEqual([100_000n, 150_000n]);
+  });
+
+  it("a igual fecha y mismo tipo de movimiento (ambos débitos), conserva el orden de entrada", () => {
+    const filas = construirLibro([
+      mov({ fecha: "2026-03-01", moneda: "ARS", tipo: "cuota", debitoCentavos: 30_000n, referenciaId: "primero" }),
+      mov({ fecha: "2026-03-01", moneda: "ARS", tipo: "documento_ajuste", debitoCentavos: 4_000n, referenciaId: "segundo" }),
+    ]);
+
+    expect(filas.map((f) => f.referenciaId)).toEqual(["primero", "segundo"]);
+    expect(filas.map((f) => f.saldoCorridoCentavos)).toEqual([30_000n, 34_000n]);
+  });
+
   it("a igual fecha, los débitos se ordenan antes que los créditos", () => {
     const filas = construirLibro([
       mov({ fecha: "2026-03-01", moneda: "ARS", tipo: "cobro", creditoCentavos: 10_000n, referenciaId: "credito" }),

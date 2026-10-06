@@ -62,6 +62,48 @@ describe("interesMora", () => {
     expect(interesMora(0n, "2026-01-01", "2026-01-31", tramos, 0)).toBe(0n);
     expect(interesMora(100_000_000n, "2026-01-31", "2026-01-31", tramos, 0)).toBe(0n);
   });
+
+  it("sin tramos → 0, sin evaluar nada más", () => {
+    expect(interesMora(100_000_000n, "2026-01-01", "2026-01-31", [], 0)).toBe(0n);
+  });
+
+  it("tasaAnual con formato inválido → tira Error", () => {
+    const tramos = [{ desde: "2026-01-01", tasaAnual: "no-es-un-numero" }];
+    expect(() => interesMora(100_000_000n, "2026-01-01", "2026-01-31", tramos, 0)).toThrow(/tasaAnual inválida/);
+  });
+
+  it("tasaAnual con más de 8 decimales → tira Error (formato inválido)", () => {
+    const tramos = [{ desde: "2026-01-01", tasaAnual: "36.123456789" }];
+    expect(() => interesMora(100_000_000n, "2026-01-01", "2026-01-31", tramos, 0)).toThrow(/tasaAnual inválida/);
+  });
+
+  it("ningún tramo empieza en o antes del período (tramos en orden ascendente): usa el MÁS ANTIGUO de todos", () => {
+    const saldo = 100_000_000n;
+    // Los dos tramos arrancan DESPUÉS del período consultado (caso que no
+    // debería darse en la práctica, pero `tramoVigenteEn` no se queda sin
+    // tasa: asume el más viejo en vez de un cero silencioso).
+    const tramos = [
+      { desde: "2026-02-01", tasaAnual: "36" },
+      { desde: "2026-03-01", tasaAnual: "48" },
+    ];
+
+    const interes = interesMora(saldo, "2026-01-01", "2026-01-15", tramos, 0);
+
+    // Debe coincidir con usar el tramo del 36% (el más antiguo) en todo el período.
+    expect(interes).toBe(interesMora(saldo, "2026-01-01", "2026-01-15", [tramos[0]!], 0));
+  });
+
+  it("mismo caso con los tramos en orden DESCENDENTE: igual elige el más antiguo (36%), no el primero del array", () => {
+    const saldo = 100_000_000n;
+    const tramos = [
+      { desde: "2026-03-01", tasaAnual: "48" },
+      { desde: "2026-02-01", tasaAnual: "36" },
+    ];
+
+    const interes = interesMora(saldo, "2026-01-01", "2026-01-15", tramos, 0);
+
+    expect(interes).toBe(interesMora(saldo, "2026-01-01", "2026-01-15", [{ desde: "2026-02-01", tasaAnual: "36" }], 0));
+  });
 });
 
 describe("aging", () => {
