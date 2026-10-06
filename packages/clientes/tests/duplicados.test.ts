@@ -15,6 +15,18 @@ describe('normalizarTelefono', () => {
     expect(normalizarTelefono('')).toBe('');
     expect(normalizarTelefono(null)).toBe('');
   });
+
+  it('undefined normaliza a cadena vacía', () => {
+    expect(normalizarTelefono(undefined)).toBe('');
+  });
+
+  it("con el '0' de discado local lo saca", () => {
+    expect(normalizarTelefono('011 1234-5678')).toBe('1112345678');
+  });
+
+  it('sin prefijo de país, celular ni discado local, deja los dígitos tal cual', () => {
+    expect(normalizarTelefono('1112345678')).toBe('1112345678');
+  });
 });
 
 describe('esMismoTelefono', () => {
@@ -37,7 +49,19 @@ describe('normalizarDni / normalizarEmail', () => {
     expect(normalizarDni('12.345.678')).toBe('12345678');
   });
 
+  it('DNI vacío, null o undefined normaliza a cadena vacía', () => {
+    expect(normalizarDni('')).toBe('');
+    expect(normalizarDni(null)).toBe('');
+    expect(normalizarDni(undefined)).toBe('');
+  });
+
   it('email: minúsculas y sin espacios de borde', () => {
     expect(normalizarEmail('  Juan@Mail.com ')).toBe('juan@mail.com');
+  });
+
+  it('email vacío, null o undefined normaliza a cadena vacía', () => {
+    expect(normalizarEmail('')).toBe('');
+    expect(normalizarEmail(null)).toBe('');
+    expect(normalizarEmail(undefined)).toBe('');
   });
 });
