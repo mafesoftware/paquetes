@@ -74,6 +74,15 @@ describe("validarPlan", () => {
     expect(() => validarPlan(valorCerrado, condiciones)).toThrow();
   });
 
+  it("un tcPactado mal formado (no es un decimal de hasta 8 decimales) es un error", () => {
+    // Para entrar a la conversión ARS→USD (la rama que parsea el TC a mano)
+    // hace falta una condición en ARS contra un valorCerrado en USD.
+    const valorCerrado: Importe = { centavos: 10_000_000n, moneda: "USD" };
+    const condiciones = [condicion({ moneda: "ARS", total: 7_000_000_000n })];
+
+    expect(() => validarPlan(valorCerrado, condiciones, "no-es-un-numero")).toThrow(/tipo de cambio inválido/i);
+  });
+
   it("sin condiciones, ok solo si el valor cerrado es cero", () => {
     expect(validarPlan({ centavos: 0n, moneda: "ARS" }, [])).toEqual({ ok: true });
     expect(validarPlan({ centavos: 100n, moneda: "ARS" }, [])).toEqual({
