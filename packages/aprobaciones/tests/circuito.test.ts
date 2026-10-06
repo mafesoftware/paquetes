@@ -91,6 +91,56 @@ describe('elegirCircuito', () => {
     const elegido = elegirCircuito([v1, v2], docOc(pesos(1000), null));
     expect(elegido?.id).toBe('c-v2');
   });
+
+  it('empate en especificidad y montoDesde, orden invertido → sigue ganando la versión más nueva (no la reemplaza una más vieja)', () => {
+    const v1: Circuito = { ...general, id: 'c-v1', version: 1 };
+    const v2: Circuito = { ...general, id: 'c-v2', version: 2 };
+    const elegido = elegirCircuito([v2, v1], docOc(pesos(1000), null));
+    expect(elegido?.id).toBe('c-v2');
+  });
+
+  it('proveedorId exige que el documento sea de ese proveedor', () => {
+    const porProveedor: Circuito = {
+      id: 'c-proveedor',
+      version: 1,
+      tipo: 'orden_compra',
+      condiciones: { ...condicionesVacias(), proveedorId: 'proveedor-1' },
+      niveles: [],
+      creadorPuedeAprobar: false,
+    };
+    const conProveedor = { ...docOc(pesos(1000), null), proveedorId: 'proveedor-1' };
+    const otroProveedor = { ...docOc(pesos(1000), null), proveedorId: 'proveedor-2' };
+    expect(elegirCircuito([porProveedor], conProveedor)?.id).toBe('c-proveedor');
+    expect(elegirCircuito([porProveedor], otroProveedor)).toBeNull();
+  });
+
+  it('el más específico primero en la lista no es reemplazado por uno menos específico que viene después', () => {
+    const elegido = elegirCircuito([proyectoA, general], docOc(pesos(6_000_000), 'proyecto-a'));
+    expect(elegido?.id).toBe('c-proyecto-a');
+  });
+
+  it('empate en especificidad, distinto montoDesde → gana el montoDesde más alto (el más nuevo en la lista lo reemplaza)', () => {
+    const desde100: Circuito = {
+      id: 'c-desde-100',
+      version: 1,
+      tipo: 'orden_compra',
+      condiciones: { ...condicionesVacias(), montoDesde: pesos(100) },
+      niveles: [],
+      creadorPuedeAprobar: false,
+    };
+    const desde200: Circuito = {
+      id: 'c-desde-200',
+      version: 1,
+      tipo: 'orden_compra',
+      condiciones: { ...condicionesVacias(), montoDesde: pesos(200) },
+      niveles: [],
+      creadorPuedeAprobar: false,
+    };
+    const doc = docOc(pesos(1000), null);
+    expect(elegirCircuito([desde100, desde200], doc)?.id).toBe('c-desde-200');
+    // orden invertido: el de montoDesde más alto sigue ganando (el que viene después no lo reemplaza)
+    expect(elegirCircuito([desde200, desde100], doc)?.id).toBe('c-desde-200');
+  });
 });
 
 describe('estadoSolicitud', () => {
@@ -179,6 +229,15 @@ describe('estadoSolicitud', () => {
     const estado = estadoSolicitud(porRol, [], doc);
     expect(estado.puedeVotar('cualquiera', ['admin'])).toBe(true);
     expect(estado.puedeVotar('cualquiera', ['invitado'])).toBe(false);
+  });
+
+  it('circuito sin niveles → nivelActual null sin estar completa ni rechazada, y nadie puede votar', () => {
+    const snapshotSinNiveles: Circuito = { ...snapshot, niveles: [] };
+    const estado = estadoSolicitud(snapshotSinNiveles, [], doc);
+    expect(estado.nivelActual).toBeNull();
+    expect(estado.completa).toBe(false);
+    expect(estado.rechazada).toBe(false);
+    expect(estado.puedeVotar('cualquiera', [])).toBe(false);
   });
 
   it('un usuario no puede votar dos veces en el mismo nivel', () => {
