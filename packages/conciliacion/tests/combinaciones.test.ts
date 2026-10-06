@@ -31,4 +31,21 @@ describe("buscarCombinacion", () => {
     ];
     expect(buscarCombinacion(-999_999n, candidatos, 4)).toBeNull();
   });
+
+  it("objetivo === 0n → null sin buscar (una combinación que sume 0 no tiene sentido acá)", () => {
+    const candidatos = [
+      { id: "a", importe: -1_000n },
+      { id: "b", importe: -2_000n },
+    ];
+    expect(buscarCombinacion(0n, candidatos, 4)).toBeNull();
+  });
+
+  it("maxCombinacion < 2 → null sin buscar (no es un caso de combinación)", () => {
+    const candidatos = [
+      { id: "a", importe: -30_000_000n },
+      { id: "b", importe: -20_000_000n },
+    ];
+    expect(buscarCombinacion(-50_000_000n, candidatos, 1)).toBeNull();
+    expect(buscarCombinacion(-50_000_000n, candidatos, 0)).toBeNull();
+  });
 });

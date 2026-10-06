@@ -20,6 +20,12 @@ describe("diferenciaInventario", () => {
     expect(d.cantidad).toBe("10.0000");
     expect(d.valor).toBe(11_000_000n);
   });
+
+  it("sistema negativo (saldo arrastrado de un ajuste previo) → igual calcula bien la diferencia", () => {
+    const d = diferenciaInventario("-5", "3", 1_100_000n);
+    expect(d.cantidad).toBe("8.0000"); // 3 − (−5)
+    expect(d.valor).toBe(8_800_000n); // 8 × $ 11.000
+  });
 });
 
 describe("bajoMinimo", () => {

@@ -53,4 +53,12 @@ describe("promesaPendienteVencida", () => {
     ];
     expect(promesaPendienteVencida(gestiones, HOY)).toBe(false);
   });
+
+  it("la MÁS RECIENTE viene PRIMERO en el array: no la reemplaza una posterior más vieja", () => {
+    const gestiones = [
+      { tipo: "promesa_pago" as const, fechaPromesa: "2026-04-01", creadoEn: "2026-03-05" }, // la vigente: futura
+      { tipo: "promesa_pago" as const, fechaPromesa: "2026-02-01", creadoEn: "2026-01-10" }, // vieja, aparece después pero no reemplaza
+    ];
+    expect(promesaPendienteVencida(gestiones, HOY)).toBe(false);
+  });
 });

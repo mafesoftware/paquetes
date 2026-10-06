@@ -26,3 +26,26 @@ describe("serializarTablaGanancias / deserializarTablaGanancias", () => {
     expect(idaYVuelta).toEqual(TABLA);
   });
 });
+
+describe("serializarTablaGanancias / deserializarTablaGanancias — sin escala (alícuota fija)", () => {
+  const TABLA_SIN_ESCALA: TablaGanancias = {
+    concepto: "bienes",
+    codigoSicore: "078",
+    minimoNoSujeto: 224_000_00n,
+    alicuotaInscripto: "2",
+    alicuotaNoInscripto: "10",
+    retencionMinima: 240_00n,
+  };
+
+  it("serializa sin agregar la clave `escala`", () => {
+    const serializada = serializarTablaGanancias(TABLA_SIN_ESCALA);
+    expect(serializada).not.toHaveProperty("escala");
+    expect(() => JSON.stringify(serializada)).not.toThrow();
+  });
+
+  it("ida y vuelta preserva los valores (sin escala)", () => {
+    const idaYVuelta = deserializarTablaGanancias(serializarTablaGanancias(TABLA_SIN_ESCALA));
+    expect(idaYVuelta).toEqual(TABLA_SIN_ESCALA);
+    expect(idaYVuelta).not.toHaveProperty("escala");
+  });
+});

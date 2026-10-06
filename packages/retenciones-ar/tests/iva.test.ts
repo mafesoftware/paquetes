@@ -79,6 +79,20 @@ describe("retencionIva (brief)", () => {
     expect(r.importe).toBe(0n);
   });
 
+  it("último pago sobre-retenido en pagos anteriores (bug upstream) → importe nunca negativo, se recorta a 0", () => {
+    const r = retencionIva({
+      ivaDelPago: 50_00n,
+      alicuotaSobreIva: ALICUOTA, // 50% de 200,00 = 100,00
+      retencionMinima: 0n,
+      exclusion: null,
+      fechaPago: FECHA,
+      ultimoPagoDelDocumento: true,
+      ivaDocumento: 200_00n,
+      retenidoDocumento: 150_00n, // ya se retuvo de más
+    });
+    expect(r.importe).toBe(0n);
+  });
+
   it("proveedor monotributo (sin IVA discriminado) → no aplica", () => {
     const r = retencionIva({
       ivaDelPago: 0n,

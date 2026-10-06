@@ -184,6 +184,18 @@ describe("generarCuotas — sistema manual", () => {
 
     expect(() => generarCuotas(c, SIN_FERIADOS)).toThrow(/fechas/i);
   });
+
+  it("un hueco en el array de fechas manuales (misma cantidad, pero un elemento faltante) es un error defensivo", () => {
+    const c = condicionBase({
+      total: 300_000n,
+      cuotas: 2,
+      periodicidad: "libre",
+      // Mismo largo que montos (pasa la validación de cantidad), pero el índice 1 no tiene fecha.
+      sistema: { tipo: "manual", montos: [200_000n, 100_000n], fechas: ["2026-01-15", undefined as unknown as string] },
+    });
+
+    expect(() => generarCuotas(c, SIN_FERIADOS)).toThrow(/falta la fecha manual/i);
+  });
 });
 
 describe("generarCuotas — property-based: Σ cuotas = total, siempre", () => {

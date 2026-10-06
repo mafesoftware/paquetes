@@ -231,6 +231,33 @@ describe("retencionGanancias — bienes 078 (fixture del brief, sin caso numéri
   });
 });
 
+describe("retencionGanancias — escala con hueco (defensivo)", () => {
+  it("base que no cae en ningún tramo declarado → usa el último tramo (fallback de tramoDe)", () => {
+    const TABLA_CON_HUECO: TablaGanancias = {
+      concepto: "x",
+      codigoSicore: "x",
+      minimoNoSujeto: 0n,
+      alicuotaInscripto: "escala",
+      alicuotaNoInscripto: "28",
+      escala: [
+        { desde: 0n, hasta: 10_000n, fijo: 0n, porcentaje: "5" },
+        { desde: 20_000n, hasta: null, fijo: 1_000n, porcentaje: "10" },
+      ],
+      retencionMinima: 0n,
+    };
+    const r = retencionGanancias({
+      netoPago: 15_000n,
+      acumuladoNetoMes: 15_000n, // cae en el hueco entre 10.000 y 20.000
+      retenidoMes: 0n,
+      inscripto: true,
+      tabla: TABLA_CON_HUECO,
+      exclusion: null,
+      fechaPago: FECHA,
+    });
+    expect(r.importe).toBe(500n);
+  });
+});
+
 describe("retencionGanancias — propiedades (fast-check)", () => {
   it("nunca negativa ni mayor que la base (inscripto, alícuota fija)", () => {
     fc.assert(

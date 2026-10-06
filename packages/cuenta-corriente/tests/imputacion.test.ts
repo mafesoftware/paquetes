@@ -74,6 +74,20 @@ describe("imputarAutomatico", () => {
     expect(sobrante).toBe(2_000n - 1_150n);
   });
 
+  it("dos cuotas con el MISMO vencimiento: desempata por cuotaId (orden alfabético)", () => {
+    const deudas: Deuda[] = [
+      deuda({ cuotaId: "zz-ultima", vencimiento: "2026-01-10", interes: 100n }),
+      deuda({ cuotaId: "aa-primera", vencimiento: "2026-01-10", interes: 50n }),
+    ];
+
+    const { imputaciones } = imputarAutomatico(deudas, 150n);
+
+    expect(imputaciones).toEqual([
+      { cuotaId: "aa-primera", concepto: "interes", centavos: 50n },
+      { cuotaId: "zz-ultima", concepto: "interes", centavos: 100n },
+    ]);
+  });
+
   it("disponible cero: no genera ninguna imputación y no hay sobrante", () => {
     const deudas: Deuda[] = [deuda({ cuotaId: "c1", vencimiento: "2026-01-10", interes: 100n, capital: 1_000n })];
 

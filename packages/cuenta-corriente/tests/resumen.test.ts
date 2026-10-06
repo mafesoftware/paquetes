@@ -59,4 +59,28 @@ describe("resumenDe", () => {
     const resumen = resumenDe([cuota({ vencimiento: "2026-01-01", montoBaseCentavos: 1_000n, cobradaEn: "2026-05-01" })], "2026-03-01");
     expect(resumen.cobradoAFecha).toEqual({});
   });
+
+  it("una cuota cancelada (rescisión) no aporta ni a saldo ni a deuda ni a cobrado", () => {
+    const resumen = resumenDe(
+      [cuota({ vencimiento: "2026-01-01", montoBaseCentavos: 100_000n, estado: "cancelada" })],
+      "2026-03-01"
+    );
+    expect(resumen).toEqual({ cobradoAFecha: {}, saldoActual: {}, deudaVencida: {}, diasMoraMax: 0, proximoVencimiento: null });
+  });
+
+  it("una cuota refinanciada (reemplazada por un nuevo plan) tampoco aporta", () => {
+    const resumen = resumenDe(
+      [cuota({ vencimiento: "2026-01-01", montoBaseCentavos: 100_000n, estado: "refinanciada" })],
+      "2026-03-01"
+    );
+    expect(resumen).toEqual({ cobradoAFecha: {}, saldoActual: {}, deudaVencida: {}, diasMoraMax: 0, proximoVencimiento: null });
+  });
+
+  it("una cuota pendiente (estado explícito, no cancelada/refinanciada) sí aporta normalmente", () => {
+    const resumen = resumenDe(
+      [cuota({ vencimiento: "2026-04-01", montoBaseCentavos: 100_000n, estado: "pendiente" })],
+      "2026-03-01"
+    );
+    expect(resumen.saldoActual).toEqual({ ARS: 100_000n });
+  });
 });

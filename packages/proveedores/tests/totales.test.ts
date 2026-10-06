@@ -13,6 +13,12 @@ describe("totalesDeItems", () => {
   it("cantidad no entera (2,5 × $100,00)", () => {
     expect(subtotalItem("2.5", 10_000n)).toBe(25_000n);
   });
+
+  it("cantidad con formato inválido tira un error explícito", () => {
+    expect(() => subtotalItem("abc", 10_000n)).toThrowError(/cantidad inválida/);
+    expect(() => subtotalItem("-1", 10_000n)).toThrowError(/cantidad inválida/);
+    expect(() => subtotalItem("1.23456", 10_000n)).toThrowError(/cantidad inválida/);
+  });
 });
 
 describe("totalPercepciones", () => {

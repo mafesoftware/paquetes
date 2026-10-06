@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { calcularIva } from "../src/iva.js";
+import { calcularIva, esAlicuotaIva } from "../src/iva.js";
 
 /** Casos con valores exactos: subtotal $1.000,00 (100.000 centavos). */
 describe("calcularIva", () => {
@@ -30,5 +30,26 @@ describe("calcularIva", () => {
   it("redondea al centavo (10,5% de $333,33 → $35,00)", () => {
     // 33.333 * 105 / 1000 = 3499,965 → redondeo comercial → 3500.
     expect(calcularIva(33_333n, "10_5")).toBe(3_500n);
+  });
+});
+
+describe("esAlicuotaIva", () => {
+  it("reconoce cada alícuota válida", () => {
+    expect(esAlicuotaIva("21")).toBe(true);
+    expect(esAlicuotaIva("10_5")).toBe(true);
+    expect(esAlicuotaIva("27")).toBe(true);
+    expect(esAlicuotaIva("0")).toBe(true);
+    expect(esAlicuotaIva("exento")).toBe(true);
+    expect(esAlicuotaIva("no_gravado")).toBe(true);
+  });
+
+  it("rechaza un string que no es ninguna alícuota", () => {
+    expect(esAlicuotaIva("10")).toBe(false);
+  });
+
+  it("rechaza valores que no son string", () => {
+    expect(esAlicuotaIva(21)).toBe(false);
+    expect(esAlicuotaIva(null)).toBe(false);
+    expect(esAlicuotaIva(undefined)).toBe(false);
   });
 });
