@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { costoPromedio, egresoAPromedio, egresoAValorFijo, ingresoAValorFijo, type SaldoStock } from "../src/costo-promedio.js";
+import {
+  costoPromedio,
+  costoUnitarioDivision,
+  egresoAPromedio,
+  egresoAValorFijo,
+  ingresoAValorFijo,
+  restarCantidad,
+  type SaldoStock,
+} from "../src/costo-promedio.js";
 
 /**
  * Costo promedio ponderado, sin perder el centavo. Todos los importes en
@@ -103,6 +111,41 @@ describe("egresoAValorFijo", () => {
     const resultado = egresoAValorFijo({ cantidad: "2", valor: 250n }, "2", 200n);
 
     expect(resultado).toEqual({ ok: true, valorEgreso: 250n, resto: { cantidad: "0.0000", valor: 0n } });
+  });
+
+  it("egreso PARCIAL con valor fijo mayor al saldo total → también se acota a s.valor (sin vaciar la cantidad)", () => {
+    // Acá el saldo no se vacía (quedan 5 de 10): el acotamiento a `s.valor` tiene que
+    // aplicarse también en la rama del egreso parcial, no solo al vaciar todo.
+    const s: SaldoStock = { cantidad: "10.0000", valor: 1_000_00n };
+    const resultado = egresoAValorFijo(s, "5", 2_000_00n); // pide $ 2.000 pero el saldo entero vale $ 1.000
+    expect(resultado.ok).toBe(true);
+    if (!resultado.ok) throw new Error("no debería fallar");
+    expect(resultado.valorEgreso).toBe(1_000_00n);
+    expect(resultado.resto).toEqual({ cantidad: "5.0000", valor: 0n });
+  });
+});
+
+describe("costoUnitarioDivision", () => {
+  it("cantidad '0' → 0 (evita dividir por cero)", () => {
+    expect(costoUnitarioDivision(100_000n, "0")).toBe(0n);
+  });
+
+  it("cantidad negativa (reversión) → costo unitario negativo", () => {
+    expect(costoUnitarioDivision(1_000_00n, "-4")).toBe(-25_000n);
+  });
+
+  it("cantidad sin parte entera (ej. '.5') → toma la parte entera como 0", () => {
+    expect(costoUnitarioDivision(100_00n, ".5")).toBe(20_000n);
+  });
+
+  it("valor negativo con cantidad positiva → costo unitario negativo (sin tomar la rama de cantidad negativa)", () => {
+    expect(costoUnitarioDivision(-1_000_00n, "4")).toBe(-25_000n);
+  });
+});
+
+describe("restarCantidad", () => {
+  it("resta un segundo operando ya negativo (lo vuelve a sumar)", () => {
+    expect(restarCantidad("10", "-3")).toBe("13.0000");
   });
 });
 
