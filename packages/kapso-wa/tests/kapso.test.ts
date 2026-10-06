@@ -1,7 +1,9 @@
 import { describe, it, expect, vi } from "vitest";
 import {
   aNumeroWhatsApp,
+  bajarMedia,
   crearCliente,
+  crearPlantilla,
   crearSetupLink,
   dentroDeVentana24h,
   enviarAviso,
@@ -9,9 +11,16 @@ import {
   enviarLista,
   enviarPlantilla,
   enviarTexto,
+  EVENTOS_WEBHOOK_NUMERO,
   leerEventoWebhook,
+  leerEventosWebhook,
+  listarPlantillas,
+  listarWebhooksNumero,
+  registrarWebhookNumero,
+  verificarFirmaWebhook,
   type FetchLike,
 } from "../src/index.ts";
+import { createHmac } from "node:crypto";
 
 /** Un `fetch` de mentira que anota lo que le pidieron. */
 function espia(respuesta: { estado?: number; cuerpo?: unknown; texto?: string } = {}) {
@@ -380,12 +389,21 @@ describe("leerEventoWebhook: nunca tira, lo raro se ignora", () => {
     expect(e).toMatchObject({ tipo: "mensaje", mensaje: { tipo: "opcion_lista", payload: "turno:18" } });
   });
 
-  it("un audio o una foto salen como 'otro', no como texto vacio", () => {
+  it("un audio sale como 'audio' con su media, no como texto vacio", () => {
     const e = leerEventoWebhook({
       event: "whatsapp.message.received",
       data: { message: { id: "m", from: "549114", type: "audio", audio: { id: "a" } } },
     });
+    expect(e).toMatchObject({ tipo: "mensaje", mensaje: { tipo: "audio", texto: "", media: { id: "a" } } });
+  });
+
+  it("un tipo que no se conoce (sticker, reacción) sigue saliendo como 'otro'", () => {
+    const e = leerEventoWebhook({
+      event: "whatsapp.message.received",
+      data: { message: { id: "m", from: "549114", type: "reaction", reaction: { emoji: "👍" } } },
+    });
     expect(e).toMatchObject({ tipo: "mensaje", mensaje: { tipo: "otro", texto: "" } });
+    expect((e as any).mensaje.media).toBeUndefined();
   });
 
   it("un estado por evento, porque status_updated NO existe", () => {
@@ -886,5 +904,581 @@ describe("enviarAviso sin parametros explicitos, fuera de la ventana", () => {
       ahora: new Date("2026-09-09T12:00:00Z"),
     });
     expect(llamadas[0]!.cuerpo.template.components).toBeUndefined();
+  });
+});
+
+/* ============================================================
+   Payloads v2 reales (copiados de la documentación de Kapso)
+   ============================================================ */
+
+const RECIBIDO_V2 = {
+  message: {
+    id: "wamid.123",
+    timestamp: "1730092800",
+    type: "text",
+    from: "16315551181",
+    text: { body: "Hello" },
+    kapso: { direction: "inbound", status: "received", origin: "cloud_api", has_media: false, content: "Hello" },
+  },
+  conversation: { id: "conv_123", contact_name: "John Doe", phone_number: "16315551181", phone_number_id: "123456789012345" },
+  is_new_conversation: true,
+  phone_number_id: "123456789012345",
+};
+
+const firmar = (cuerpo: string, secreto: string) => createHmac("sha256", secreto).update(cuerpo).digest("hex");
+
+describe("verificarFirmaWebhook: HMAC-SHA256 en hex sobre el cuerpo CRUDO", () => {
+  const cuerpo = JSON.stringify(RECIBIDO_V2);
+
+  it("acepta la firma que calcula Kapso", () => {
+    expect(verificarFirmaWebhook(cuerpo, firmar(cuerpo, "s3creto"), "s3creto")).toBe(true);
+  });
+  it("acepta el cuerpo como bytes, y la firma en mayúsculas o con espacios", () => {
+    const bytes = new TextEncoder().encode(cuerpo);
+    expect(verificarFirmaWebhook(bytes, ` ${firmar(cuerpo, "s").toUpperCase()} `, "s")).toBe(true);
+  });
+  it("rechaza con otro secreto", () => {
+    expect(verificarFirmaWebhook(cuerpo, firmar(cuerpo, "otro"), "s3creto")).toBe(false);
+  });
+  it("rechaza si el cuerpo se re-serializó (por eso tiene que ser el crudo)", () => {
+    const reserializado = JSON.stringify(JSON.parse(cuerpo), null, 2);
+    expect(verificarFirmaWebhook(reserializado, firmar(cuerpo, "s"), "s")).toBe(false);
+  });
+  it("sin firma, sin secreto, o con una firma de otro largo: false, nunca tira", () => {
+    expect(verificarFirmaWebhook(cuerpo, null, "s")).toBe(false);
+    expect(verificarFirmaWebhook(cuerpo, undefined, "s")).toBe(false);
+    expect(verificarFirmaWebhook(cuerpo, "", "s")).toBe(false);
+    expect(verificarFirmaWebhook(cuerpo, firmar(cuerpo, ""), "")).toBe(false);
+    expect(verificarFirmaWebhook(cuerpo, "abc", "s")).toBe(false);
+  });
+});
+
+describe("el nombre del evento viene en la cabecera X-Webhook-Event", () => {
+  it("un cuerpo v2 sin `event` se ignora si no se pasa la cabecera", () => {
+    expect(leerEventoWebhook(RECIBIDO_V2).tipo).toBe("ignorado");
+  });
+  it("con la cabecera, el mismo cuerpo es un mensaje, con nombre de contacto", () => {
+    const e = leerEventoWebhook(RECIBIDO_V2, "whatsapp.message.received");
+    expect(e).toEqual({
+      tipo: "mensaje",
+      mensaje: {
+        tipo: "texto",
+        de: "16315551181",
+        phoneNumberId: "123456789012345",
+        texto: "Hello",
+        nombreContacto: "John Doe",
+        mensajeId: "wamid.123",
+        fechaHora: new Date(1730092800 * 1000),
+      },
+    });
+  });
+  it("la cabecera manda sobre `event` del cuerpo", () => {
+    const e = leerEventoWebhook({ ...RECIBIDO_V2, event: "algo.viejo" }, "whatsapp.message.received");
+    expect(e.tipo).toBe("mensaje");
+  });
+  it("una cabecera vacía o en blanco cae al `event` del cuerpo (compatible)", () => {
+    expect(leerEventoWebhook({ ...RECIBIDO_V2, event: "whatsapp.message.received" }, "  ").tipo).toBe("mensaje");
+    expect(leerEventoWebhook({ ...RECIBIDO_V2, event: "whatsapp.message.received" }, null).tipo).toBe("mensaje");
+  });
+});
+
+describe("leerEventosWebhook: el sobre de lote del buffering", () => {
+  const lote = {
+    type: "whatsapp.message.received",
+    batch: true,
+    data: [
+      {
+        message: { id: "wamid.111", timestamp: "1730092801", type: "text", text: { body: "First in batch" }, kapso: { phone_number_id: "123" } },
+        conversation: { id: "conv_123", phone_number: "+15551234567", phone_number_id: "123" },
+        phone_number_id: "123",
+      },
+      {
+        message: { id: "wamid.112", timestamp: "1730092802", type: "text", text: { body: "Second in batch" } },
+        conversation: { id: "conv_123", phone_number: "+15551234567", phone_number_id: "123" },
+        phone_number_id: "123",
+      },
+    ],
+    batch_info: { size: 2, window_ms: 5000 },
+  };
+
+  it("devuelve un evento por elemento, con el nombre del `type` del sobre", () => {
+    const es = leerEventosWebhook(lote);
+    expect(es).toHaveLength(2);
+    expect(es.map((e) => (e.tipo === "mensaje" ? e.mensaje.texto : null))).toEqual(["First in batch", "Second in batch"]);
+    // Los elementos de un lote no traen `from`: sale del teléfono de la conversación, sin `+`.
+    expect(es[0]).toMatchObject({ mensaje: { de: "15551234567", phoneNumberId: "123", mensajeId: "wamid.111" } });
+  });
+  it("la cabecera manda también en un lote", () => {
+    const es = leerEventosWebhook({ ...lote, type: "otro" }, "whatsapp.message.received");
+    expect(es.every((e) => e.tipo === "mensaje")).toBe(true);
+  });
+  it("un evento suelto sale como arreglo de uno", () => {
+    const es = leerEventosWebhook(RECIBIDO_V2, "whatsapp.message.received");
+    expect(es).toHaveLength(1);
+    expect(es[0]!.tipo).toBe("mensaje");
+  });
+  it("un lote vacío es un arreglo vacío; un lote sin data, un ignorado", () => {
+    expect(leerEventosWebhook({ batch: true, data: [], type: "whatsapp.message.received" })).toEqual([]);
+    expect(leerEventosWebhook({ batch: true })).toEqual([{ tipo: "ignorado", motivo: "lote sin data" }]);
+  });
+  it("basura sigue siendo un ignorado, nunca tira", () => {
+    expect(leerEventosWebhook(null)).toEqual([{ tipo: "ignorado", motivo: "cuerpo vacío" }]);
+  });
+  it("leerEventoWebhook con un lote no se queda con uno en silencio", () => {
+    const e = leerEventoWebhook(lote);
+    expect(e).toEqual({ tipo: "ignorado", motivo: "lote de 2 eventos: usar leerEventosWebhook" });
+    expect(leerEventoWebhook({ batch: true })).toMatchObject({ motivo: "lote de 0 eventos: usar leerEventosWebhook" });
+  });
+});
+
+describe("media entrante: imagen, video, documento, audio y ubicación", () => {
+  const recibido = (message: Record<string, unknown>) =>
+    leerEventoWebhook({ message: { id: "m", from: "549114", ...message }, phone_number_id: "pn" }, "whatsapp.message.received");
+
+  it("una imagen trae su id, el mime y el media_url de Kapso; el epígrafe va a texto", () => {
+    const e = recibido({
+      type: "image",
+      image: { caption: "Comprobante", id: "media_id_123", mime_type: "image/jpeg" },
+      kapso: {
+        has_media: true,
+        media_url: "https://api.kapso.ai/media/abc",
+        media_data: { url: "https://api.kapso.ai/media/otro", filename: "photo.jpg", content_type: "image/png" },
+      },
+    });
+    expect(e).toMatchObject({
+      tipo: "mensaje",
+      mensaje: {
+        tipo: "imagen",
+        texto: "Comprobante",
+        media: { id: "media_id_123", mimeType: "image/jpeg", nombreArchivo: "photo.jpg", url: "https://api.kapso.ai/media/abc" },
+      },
+    });
+  });
+  it("sin mime_type de Meta ni media_url, usa media_data de Kapso", () => {
+    const e = recibido({
+      type: "document",
+      document: { id: "d1", filename: "factura.pdf" },
+      kapso: { media_data: { url: "https://api.kapso.ai/media/d1", content_type: "application/pdf" }, message_type_data: { caption: "La factura" } },
+    });
+    expect(e).toMatchObject({
+      mensaje: {
+        tipo: "documento",
+        texto: "La factura",
+        media: { id: "d1", mimeType: "application/pdf", nombreArchivo: "factura.pdf", url: "https://api.kapso.ai/media/d1" },
+      },
+    });
+  });
+  it("un video sin nada más que el tipo da media con id vacío, sin campos de más", () => {
+    const e = recibido({ type: "video" });
+    expect(e).toMatchObject({ mensaje: { tipo: "video", texto: "", media: { id: "" } } });
+    expect(Object.keys((e as any).mensaje.media)).toEqual(["id"]);
+  });
+  it("una ubicación sale como 'lat,lng'", () => {
+    const e = recibido({ type: "location", location: { latitude: -34.6037, longitude: -58.3816, name: "Obelisco" } });
+    expect(e).toMatchObject({ mensaje: { tipo: "ubicacion", texto: "-34.6037,-58.3816" } });
+  });
+  it("una ubicación sin coordenadas válidas es 'otro', no 'NaN,NaN'", () => {
+    expect(recibido({ type: "location", location: { latitude: "x", longitude: 1 } })).toMatchObject({ mensaje: { tipo: "otro", texto: "" } });
+    expect(recibido({ type: "location", location: {} })).toMatchObject({ mensaje: { tipo: "otro" } });
+    expect(recibido({ type: "location" })).toMatchObject({ mensaje: { tipo: "otro" } });
+  });
+  it("el botón de una PLANTILLA llega como type 'button' y devuelve su payload", () => {
+    const e = recibido({ type: "button", button: { payload: "turno:abc:confirmar", text: "Confirmar" } });
+    expect(e).toMatchObject({ mensaje: { tipo: "boton", texto: "Confirmar", payload: "turno:abc:confirmar" } });
+    const sinPayload = recibido({ type: "button", button: { text: "Confirmar" } });
+    expect((sinPayload as any).mensaje.payload).toBeUndefined();
+  });
+  it("sin remitente en ningún lado, se ignora", () => {
+    const e = leerEventoWebhook({ message: { id: "m", text: { body: "x" } }, conversation: {} }, "whatsapp.message.received");
+    expect(e).toEqual({ tipo: "ignorado", motivo: "mensaje sin remitente" });
+  });
+  it("phone_number_id de la conversación o de message.kapso si no viene arriba", () => {
+    const deConversacion = leerEventoWebhook(
+      { message: { id: "m", from: "1", text: { body: "x" } }, conversation: { phone_number_id: "pn_c" } },
+      "whatsapp.message.received"
+    );
+    expect(deConversacion).toMatchObject({ mensaje: { phoneNumberId: "pn_c" } });
+    const deKapso = leerEventoWebhook(
+      { message: { id: "m", from: "1", text: { body: "x" }, kapso: { phone_number_id: "pn_k" } } },
+      "whatsapp.message.received"
+    );
+    expect(deKapso).toMatchObject({ mensaje: { phoneNumberId: "pn_k" } });
+  });
+});
+
+describe("estado failed: el error de Meta viaja con el evento", () => {
+  const fallido = {
+    message: {
+      id: "wamid.789",
+      timestamp: "1730093200",
+      kapso: {
+        status: "failed",
+        statuses: [
+          { id: "wamid.789", status: "sent", timestamp: "1730093100" },
+          {
+            id: "wamid.789",
+            status: "failed",
+            timestamp: "1730093200",
+            errors: [{ code: 131047, title: "Re-engagement message", message: "More than 24 hours have passed" }],
+          },
+        ],
+      },
+    },
+    phone_number_id: "123",
+  };
+
+  it("toma el error del ÚLTIMO estado", () => {
+    const e = leerEventoWebhook(fallido, "whatsapp.message.failed");
+    expect(e).toEqual({
+      tipo: "estado",
+      mensajeId: "wamid.789",
+      estado: "failed",
+      fechaHora: new Date(1730093200 * 1000),
+      error: { codigo: 131047, titulo: "Re-engagement message", mensaje: "More than 24 hours have passed" },
+    });
+  });
+  it("un delivered no lleva error aunque el historial tenga uno", () => {
+    const e = leerEventoWebhook(fallido, "whatsapp.message.delivered");
+    expect((e as any).error).toBeUndefined();
+  });
+  it("un failed sin historial de estados no inventa un error", () => {
+    const e = leerEventoWebhook({ message: { id: "w", kapso: { statuses: [] } } }, "whatsapp.message.failed");
+    expect(e).toMatchObject({ tipo: "estado", estado: "failed" });
+    expect((e as any).error).toBeUndefined();
+  });
+  it("acepta errors en el mensaje o arriba, y error_data.details como mensaje", () => {
+    const enMensaje = leerEventoWebhook({ message: { id: "w", errors: [{ code: 1, error_data: { details: "detalle" } }] } }, "whatsapp.message.failed");
+    expect((enMensaje as any).error).toEqual({ codigo: 1, mensaje: "detalle" });
+    const arriba = leerEventoWebhook({ message: { id: "w" }, errors: [{ title: "T" }] }, "whatsapp.message.failed");
+    expect((arriba as any).error).toEqual({ titulo: "T" });
+  });
+  it("un error vacío o que no es un objeto no se adjunta", () => {
+    const vacio = leerEventoWebhook({ message: { id: "w", errors: [{ code: "x" }] } }, "whatsapp.message.failed");
+    expect((vacio as any).error).toBeUndefined();
+    const raro = leerEventoWebhook({ message: { id: "w", errors: ["boom"] } }, "whatsapp.message.failed");
+    expect((raro as any).error).toBeUndefined();
+  });
+});
+
+describe("conexión de número: el payload v2 trae customer: { id, external_id }", () => {
+  const v2 = {
+    phone_number_id: "123456789012345",
+    project: { id: "990e8400" },
+    customer: { id: "880e8400", external_id: "gestionflow:club_9" },
+  };
+  it("created", () => {
+    expect(leerEventoWebhook(v2, "whatsapp.phone_number.created")).toEqual({
+      tipo: "numero_conectado",
+      clienteId: "880e8400",
+      phoneNumberId: "123456789012345",
+      idExterno: "gestionflow:club_9",
+      telefono: undefined,
+    });
+  });
+  it("deleted", () => {
+    expect(leerEventoWebhook(v2, "whatsapp.phone_number.deleted")).toEqual({
+      tipo: "numero_desconectado",
+      clienteId: "880e8400",
+      phoneNumberId: "123456789012345",
+      idExterno: "gestionflow:club_9",
+    });
+  });
+  it("acepta external_customer_id adentro de customer (v1)", () => {
+    const e = leerEventoWebhook({ phone_number_id: "p", customer: { id: "c", external_customer_id: "x:1" } }, "whatsapp.phone_number.created");
+    expect(e).toMatchObject({ idExterno: "x:1" });
+  });
+});
+
+describe("crearSetupLink: reconectar un número", () => {
+  it("manda reconnect_phone_number y NO allowed_connection_types ni meta_billing_mode", async () => {
+    const { fetch, llamadas } = espia({ cuerpo: { data: { url: "https://setup.kapso.ai/s/x" } } });
+    const r = await crearSetupLink({ apiKey: "k", fetch }, "cus_1", { reconectarTelefono: "+5491145678901" });
+    expect(r).toMatchObject({ ok: true, url: "https://setup.kapso.ai/s/x" });
+    const sl = llamadas[0]!.cuerpo.setup_link;
+    expect(sl.reconnect_phone_number).toBe("+5491145678901");
+    expect(sl).not.toHaveProperty("allowed_connection_types");
+    expect(sl).not.toHaveProperty("meta_billing_mode");
+  });
+  it("si se pasa metaBilling explícito al reconectar, viaja", async () => {
+    const { fetch, llamadas } = espia({ cuerpo: { url: "u" } });
+    await crearSetupLink({ apiKey: "k", fetch }, "cus_1", { reconectarTelefono: "+549", metaBilling: "partner_managed" });
+    expect(llamadas[0]!.cuerpo.setup_link.meta_billing_mode).toBe("partner_managed");
+  });
+  it("sin reconectar, sigue pidiendo coexistencia", async () => {
+    const { fetch, llamadas } = espia({ cuerpo: { url: "u" } });
+    await crearSetupLink({ apiKey: "k", fetch }, "cus_1");
+    expect(llamadas[0]!.cuerpo.setup_link.allowed_connection_types).toEqual(["coexistence"]);
+    expect(llamadas[0]!.cuerpo.setup_link).not.toHaveProperty("reconnect_phone_number");
+  });
+});
+
+describe("crearCliente: cada app pasa su prefijo", () => {
+  it("el prefijo propio viaja en external_customer_id", async () => {
+    const { fetch, llamadas } = espia({ cuerpo: { data: { id: "cus_1" } } });
+    const r = await crearCliente({ apiKey: "k", fetch }, "Consorcio", "c_1", "ediflow");
+    expect(llamadas[0]!.cuerpo.customer.external_customer_id).toBe("ediflow:c_1");
+    expect(r).toMatchObject({ ok: true, cliente: { id: "cus_1", externalCustomerId: "ediflow:c_1" } });
+  });
+});
+
+describe("registrarWebhookNumero / listarWebhooksNumero", () => {
+  const credP = (fetch: FetchLike) => ({ apiKey: "k", fetch });
+
+  it("registra un webhook kapso con los eventos por defecto y el secreto propio", async () => {
+    const { fetch, llamadas } = espia({
+      estado: 201,
+      cuerpo: { data: { id: "wh_1", url: "https://app/wh", events: [...EVENTOS_WEBHOOK_NUMERO], active: true } },
+    });
+    const r = await registrarWebhookNumero(credP(fetch), "pn_1", { url: "https://app/wh", secreto: "s" });
+    expect(r).toEqual({
+      ok: true,
+      webhook: { id: "wh_1", url: "https://app/wh", eventos: [...EVENTOS_WEBHOOK_NUMERO], activo: true },
+    });
+    expect(llamadas[0]!.url).toBe("https://api.kapso.ai/platform/v1/whatsapp/phone_numbers/pn_1/webhooks");
+    expect(llamadas[0]!.init.method).toBe("POST");
+    expect(llamadas[0]!.cuerpo).toEqual({
+      whatsapp_webhook: {
+        kind: "kapso",
+        url: "https://app/wh",
+        events: [
+          "whatsapp.message.received",
+          "whatsapp.message.delivered",
+          "whatsapp.message.read",
+          "whatsapp.message.failed",
+        ],
+        secret_key: "s",
+        active: true,
+      },
+    });
+  });
+  it("eventos propios reemplazan a los por defecto", async () => {
+    const { fetch, llamadas } = espia({ cuerpo: { id: "wh_2" } });
+    const r = await registrarWebhookNumero(credP(fetch), "pn_1", { url: "u", secreto: "s", eventos: ["whatsapp.message.received"] });
+    expect(llamadas[0]!.cuerpo.whatsapp_webhook.events).toEqual(["whatsapp.message.received"]);
+    // Una respuesta sin `data` y sin campos tampoco rompe.
+    expect(r).toEqual({ ok: true, webhook: { id: "wh_2", url: "", eventos: [], activo: true } });
+  });
+  it("valida antes de salir a la red", async () => {
+    const { fetch, llamadas } = espia();
+    expect(await registrarWebhookNumero(credP(fetch), "", { url: "u", secreto: "s" })).toMatchObject({ ok: false, categoria: "numero" });
+    expect(await registrarWebhookNumero(credP(fetch), "pn", { url: "", secreto: "s" })).toMatchObject({ ok: false, categoria: "rechazado" });
+    expect(await registrarWebhookNumero(credP(fetch), "pn", { url: "u", secreto: "" })).toMatchObject({ ok: false, categoria: "credenciales" });
+    expect(llamadas).toHaveLength(0);
+  });
+  it("sin id en la respuesta no se hace pasar por éxito; un 422 vuelve con categoría", async () => {
+    const sinId = espia({ cuerpo: { data: {} } });
+    expect(await registrarWebhookNumero(credP(sinId.fetch), "pn", { url: "u", secreto: "s" })).toMatchObject({ ok: false, categoria: "rechazado" });
+    const mal = espia({ estado: 422, cuerpo: { error: { message: "url is invalid" } } });
+    expect(await registrarWebhookNumero(credP(mal.fetch), "pn", { url: "u", secreto: "s" })).toEqual({
+      ok: false,
+      categoria: "rechazado",
+      error: "url is invalid",
+      estado: 422,
+    });
+  });
+  it("lista desenvolviendo { data: [...] }", async () => {
+    const { fetch, llamadas } = espia({
+      cuerpo: { data: [{ id: "a", url: "https://x", events: ["whatsapp.message.received"], active: false }, { nada: 1 }], meta: {} },
+    });
+    const r = await listarWebhooksNumero(credP(fetch), "pn_1");
+    expect(r).toEqual({ ok: true, webhooks: [{ id: "a", url: "https://x", eventos: ["whatsapp.message.received"], activo: false }] });
+    expect(llamadas[0]!.init.method).toBe("GET");
+    expect(llamadas[0]!.url).toBe("https://api.kapso.ai/platform/v1/whatsapp/phone_numbers/pn_1/webhooks");
+  });
+  it("lista: arreglo pelado, cuerpo raro, sin número y error", async () => {
+    expect(await listarWebhooksNumero(credP(espia({ cuerpo: [{ id: "b" }] }).fetch), "pn")).toMatchObject({ ok: true, webhooks: [{ id: "b" }] });
+    expect(await listarWebhooksNumero(credP(espia({ texto: "" }).fetch), "pn")).toEqual({ ok: true, webhooks: [] });
+    expect(await listarWebhooksNumero(credP(espia().fetch), "")).toMatchObject({ ok: false, categoria: "numero" });
+    expect(await listarWebhooksNumero(credP(espia({ estado: 401, texto: "no" }).fetch), "pn")).toMatchObject({ ok: false, categoria: "credenciales" });
+  });
+});
+
+describe("crearPlantilla / listarPlantillas (proxy de Meta)", () => {
+  const credP = (fetch: FetchLike) => ({ apiKey: "k", fetch });
+  const definicion = {
+    nombre: "ef_expensa_vence",
+    categoria: "UTILITY" as const,
+    componentes: [{ type: "BODY", text: "Hola {{1}}", example: { body_text: [["Juana"]] } }],
+  };
+
+  it("crea en la WABA con el cuerpo de Meta y devuelve el estado", async () => {
+    const { fetch, llamadas } = espia({ cuerpo: { id: "tpl_1", status: "PENDING", category: "UTILITY" } });
+    const r = await crearPlantilla(credP(fetch), "waba_1", definicion);
+    expect(r).toEqual({
+      ok: true,
+      plantilla: { id: "tpl_1", nombre: "ef_expensa_vence", idioma: "es_AR", estado: "PENDING", categoria: "UTILITY" },
+    });
+    expect(llamadas[0]!.url).toBe("https://api.kapso.ai/meta/whatsapp/v24.0/waba_1/message_templates");
+    expect(llamadas[0]!.cuerpo).toEqual({
+      name: "ef_expensa_vence",
+      language: "es_AR",
+      category: "UTILITY",
+      components: definicion.componentes,
+    });
+  });
+  it("idioma y formato de parámetros propios; respuesta envuelta y sin estado", async () => {
+    const { fetch, llamadas } = espia({ cuerpo: { data: { id: "tpl_2" } } });
+    const r = await crearPlantilla(credP(fetch), "waba_1", { ...definicion, idioma: "es", formatoParametros: "NAMED" });
+    expect(llamadas[0]!.cuerpo).toMatchObject({ language: "es", parameter_format: "NAMED" });
+    expect(r).toEqual({ ok: true, plantilla: { id: "tpl_2", nombre: "ef_expensa_vence", idioma: "es", estado: "PENDING" } });
+  });
+  it("valida, y un rechazo de Meta cae en la categoría plantilla", async () => {
+    const { fetch, llamadas } = espia();
+    expect(await crearPlantilla(credP(fetch), "", definicion)).toMatchObject({ ok: false, categoria: "credenciales" });
+    expect(await crearPlantilla(credP(fetch), "w", { ...definicion, nombre: "" })).toMatchObject({ ok: false, categoria: "plantilla" });
+    expect(llamadas).toHaveLength(0);
+    const mal = espia({ estado: 400, cuerpo: { error: { message: "Template name already exists" } } });
+    expect(await crearPlantilla(credP(mal.fetch), "w", definicion)).toMatchObject({ ok: false, categoria: "plantilla" });
+    const sinId = espia({ cuerpo: { status: "PENDING" } });
+    expect(await crearPlantilla(credP(sinId.fetch), "w", definicion)).toMatchObject({ ok: false, categoria: "rechazado" });
+  });
+  it("lista con nombre y estado, y sin página siguiente si no la hay", async () => {
+    const { fetch, llamadas } = espia({
+      cuerpo: {
+        data: [
+          { id: "1", name: "ef_a", language: "es_AR", status: "APPROVED", category: "UTILITY" },
+          { id: "2", name: "ef_b", status: "PENDING" },
+          { id: "3" },
+        ],
+        paging: { cursors: { after: "CUR" } },
+      },
+    });
+    const r = await listarPlantillas(credP(fetch), "waba_1", { nombre: "ef_a", estado: "APPROVED" });
+    expect(r).toEqual({
+      ok: true,
+      plantillas: [
+        { id: "1", nombre: "ef_a", idioma: "es_AR", estado: "APPROVED", categoria: "UTILITY" },
+        { id: "2", nombre: "ef_b", estado: "PENDING" },
+      ],
+    });
+    const url = new URL(llamadas[0]!.url);
+    expect(url.pathname).toBe("/meta/whatsapp/v24.0/waba_1/message_templates");
+    expect(Object.fromEntries(url.searchParams)).toEqual({ limit: "100", name: "ef_a", status: "APPROVED" });
+  });
+  it("con `next` (o página llena) devuelve el cursor, y `despues` lo usa", async () => {
+    const conNext = espia({ cuerpo: { data: [], paging: { next: "https://…", cursors: { after: "CUR" } } } });
+    expect(await listarPlantillas(credP(conNext.fetch), "w", { despues: "ANT" })).toEqual({ ok: true, plantillas: [], siguiente: "CUR" });
+    expect(new URL(conNext.llamadas[0]!.url).searchParams.get("after")).toBe("ANT");
+
+    const llena = espia({ cuerpo: { data: [{ id: "1", name: "a" }], paging: { cursors: { after: "C2" } } } });
+    expect(await listarPlantillas(credP(llena.fetch), "w", { limite: 1 })).toMatchObject({ siguiente: "C2" });
+    expect(new URL(llena.llamadas[0]!.url).searchParams.get("limit")).toBe("1");
+  });
+  it("el límite se acota a 1..100; sin WABA o con error no lista", async () => {
+    const { fetch, llamadas } = espia({ cuerpo: {} });
+    expect(await listarPlantillas(credP(fetch), "w", { limite: 500 })).toEqual({ ok: true, plantillas: [] });
+    await listarPlantillas(credP(fetch), "w", { limite: 0 });
+    expect(llamadas.map((l) => new URL(l.url).searchParams.get("limit"))).toEqual(["100", "1"]);
+    expect(await listarPlantillas(credP(fetch), "")).toMatchObject({ ok: false, categoria: "credenciales" });
+    expect(await listarPlantillas(credP(espia({ estado: 503, texto: "x" }).fetch), "w")).toMatchObject({ ok: false, categoria: "red" });
+  });
+});
+
+describe("bajarMedia: dos pasos, y el segundo sin la clave", () => {
+  /** Un fetch que contesta distinto según la URL. */
+  function fetchMedia(opciones: {
+    meta?: { estado?: number; cuerpo?: unknown };
+    archivo?: { estado?: number; bytes?: Uint8Array; tipo?: string | null; texto?: string };
+  }) {
+    const llamadas: { url: string; init: RequestInit }[] = [];
+    const fetch: FetchLike = async (url, init) => {
+      llamadas.push({ url, init: init ?? {} });
+      if (url.startsWith("https://api.kapso.ai/meta/whatsapp/v24.0/")) {
+        return new Response(JSON.stringify(opciones.meta?.cuerpo ?? {}), { status: opciones.meta?.estado ?? 200 });
+      }
+      const a = opciones.archivo ?? {};
+      if (a.texto !== undefined) return new Response(a.texto, { status: a.estado ?? 200 });
+      const headers: Record<string, string> = {};
+      if (a.tipo) headers["content-type"] = a.tipo;
+      return new Response(a.bytes ?? new Uint8Array([1, 2, 3]), { status: a.estado ?? 200, headers });
+    };
+    return { fetch, llamadas };
+  }
+  const DESCARGA = "https://api.kapso.ai/meta/whatsapp/media_download?token=abc";
+
+  it("pide el download_url y baja los bytes sin X-API-Key", async () => {
+    const { fetch, llamadas } = fetchMedia({
+      meta: { cuerpo: { id: "m1", mime_type: "image/jpeg", url: "https://lookaside.fbsbx.com/x", download_url: DESCARGA } },
+      archivo: { bytes: new Uint8Array([9, 8, 7]), tipo: "application/octet-stream" },
+    });
+    const r = await bajarMedia(cred(fetch), "m1");
+    expect(r).toEqual({ ok: true, bytes: new Uint8Array([9, 8, 7]), mimeType: "image/jpeg" });
+    expect(llamadas[0]!.url).toBe("https://api.kapso.ai/meta/whatsapp/v24.0/m1?phone_number_id=pn_1");
+    expect((llamadas[0]!.init.headers as any)["X-API-Key"]).toBe("k_test");
+    // El url de Meta (lookaside) NO se usa: pide el token de Meta.
+    expect(llamadas[1]!.url).toBe(DESCARGA);
+    expect(llamadas[1]!.init.headers).toBeUndefined();
+  });
+  it("sin mime_type de Meta usa el content-type; sin ninguno, octet-stream; pasa el filename", async () => {
+    const conTipo = fetchMedia({ meta: { cuerpo: { download_url: DESCARGA, filename: "f.pdf" } }, archivo: { tipo: "application/pdf" } });
+    expect(await bajarMedia(cred(conTipo.fetch), "m")).toMatchObject({ ok: true, mimeType: "application/pdf", nombreArchivo: "f.pdf" });
+    const sinTipo = fetchMedia({ meta: { cuerpo: { download_url: DESCARGA } }, archivo: { tipo: null, texto: "abc" } });
+    const r = await bajarMedia(cred(sinTipo.fetch), "m");
+    expect(r.ok && r.mimeType).toMatch(/^(application\/octet-stream|text\/plain.*)$/);
+  });
+  it("sin download_url no inventa nada", async () => {
+    const { fetch, llamadas } = fetchMedia({ meta: { cuerpo: { url: "https://lookaside.fbsbx.com/x" } } });
+    expect(await bajarMedia(cred(fetch), "m")).toMatchObject({ ok: false, categoria: "rechazado" });
+    expect(llamadas).toHaveLength(1);
+  });
+  it("un 404 de la media o un download_url vencido vuelven con su categoría", async () => {
+    const noEsta = fetchMedia({ meta: { estado: 404, cuerpo: { error: { message: "Media not found" } } } });
+    expect(await bajarMedia(cred(noEsta.fetch), "m")).toEqual({ ok: false, categoria: "rechazado", error: "Media not found", estado: 404 });
+    const vencido = fetchMedia({ meta: { cuerpo: { download_url: DESCARGA } }, archivo: { estado: 403, texto: '{"error":{"message":"token expired"}}' } });
+    expect(await bajarMedia(cred(vencido.fetch), "m")).toEqual({ ok: false, categoria: "credenciales", error: "token expired", estado: 403 });
+  });
+  it("un error de red al bajar el archivo es `red`", async () => {
+    let n = 0;
+    const fetch: FetchLike = async () => {
+      if (n++ === 0) return new Response(JSON.stringify({ download_url: DESCARGA }));
+      throw new Error("ECONNRESET");
+    };
+    expect(await bajarMedia(cred(fetch), "m")).toEqual({ ok: false, categoria: "red", error: "ECONNRESET" });
+  });
+  it("una respuesta de error cuyo cuerpo no se puede leer igual da un resultado", async () => {
+    let n = 0;
+    const fetch: FetchLike = async () => {
+      if (n++ === 0) return new Response(JSON.stringify({ download_url: DESCARGA }));
+      return { ok: false, status: 500, text: () => Promise.reject(new Error("x")) } as unknown as Response;
+    };
+    expect(await bajarMedia(cred(fetch), "m")).toEqual({ ok: false, categoria: "red", error: "HTTP 500", estado: 500 });
+  });
+  it("valida antes de salir a la red", async () => {
+    const { fetch, llamadas } = fetchMedia({});
+    expect(await bajarMedia({ apiKey: "k", phoneNumberId: "", fetch }, "m")).toMatchObject({ ok: false, categoria: "credenciales" });
+    expect(await bajarMedia(cred(fetch), "")).toMatchObject({ ok: false, categoria: "rechazado" });
+    expect(llamadas).toHaveLength(0);
+  });
+  it("sin fetch global en el segundo paso, da un resultado y no revienta", async () => {
+    const original = globalThis.fetch;
+    // @ts-expect-error simula un entorno sin fetch global
+    globalThis.fetch = undefined;
+    try {
+      const primero: FetchLike = async () => new Response(JSON.stringify({ download_url: DESCARGA }));
+      // El primer paso usa el fetch inyectado... que se saca para el segundo.
+      const c: { apiKey: string; phoneNumberId: string; fetch?: FetchLike } = { apiKey: "k", phoneNumberId: "pn", fetch: undefined };
+      c.fetch = async (url, init) => {
+        const rta = await primero(url, init);
+        c.fetch = undefined;
+        return rta;
+      };
+      expect(await bajarMedia(c, "m")).toEqual({ ok: false, categoria: "red", error: "no hay fetch disponible" });
+    } finally {
+      globalThis.fetch = original;
+    }
+  });
+});
+
+describe("estado v2: la hora sale del historial o del mensaje, no de 'ahora'", () => {
+  it("usa el timestamp del último estado", () => {
+    const e = leerEventoWebhook(
+      { message: { id: "w", timestamp: "1730092860", kapso: { statuses: [{ status: "sent", timestamp: "1730092860" }, { status: "delivered", timestamp: "1730092888" }] } } },
+      "whatsapp.message.delivered"
+    );
+    expect((e as any).fechaHora).toEqual(new Date(1730092888 * 1000));
+  });
+  it("sin historial, usa message.timestamp", () => {
+    const e = leerEventoWebhook({ message: { id: "w", timestamp: "1730092860" } }, "whatsapp.message.read");
+    expect((e as any).fechaHora).toEqual(new Date(1730092860 * 1000));
   });
 });
