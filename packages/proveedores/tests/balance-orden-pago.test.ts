@@ -42,6 +42,26 @@ describe("validarBalanceOp", () => {
     ];
     expect(validarBalanceOp(medios, imputaciones)).toEqual({ ok: true });
   });
+
+  it("hay medios en una moneda sin ninguna imputación en esa moneda → error contra 0", () => {
+    const r = validarBalanceOp([{ monto: 200n, moneda: "USD" as const }], []);
+    expect(r).toEqual({
+      ok: false,
+      error: "Los medios de pago en USD ($200) no coinciden con lo imputado ($0).",
+      moneda: "USD",
+      diferencia: 200n,
+    });
+  });
+
+  it("hay imputación en una moneda sin ningún medio de pago en esa moneda → error contra 0", () => {
+    const r = validarBalanceOp([], [{ monto: 150n, moneda: "USD" as const, consumeAnticipo: false }]);
+    expect(r).toEqual({
+      ok: false,
+      error: "Los medios de pago en USD ($0) no coinciden con lo imputado ($150).",
+      moneda: "USD",
+      diferencia: -150n,
+    });
+  });
 });
 
 describe("excedeSaldoDocumento", () => {
