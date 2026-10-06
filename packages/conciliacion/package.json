@@ -1,6 +1,6 @@
 {
   "name": "@mafesoftware/conciliacion",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Conciliación bancaria argentina: parseo de extractos (CSV/XLSX/PDF, 6 bancos con formato documentado inline: galicia, santander, bbva, macro, nacion, provincia) + motor de sugerencia de matches (importe_fecha/referencia_cuit/combinacion) contra los movimientos conciliables del sistema que integra el paquete. Núcleo de matching puro, sin DB; parseo de archivo con I/O (exceljs/pdfjs-dist) aislado en sus propios módulos.",
   "type": "module",
   "license": "MIT",

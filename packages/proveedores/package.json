@@ -1,6 +1,6 @@
 {
   "name": "@mafesoftware/proveedores",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Dominio de proveedores para un ERP/SaaS multi-tenant argentino: totales de un documento (ítems, IVA, percepciones, validación con tolerancia de $1), prorrateo por porcentaje entre proyectos, la decisión de archivar un proveedor con saldo pendiente, y el balance/aprobación de una orden de pago. Núcleo puro: sin DB, sin framework.",
   "type": "module",
   "license": "MIT",

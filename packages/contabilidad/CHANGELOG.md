@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.1
+
+### Patch Changes
+
+- Updated dependencies [0aded29]
+  - @mafesoftware/plata-ar@0.3.0
+
 ## 0.1.0
 
 ### Minor Changes

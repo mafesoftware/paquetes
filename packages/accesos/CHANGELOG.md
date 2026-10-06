@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.3
+
+### Patch Changes
+
+- Updated dependencies [0aded29]
+  - @mafesoftware/fechas-ar@0.3.0
+
 ## 0.1.2
 
 ### Patch Changes

@@ -1,6 +1,6 @@
 {
   "name": "@mafesoftware/stock",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Costo promedio ponderado de stock, diferencia de inventario fisico y alertas de reposicion. Nucleo puro: sin DB, sin framework.",
   "type": "module",
   "license": "MIT",
