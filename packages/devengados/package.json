@@ -1,0 +1,50 @@
+{
+  "name": "@mafesoftware/devengados",
+  "version": "0.0.0",
+  "description": "Obligaciones que se devengan por mes y se cancelan con pagos (sueldos, alquileres, sponsors, cuotas): cuotas vencidas con montos que cambian por vigencia, corte de migración, estado del saldo y matriz fila x período. Núcleo puro, plata en centavos bigint.",
+  "type": "module",
+  "license": "MIT",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "README.md",
+    "CHANGELOG.md",
+    "sql"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mafesoftware/paquetes.git",
+    "directory": "packages/devengados"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@mafesoftware/fechas-ar": "workspace:^"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "keywords": [
+    "devengado",
+    "cuotas",
+    "alquileres",
+    "sueldos",
+    "saldo",
+    "periodo"
+  ]
+}
