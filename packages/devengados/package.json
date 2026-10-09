@@ -1,6 +1,6 @@
 {
   "name": "@mafesoftware/devengados",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "Obligaciones que se devengan por mes y se cancelan con pagos (sueldos, alquileres, sponsors, cuotas): cuotas vencidas con montos que cambian por vigencia, corte de migración, estado del saldo y matriz fila x período. Núcleo puro, plata en centavos bigint.",
   "type": "module",
   "license": "MIT",
