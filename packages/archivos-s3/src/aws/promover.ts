@@ -1,4 +1,4 @@
-import { CopyObjectCommand, DeleteObjectCommand, type S3Client } from "@aws-sdk/client-s3";
+import { CopyObjectCommand, DeleteObjectCommand, HeadObjectCommand, type S3Client } from "@aws-sdk/client-s3";
 import { esClaveSegura, estaBajoPrefijo } from "../claves.js";
 
 const PREFIJO_TEMPORAL_POR_OMISION = "pending/";
@@ -14,12 +14,26 @@ export interface OpcionesPromover {
 
 export type CodigoErrorPromover = "clave_invalida";
 
-export type ResultadoPromover = { ok: true } | { ok: false; error: { codigo: CodigoErrorPromover; mensaje: string } };
+export type ResultadoPromover =
+  | {
+      ok: true;
+      /**
+       * `ContentType` REAL del objeto ya promovido (`HeadObject` sobre la
+       * clave final), no el que declaró el cliente al pedir la subida. `null`
+       * si S3 no lo informa.
+       */
+      tipoMime: string | null;
+      /** `ContentLength` REAL del objeto ya promovido, en bytes. `null` si S3 no lo informa. */
+      tamanoBytes: number | null;
+    }
+  | { ok: false; error: { codigo: CodigoErrorPromover; mensaje: string } };
 
 /**
  * Copia el objeto de `claveTemporal` a `claveFinal` y borra la temporal —
  * "promueve" un archivo recién subido (`firmarSubida`) a su lugar
- * definitivo. Nunca tira: una clave inválida se devuelve como
+ * definitivo, y devuelve el `tipoMime`/`tamanoBytes` REALES del objeto
+ * (`HeadObject` sobre la clave final) para que la app guarde esos y no los
+ * que declaró el cliente. Nunca tira: una clave inválida se devuelve como
  * `{ ok: false, error }`, nunca se manda a S3.
  *
  * Rechaza (`codigo: "clave_invalida"`):
@@ -65,7 +79,12 @@ export async function promover(opciones: OpcionesPromover): Promise<ResultadoPro
     .join("/")}`;
 
   await cliente.send(new CopyObjectCommand({ Bucket: bucket, CopySource: origen, Key: claveFinal }));
+  // Los metadatos que la app guarde salen del objeto REAL, no de lo que
+  // declaró el navegador: se leen de la clave final (lo que va a quedar) y
+  // antes de borrar la temporal (si esto falla, el archivo sigue en pending/
+  // y el reintento es posible).
+  const cabecera = await cliente.send(new HeadObjectCommand({ Bucket: bucket, Key: claveFinal }));
   await cliente.send(new DeleteObjectCommand({ Bucket: bucket, Key: claveTemporal }));
 
-  return { ok: true };
+  return { ok: true, tipoMime: cabecera.ContentType ?? null, tamanoBytes: cabecera.ContentLength ?? null };
 }

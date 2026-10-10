@@ -101,4 +101,48 @@ describe("urlFirmada", () => {
 
     expect(resultado).toEqual({ ok: false, codigo: "no_encontrado" });
   });
+
+  describe("descargaComo", () => {
+    async function urlCon(descargaComo?: string): Promise<URL> {
+      const resultado = await urlFirmada({
+        ...BASE,
+        clave: "org-1/facturas/factura.pdf",
+        quienReferencia: () => "org-1",
+        solicitante: "org-1",
+        ...(descargaComo === undefined ? {} : { descargaComo }),
+      });
+      if (!resultado.ok) throw new Error("no debería fallar");
+      return new URL(resultado.url);
+    }
+
+    it("sin descargaComo, la URL no fuerza descarga (igual que antes)", async () => {
+      const url = await urlCon();
+      expect(url.searchParams.has("response-content-disposition")).toBe(false);
+    });
+
+    it("con descargaComo, la URL firmada lleva Content-Disposition attachment con filename ASCII y filename* UTF-8", async () => {
+      const url = await urlCon("Factura Nº 12 – año.pdf");
+      expect(url.searchParams.get("response-content-disposition")).toBe(
+        "attachment; filename=\"Factura-No-12-ano.pdf\"; filename*=UTF-8''Factura%20N%C2%BA%2012%20%E2%80%93%20a%C3%B1o.pdf",
+      );
+      // El parámetro va FIRMADO (si no, S3 rechazaría la URL o cualquiera podría cambiarlo).
+      expect(url.searchParams.get("X-Amz-Signature")).toMatch(/^[0-9a-f]{64}$/);
+    });
+
+    it("una URL con y otra sin descargaComo tienen firmas distintas", async () => {
+      const [con, sin] = await Promise.all([urlCon("a.pdf"), urlCon()]);
+      expect(con.searchParams.get("X-Amz-Signature")).not.toBe(sin.searchParams.get("X-Amz-Signature"));
+    });
+
+    it("no se fuerza descarga si la autorización falla (no feliz)", async () => {
+      const resultado = await urlFirmada({
+        ...BASE,
+        clave: "org-2/factura.pdf",
+        quienReferencia: () => "org-2",
+        solicitante: "org-1",
+        descargaComo: "factura.pdf",
+      });
+      expect(resultado).toEqual({ ok: false, codigo: "no_encontrado" });
+    });
+  });
 });

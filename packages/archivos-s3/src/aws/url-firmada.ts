@@ -1,6 +1,6 @@
 import { GetObjectCommand, type S3Client } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
-import { estaBajoPrefijo } from "../claves.js";
+import { contentDispositionAdjunto, estaBajoPrefijo } from "../claves.js";
 
 const EXPIRACION_POR_OMISION_SEG = 300;
 const PREFIJO_TEMPORAL_POR_OMISION = "pending/";
@@ -29,6 +29,16 @@ export interface OpcionesUrlFirmada<Dueno> {
   solicitante: Dueno;
   /** Por omisión, `===`. Se pasa explícito cuando "dueño" es un objeto (comparar por sus campos, no por identidad de referencia). */
   compararSolicitante?: (dueno: Dueno, solicitante: Dueno) => boolean;
+  /**
+   * Nombre original del archivo (el que subió la persona). Si viene, la URL
+   * firmada fuerza la DESCARGA (`ResponseContentDisposition: attachment`)
+   * en vez de abrir el archivo inline en el origen del bucket — un HTML o
+   * SVG subido por alguien no se renderiza ahí. El nombre va saneado en
+   * `filename="..."` (ASCII) y completo, percent-encoded, en
+   * `filename*=UTF-8''...` (RFC 6266/5987) para que conserve tildes y eñes.
+   * Sin esta opción, la URL es exactamente la de antes.
+   */
+  descargaComo?: string;
 }
 
 export type ResultadoUrlFirmada = { ok: true; url: string } | { ok: false; codigo: "no_encontrado" };
@@ -58,6 +68,7 @@ export async function urlFirmada<Dueno>(opciones: OpcionesUrlFirmada<Dueno>): Pr
     quienReferencia,
     solicitante,
     compararSolicitante = sonElMismo,
+    descargaComo,
   } = opciones;
 
   if (estaBajoPrefijo(clave, prefijoTemporal)) {
@@ -69,8 +80,11 @@ export async function urlFirmada<Dueno>(opciones: OpcionesUrlFirmada<Dueno>): Pr
     return { ok: false, codigo: "no_encontrado" };
   }
 
-  const url = await getSignedUrl(cliente, new GetObjectCommand({ Bucket: bucket, Key: clave }), {
-    expiresIn: expiraSeg,
+  const comando = new GetObjectCommand({
+    Bucket: bucket,
+    Key: clave,
+    ...(descargaComo === undefined ? {} : { ResponseContentDisposition: contentDispositionAdjunto(descargaComo) }),
   });
+  const url = await getSignedUrl(cliente, comando, { expiresIn: expiraSeg });
   return { ok: true, url };
 }

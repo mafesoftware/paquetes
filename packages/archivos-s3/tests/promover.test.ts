@@ -1,4 +1,4 @@
-import { CopyObjectCommand, DeleteObjectCommand } from "@aws-sdk/client-s3";
+import { CopyObjectCommand, DeleteObjectCommand, HeadObjectCommand } from "@aws-sdk/client-s3";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { promover } from "../src/index.js";
 import { clienteDePrueba } from "./cliente-de-prueba.js";
@@ -10,10 +10,13 @@ describe("promover", () => {
 
   beforeEach(() => {
     cliente = clienteDePrueba();
-    send = vi.spyOn(cliente, "send").mockResolvedValue({} as never);
+    send = vi.spyOn(cliente, "send").mockImplementation((async (comando: unknown) =>
+      comando instanceof HeadObjectCommand
+        ? { ContentType: "application/pdf", ContentLength: 12345 }
+        : {}) as never);
   });
 
-  it("copia el objeto a la clave final y borra la temporal, en ese orden", async () => {
+  it("copia el objeto a la clave final, lee sus metadatos reales y borra la temporal, en ese orden", async () => {
     const resultado = await promover({
       cliente,
       bucket,
@@ -21,8 +24,8 @@ describe("promover", () => {
       claveFinal: "org-1/facturas/factura.pdf",
     });
 
-    expect(resultado).toEqual({ ok: true });
-    expect(send).toHaveBeenCalledTimes(2);
+    expect(resultado).toEqual({ ok: true, tipoMime: "application/pdf", tamanoBytes: 12345 });
+    expect(send).toHaveBeenCalledTimes(3);
 
     const comandoCopia = send.mock.calls[0]?.[0];
     expect(comandoCopia).toBeInstanceOf(CopyObjectCommand);
@@ -32,7 +35,11 @@ describe("promover", () => {
       Key: "org-1/facturas/factura.pdf",
     });
 
-    const comandoBorrado = send.mock.calls[1]?.[0];
+    const comandoCabecera = send.mock.calls[1]?.[0];
+    expect(comandoCabecera).toBeInstanceOf(HeadObjectCommand);
+    expect(comandoCabecera.input).toEqual({ Bucket: bucket, Key: "org-1/facturas/factura.pdf" });
+
+    const comandoBorrado = send.mock.calls[2]?.[0];
     expect(comandoBorrado).toBeInstanceOf(DeleteObjectCommand);
     expect(comandoBorrado.input).toEqual({ Bucket: bucket, Key: "pending/abc123-factura.pdf" });
   });
@@ -59,7 +66,29 @@ describe("promover", () => {
       claveFinal: "org-1/factura.pdf",
       prefijoTemporal: "tmp/",
     });
-    expect(resultado).toEqual({ ok: true });
+    expect(resultado.ok).toBe(true);
+  });
+
+  it("devuelve lo que dice S3, no lo que declaró el cliente: null si HeadObject no informa tipo ni tamaño", async () => {
+    send.mockResolvedValue({} as never);
+    const resultado = await promover({
+      cliente,
+      bucket,
+      claveTemporal: "pending/abc-archivo.bin",
+      claveFinal: "org-1/archivo.bin",
+    });
+    expect(resultado).toEqual({ ok: true, tipoMime: null, tamanoBytes: null });
+  });
+
+  it("si HeadObject falla, no borra la temporal (el error del SDK se propaga)", async () => {
+    send.mockImplementation((async (comando: unknown) => {
+      if (comando instanceof HeadObjectCommand) throw new Error("NotFound");
+      return {};
+    }) as never);
+    await expect(
+      promover({ cliente, bucket, claveTemporal: "pending/abc-archivo.pdf", claveFinal: "org-1/archivo.pdf" }),
+    ).rejects.toThrow("NotFound");
+    expect(send.mock.calls.some(([comando]) => comando instanceof DeleteObjectCommand)).toBe(false);
   });
 
   it("rechaza una claveTemporal que no está bajo el prefijo temporal (no feliz)", async () => {

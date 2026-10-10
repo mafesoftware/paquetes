@@ -67,3 +67,48 @@ export function esClaveSegura(clave: string): boolean {
 export function estaBajoPrefijo(clave: string, prefijo: string): boolean {
   return clave.startsWith(prefijo);
 }
+
+/** Caracteres de control (C0, DEL, C1) y separadores de ruta: nunca van en un nombre de descarga. */
+const NO_VAN_EN_NOMBRE_DE_DESCARGA = /[\u0000-\u001f\u007f-\u009f/\\]+/g;
+
+/** Mitades de un par sustituto UTF-16 sueltas: `encodeURIComponent` TIRA con ellas (URIError). */
+const SUSTITUTOS_SUELTOS = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g;
+
+/**
+ * Percent-encoding de RFC 5987 (`ext-value`): solo quedan sin codificar los
+ * `attr-char` (letras, dígitos y ``!#$&+-.^_`|~``). `encodeURIComponent` deja
+ * además `'()*` sin codificar, y `'` cortaría el `ext-value`.
+ */
+function codificarRfc5987(valor: string): string {
+  return encodeURIComponent(valor).replace(
+    /['()*]/g,
+    (caracter) => `%${caracter.charCodeAt(0).toString(16).toUpperCase()}`,
+  );
+}
+
+/**
+ * Valor de `Content-Disposition` que fuerza la descarga de un archivo con su
+ * nombre original (RFC 6266): `attachment; filename="<ascii>";
+ * filename*=UTF-8''<percent-encoded>`.
+ *
+ * - `filename` lleva el nombre pasado por `sanitizarNombre` — ASCII seguro,
+ *   sin comillas ni `\` que puedan romper el header; es el que usa un
+ *   cliente viejo que no entiende `filename*`.
+ * - `filename*` lleva el nombre original (normalizado a NFC, sin caracteres
+ *   de control ni separadores de ruta ni sustitutos UTF-16 sueltos,
+ *   recortado), percent-encoded: los navegadores lo prefieren y conserva
+ *   tildes y eñes. Si después de limpiar no queda nada, usa el saneado.
+ */
+export function contentDispositionAdjunto(nombre: string): string {
+  const ascii = sanitizarNombre(nombre);
+  const limpio = nombre
+    .replace(SUSTITUTOS_SUELTOS, "-")
+    .normalize("NFC")
+    .replace(NO_VAN_EN_NOMBRE_DE_DESCARGA, "-")
+    .replace(/^[\s.-]+|[\s.-]+$/g, ""); // mismo criterio que sanitizarNombre con las puntas
+  // Recorte por code point (no por unidad UTF-16): cortar en medio de un
+  // emoji dejaría un sustituto suelto y `encodeURIComponent` tiraría.
+  const original = Array.from(limpio).slice(0, LARGO_MAXIMO_NOMBRE).join("");
+  const extendido = original.length > 0 ? original : ascii;
+  return `attachment; filename="${ascii}"; filename*=UTF-8''${codificarRfc5987(extendido)}`;
+}

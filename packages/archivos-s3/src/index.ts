@@ -16,16 +16,19 @@
  *   omisión) — valida tipo MIME y tamaño ANTES de firmar.
  * - `promover`: copia el objeto de su clave temporal a la final y borra la
  *   temporal — rechaza traversal (`".."`, `"/"` inicial) y una clave
- *   temporal que no esté bajo el prefijo esperado.
+ *   temporal que no esté bajo el prefijo esperado. Devuelve el `tipoMime` y
+ *   `tamanoBytes` REALES del objeto (`HeadObject`), no los del cliente.
  * - `urlFirmada`: URL de descarga firmada, autorizada por un callback
  *   `quienReferencia(clave)` que decide la APP — nunca por el prefijo de la
  *   clave (la lección de ediflow: un vecino podía leer los comprobantes de
  *   otro porque alcanzaba con ser de la misma organización). Una clave que
- *   sigue en el prefijo temporal nunca es descargable.
+ *   sigue en el prefijo temporal nunca es descargable. Con `descargaComo`,
+ *   fuerza la descarga (`Content-Disposition: attachment`) con ese nombre.
  * - `borrarEnLote`: hasta 1000 claves por request (el límite de
  *   `DeleteObjectsCommand`), en tantos lotes como haga falta.
- * - `sanitizarNombre`/`esClaveSegura`/`estaBajoPrefijo`: las utilidades
- *   puras de validación de claves, si la app las necesita por su cuenta.
+ * - `sanitizarNombre`/`esClaveSegura`/`estaBajoPrefijo`/
+ *   `contentDispositionAdjunto`: las utilidades puras de claves y nombres,
+ *   si la app las necesita por su cuenta.
  */
 export {
   firmarSubida,
@@ -44,4 +47,4 @@ export {
   type ResultadoBorrarEnLote,
   type ErrorDeBorrado,
 } from "./aws/index.js";
-export { sanitizarNombre, esClaveSegura, estaBajoPrefijo } from "./claves.js";
+export { sanitizarNombre, esClaveSegura, estaBajoPrefijo, contentDispositionAdjunto } from "./claves.js";

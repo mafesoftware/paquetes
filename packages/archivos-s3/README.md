@@ -134,7 +134,28 @@ const resultado = await promover({
   claveFinal: `org/${organizacionId}/comprobantes/${pagoId}.pdf`,
 });
 
-resultado.ok; // true, o false con resultado.error.codigo === "clave_invalida"
+if (resultado.ok) {
+  // Lo REAL del objeto ya promovido (HeadObject sobre claveFinal), no lo que
+  // declaró el navegador al pedir la subida: guardar ESTO en la base.
+  resultado.tipoMime; // string | null — ContentType ("application/pdf")
+  resultado.tamanoBytes; // number | null — ContentLength en bytes
+} else {
+  resultado.error.codigo; // "clave_invalida"
+}
+```
+
+Con `ok: true` devuelve además `tipoMime` y `tamanoBytes` **reales**: después
+de copiar, hace `HeadObject` sobre `claveFinal` (antes de borrar la temporal —
+si falla, el archivo sigue en `pending/` y se puede reintentar). Así la app no
+guarda el tipo/tamaño que mandó el cliente sin contrastarlo. Son `null` solo
+si S3 no informa `ContentType`/`ContentLength` (en la práctica, siempre los
+informa). Un error de S3 en cualquiera de los tres pasos (copia, cabecera,
+borrado) se propaga tal cual lo tira el SDK.
+
+```ts
+type ResultadoPromover =
+  | { ok: true; tipoMime: string | null; tamanoBytes: number | null }
+  | { ok: false; error: { codigo: "clave_invalida"; mensaje: string } };
 ```
 
 ### `urlFirmada(opciones): Promise<ResultadoUrlFirmada>`
@@ -152,8 +173,23 @@ interface OpcionesUrlFirmada<Dueno> {
   quienReferencia: (clave: string) => Dueno | null | Promise<Dueno | null>;
   solicitante: Dueno;
   compararSolicitante?: (dueno: Dueno, solicitante: Dueno) => boolean; // por omisión, ===
+  descargaComo?: string; // nombre original: fuerza descarga (ver abajo)
 }
 ```
+
+**`descargaComo`** (opcional): el nombre original del archivo. Si viene, la
+URL firmada lleva `ResponseContentDisposition` (el parámetro
+`response-content-disposition`, firmado) con
+
+```
+attachment; filename="<sanitizarNombre(nombre)>"; filename*=UTF-8''<nombre percent-encoded>
+```
+
+(RFC 6266/5987, armado con `contentDispositionAdjunto`), así que el navegador
+**descarga** el archivo en vez de abrirlo inline en el origen del bucket (un
+HTML o SVG subido por alguien no se renderiza ahí). `filename` va ASCII
+saneado, para clientes viejos; `filename*` conserva tildes y eñes. Sin
+`descargaComo` la URL es exactamente la de siempre (inline).
 
 Devuelve `{ ok: false, codigo: "no_encontrado" }` (nunca un 403 — no hay que
 revelar si la clave existe) en cualquiera de estos casos:
@@ -189,6 +225,16 @@ if (!resultado.ok) {
 } else {
   resultado.url; // GET firmado, vence en `expiraSeg`
 }
+
+// Forzando la descarga con el nombre original:
+const descarga = await urlFirmada({
+  cliente,
+  bucket: "obrix-archivos-650698123825",
+  clave: comprobante.clave,
+  quienReferencia: async (clave) => (await buscarDueno(clave)) ?? null,
+  solicitante: ctx.organizacionId,
+  descargaComo: comprobante.nombreOriginal, // "Factura año 2026.pdf"
+});
 ```
 
 ### `borrarEnLote(opciones): Promise<ResultadoBorrarEnLote>`
@@ -227,3 +273,15 @@ Sin S3: útiles si la app necesita validar una clave por su cuenta.
 - **`estaBajoPrefijo(clave: string, prefijo: string): boolean`** — equivalente
   a `clave.startsWith(prefijo)`, con nombre propio para que se lea la
   intención en `promover`/`urlFirmada`.
+- **`contentDispositionAdjunto(nombre: string): string`** — el valor de
+  `Content-Disposition` que usa `urlFirmada` con `descargaComo`:
+  `attachment; filename="<ascii saneado>"; filename*=UTF-8''<percent-encoded>`.
+  El nombre de `filename*` va en NFC, sin caracteres de control, `/`, `\` ni
+  sustitutos UTF-16 sueltos; codifica también `'()*` (no son `attr-char`).
+  Sirve si la app arma la descarga por su cuenta (por ejemplo, un endpoint
+  propio que hace de proxy).
+
+  ```ts
+  contentDispositionAdjunto("presupuesto año.pdf");
+  // attachment; filename="presupuesto-ano.pdf"; filename*=UTF-8''presupuesto%20a%C3%B1o.pdf
+  ```
