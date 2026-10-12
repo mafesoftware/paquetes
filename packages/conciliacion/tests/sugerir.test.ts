@@ -131,7 +131,11 @@ describe("sugerirMatches — combinación acotada por maxCombinacion", () => {
 });
 
 describe("sugerirMatches — performance", () => {
-  it("500 líneas × 500 movimientos < 1s", () => {
+  // Lo que importa es que no explote combinatoriamente (combinaciones de hasta
+  // 4 movimientos sobre 500 tardarían minutos), no el segundo exacto: en CI,
+  // con la cobertura instrumentada y un runner compartido, pasaba de 1000 ms
+  // de a ratos. El margen sigue detectando una explosión.
+  it("500 líneas × 500 movimientos no explota (< 5s)", () => {
     const movs: MovConciliable[] = Array.from({ length: 500 }, (_, i) => ({
       id: `m${i}`,
       fecha: `2026-09-${String((i % 28) + 1).padStart(2, "0")}`,
@@ -152,7 +156,7 @@ describe("sugerirMatches — performance", () => {
     sugerirMatches(lineas, movs, { toleranciaDias: 3, maxCombinacion: 4 });
     const duracionMs = performance.now() - inicio;
 
-    expect(duracionMs).toBeLessThan(1000);
+    expect(duracionMs).toBeLessThan(5000);
   });
 });
 
