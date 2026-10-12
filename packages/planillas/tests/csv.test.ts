@@ -53,6 +53,19 @@ describe("filasACsv", () => {
       expect(csv).toBe("detalle\n=CMD()");
     });
 
+    it("un \\r en el medio de la celda va entre comillas: Excel lo leería como fin de fila y dejaría la fórmula sola en otra celda", () => {
+      // Sin comillas ni ';' en el valor: si no, ya se entrecomillaba por eso.
+      const csv = filasACsv(["cliente"], [["Juan\r=WEBSERVICE(A1)"]], { bom: false });
+
+      expect(csv).toBe('cliente\n"Juan\r=WEBSERVICE(A1)"');
+    });
+
+    it("un \\r\\n en el medio también", () => {
+      const csv = filasACsv(["cliente"], [["Juan\r\n=1+1"]], { bom: false });
+
+      expect(csv).toBe('cliente\n"Juan\r\n=1+1"');
+    });
+
     it("un apóstrofo antepuesto todavía respeta el escapado RFC 4180 si además tiene ';'", () => {
       const csv = filasACsv(["detalle"], [["=A;B"]], { bom: false });
 

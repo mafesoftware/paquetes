@@ -32,9 +32,9 @@ function neutralizarSiEsFormula(texto: string): string {
   return esPeligrosa(texto) ? `'${texto}` : texto;
 }
 
-/** Escapa una celda si contiene el separador, comillas o salto de línea (RFC 4180, con `;`). */
+/** Escapa una celda si contiene el separador, comillas o salto de línea, `\r` incluido: Excel corta la fila en un CR suelto y lo que sigue quedaría en otra celda sin neutralizar (RFC 4180, con `;`). */
 function envolverSiHaceFalta(texto: string): string {
-  return /[;"\n]/.test(texto) ? `"${texto.replace(/"/g, '""')}"` : texto;
+  return /[;"\r\n]/.test(texto) ? `"${texto.replace(/"/g, '""')}"` : texto;
 }
 
 export type OpcionesCsv = {
