@@ -53,6 +53,16 @@ export type OpcionesEnvio = {
   /** El remitente completo: `Bestie K-Beauty <no-reply-bestie@store360.com.ar>`. */
   de: string;
   para: string | string[];
+  /** Copia: la ven todos los destinatarios. */
+  cc?: string | string[];
+  /**
+   * Copia OCULTA: le llega, y nadie más ve su dirección. Útil para guardar
+   * una copia de lo que se le mandó a alguien (el comercio, del mail de su
+   * cliente). Para avisarle lo mismo a varias personas sin que se vean entre
+   * sí, conviene un envío por persona: un mail con todos en CCO y el "Para"
+   * vacío es lo que los filtros de spam miran mal.
+   */
+  cco?: string | string[];
   asunto: string;
   html?: string;
   texto?: string;
@@ -104,6 +114,14 @@ function esEmail(valor: string): boolean {
   return limpio.includes("@") && !limpio.includes(" ") && limpio.length >= 5;
 }
 
+/** Una o varias direcciones como lista, sin espacios ni vacías. */
+function lista(direcciones: string | string[] | undefined): string[] {
+  if (direcciones === undefined) return [];
+  return (Array.isArray(direcciones) ? direcciones : [direcciones])
+    .map((d) => d.trim())
+    .filter(Boolean);
+}
+
 /**
  * Manda un mail por Resend. Devuelve el resultado, **nunca tira**.
  *
@@ -121,16 +139,21 @@ export async function enviarCorreo(
     };
   }
 
-  const para = (
-    Array.isArray(opciones.para) ? opciones.para : [opciones.para]
-  )
-    .map((direccion) => direccion.trim())
-    .filter(Boolean);
+  const para = lista(opciones.para);
   if (para.length === 0 || !para.every(esEmail)) {
     return {
       ok: false,
       categoria: "rechazado",
       error: "El destinatario no es una dirección de mail.",
+    };
+  }
+  const cc = lista(opciones.cc);
+  const cco = lista(opciones.cco);
+  if (!cc.every(esEmail) || !cco.every(esEmail)) {
+    return {
+      ok: false,
+      categoria: "rechazado",
+      error: "Una dirección de copia no es una dirección de mail.",
     };
   }
 
@@ -152,6 +175,8 @@ export async function enviarCorreo(
   };
   if (opciones.html) cuerpo.html = opciones.html;
   if (opciones.texto) cuerpo.text = opciones.texto;
+  if (cc.length > 0) cuerpo.cc = cc;
+  if (cco.length > 0) cuerpo.bcc = cco;
   if (opciones.responderA) cuerpo.reply_to = opciones.responderA;
   if (opciones.adjuntos && opciones.adjuntos.length > 0) {
     cuerpo.attachments = opciones.adjuntos.map((a) => ({

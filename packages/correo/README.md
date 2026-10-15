@@ -28,8 +28,11 @@ if (!r.ok) console.error(r.categoria, r.error);
 - **`enviarCorreo(opciones)`** — POST a la API de Resend. Nunca tira: devuelve
   `{ ok: true, id }` o `{ ok: false, categoria, error }`. La categoría dice si
   reintentar sirve: `red`, `limite` y `conflicto_idempotencia` sí;
-  `credenciales` y `rechazado` no. Soporta varios destinatarios, `responderA`
-  (reply-to) y adjuntos (los bytes se codifican a base64 acá).
+  `credenciales` y `rechazado` no. Soporta varios destinatarios, `cc`, `cco`
+  (copia oculta), `responderA` (reply-to) y adjuntos (los bytes se codifican
+  a base64 acá). Para avisarle lo mismo a varias personas sin que se vean
+  entre sí, mejor un envío por persona que todos en `cco`: un "Para" vacío es
+  lo que los filtros de spam miran mal.
   `claveIdempotencia` (opcional) se manda como header `Idempotency-Key`: con
   la misma clave, un segundo envío no duplica el mail — Resend devuelve el
   resultado del primero (o, si el cuerpo del segundo envío es DISTINTO al del

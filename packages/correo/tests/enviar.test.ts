@@ -99,6 +99,40 @@ describe("enviarCorreo", () => {
     expect(cuerpo.attachments[0].content).toBe("aWJhc2U2NA==");
   });
 
+  it("cc y cco viajan como cc y bcc, en lista y limpios de espacios", async () => {
+    const { fn, pedidos } = resendFalso({});
+    await enviarCorreo({
+      ...BASE,
+      cc: " socia@bestie.com ",
+      cco: ["copia@bestie.com", "archivo@bestie.com "],
+      fetch: fn,
+    });
+    const cuerpo = JSON.parse(String(pedidos[0]!.init.body));
+    expect(cuerpo.cc).toEqual(["socia@bestie.com"]);
+    expect(cuerpo.bcc).toEqual(["copia@bestie.com", "archivo@bestie.com"]);
+    // La copia oculta no se cuela en lo que ven los demás.
+    expect(cuerpo.to).toEqual(["clienta@gmail.com"]);
+  });
+
+  it("sin cc ni cco, no se mandan los campos (ni vacíos)", async () => {
+    const { fn, pedidos } = resendFalso({});
+    await enviarCorreo({ ...BASE, cc: [], cco: "  ", fetch: fn });
+    const cuerpo = JSON.parse(String(pedidos[0]!.init.body));
+    expect(cuerpo).not.toHaveProperty("cc");
+    expect(cuerpo).not.toHaveProperty("bcc");
+  });
+
+  it("una copia que no es un mail se rechaza antes de la red", async () => {
+    const { fn, pedidos } = resendFalso({});
+    const r = await enviarCorreo({ ...BASE, cco: "no es un mail", fetch: fn });
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.categoria).toBe("rechazado");
+      expect(r.error).toContain("copia");
+    }
+    expect(pedidos).toHaveLength(0);
+  });
+
   it("responderA viaja como reply_to", async () => {
     const { fn, pedidos } = resendFalso({});
     await enviarCorreo({ ...BASE, responderA: "duenia@bestie.com", fetch: fn });
